@@ -1,346 +1,262 @@
 # Pitfalls Research
 
-**Domain:** Linux hardware control + telemetry GUI (HP OMEN/Victus), Rust + Slint
-**Researched:** 2026-10-30
-**Confidence:** HIGH for pitfalls 1–6 (observed in the legacy implementation and/or documented in kernel/desktop sources); MEDIUM for 7–12 (community reports and ecosystem state)
+**Domain:** Linux hardware control + telemetry GUI (HP OMEN/Victus), Rust + Slint  
+**Researched:** 2026-10-30  
+**Updated:** 2026-10-30 (incorporated review corrections: shared sensor registry, 3-state fan gating, mandatory polkit, PresetResult, RAM from scratch, GNOME tray fallback, and memory benchmarks)  
+**Confidence:** HIGH for pitfalls 1–6 (observed in the legacy implementation and/or documented in kernel/desktop sources); HIGH for 7–12 (validated architecture and ecosystem constraints)
 
 ## Critical Pitfalls
 
-### Pitfall 1: Trusting sensor indices instead of names
+### Pitfall 1: Trusting sensor indices instead of names & hardcoding GPU paths
 
 **What goes wrong:**
-The app reports the wrong component's temperature. `temp1_input` is assumed to be the CPU, or `hwmon0` is assumed to be the fan controller. On a different model the numbers silently swap, and users make thermal decisions from the wrong reading.
+The app reports the wrong component's temperature, or fails to find the iGPU entirely. `temp1_input` is assumed to be the CPU, `hwmon0` is assumed to be the fan controller, and `card0` is hardcoded as the Intel GPU. On different laptop models or kernel updates, the numbers silently swap, frequency lookups fail, and users make thermal decisions from incorrect readings.
 
 **Why it happens:**
-The Linux hwmon ABI explicitly does not guarantee that `tempN` maps to a particular component, and `hwmonN` numbering depends on driver load order. On a laptop the driver/label set differs per model and kernel.
+The Linux hwmon ABI explicitly does not guarantee that `tempN` maps to a particular component, and `hwmonN` numbering depends on driver load order. Furthermore, DRM card indices vary based on iGPU/dGPU enumeration order (e.g. `card0` may be NVIDIA or AMD, while Intel is `card1`). The legacy Python script hardcoded `card0` for Intel GPU frequency lookups and duplicated temperature heuristics between `read_temperature()` and `run_doctor()`.
 
 **How to avoid:**
-Resolve sensors by reading `name` (driver) and `tempN_label` before assigning a friendly name, using one shared, module-level priority list. Compose every DRM path from the enumerated card directory rather than a literal `card0`. Export what was detected in Diagnostics so a mismatch is diagnosable.
+Implement a single, shared `SensorRegistry` in the hardware layer that discovers sensors dynamically using driver priorities (`coretemp` > `k10temp` > `zenpower` > `hp-wmi` > `acpitz`) and label matches. Dynamically enumerate `/sys/class/drm/card*` by inspecting vendor IDs, never hardcoding `card0`. Both dashboard telemetry and diagnostics must consume the exact same `SensorRegistry`.
 
 **Warning signs:**
-Two code paths (dashboard vs. diagnostics) can disagree about which sensor is the CPU; a hardcoded `card0` string exists anywhere; a sensor list is written inline in more than one function.
+Two code paths (dashboard vs. diagnostics) disagree about which sensor is the CPU; a hardcoded `card0` string exists anywhere; a sensor list is written inline in more than one function.
 
 **Phase to address:**
-The phase that builds Linux telemetry/sensor discovery — one shared sensor-selection helper must exist before any UI consumes it.
+Phase 2 (Linux Telemetry & Capability Detection) — the shared `SensorRegistry` must be established before any UI consumes real data.
 
 ---
 
-### Pitfall 2: Assuming fan control exists (or that it works the way this model's did)
+### Pitfall 2: Assuming fan control exists or exposing manual mode prematurely
 
 **What goes wrong:**
-The Cooling page offers controls that silently do nothing, or writes a PWM value the embedded controller ignores. Users conclude the app is broken — or worse, believe cooling changed when it did not.
+The Cooling page offers controls that silently do nothing, writes a PWM value the embedded controller ignores, or attempts to set "Manual" mode (`pwm1_enable = 1`) which stalls the laptop's fans or causes firmware lockups.
 
 **Why it happens:**
-`pwm1_enable` is exposed on some OMEN/Victus models and not others; several OMEN 16 models expose RPM but no writable PWM interface without a patched `hp-wmi`, and upstream only began adding model-gated manual fan control in the 6.20/7.0 kernel cycle. Firmware differences also mean "writable" does not imply "honored".
+`pwm1_enable` is exposed on some OMEN/Victus models and not others. The sysfs interface technically documents three states: `0` (Maximum), `1` (Manual PWM), and `2` (Automatic/BIOS). The legacy Python CLI only supported `0` and `2`. While `1` exists as a numeric value, HP-WMI firmware often lacks true arbitrary PWM curve support without custom kernel patches. Exposing manual mode just because the number `1` exists in sysfs docs is a hardware-safety hazard.
 
 **How to avoid:**
-Capability detection decides whether the control renders at all; every write is followed by a read-back and reports the observed state, never an optimistic success. Treat `0`/`1`/`2` as named modes (`MAX`/`MANUAL`/`AUTO`) rather than magic strings, and report `MANUAL` honestly instead of "Unknown".
+1. Capability detection decides whether fan controls render at all; if `pwm1_enable` is not writable, display an honest "Unavailable" explanation.
+2. For v1, expose only validated modes: **Automatic** (`2`) and **Maximum** (`0`).
+3. If the kernel currently reports `1` (manual) on read, display it honestly as "Manual (external/kernel control)", but do not allow writing manual mode in v1.
+4. Every write is followed by read-back verification with retry/backoff.
 
 **Warning signs:**
-A control is rendered before a capability probe; a write path has no read-back; the string literals `"0"`/`"2"` appear in more than one module; "success" is shown without re-reading the file.
+A control is rendered before a capability probe; a write path has no read-back; manual mode slider is exposed without validated EC support; string literals `"0"`/`"2"` appear without named constants.
 
 **Phase to address:**
-The cooling/control phase, immediately after the privilege boundary exists — never before verification works.
+Phase 3 (Verified Hardware Control) — capability gating and read-back verification must precede write exposure.
 
 ---
 
-### Pitfall 3: Privilege escalation into the GUI process
+### Pitfall 3: Privilege escalation into the GUI process & optional authorization
 
 **What goes wrong:**
-The whole GUI runs as root, or the app re-executes itself under `sudo` mid-command. The command body runs twice, user-writable configuration gets written as root, and a missing `sudo` produces an uncaught traceback. A user-editable file becomes an input to a root write — an escalation path.
+The GUI runs as root or re-executes itself via `sudo`. The command body runs twice, user config becomes root-owned, and a user-editable configuration file becomes an input to a root write — an escalation vulnerability. Alternatively, treating polkit authorization as optional allows unprivileged processes to tamper with hardware.
 
 **Why it happens:**
-Re-exec under sudo is the shortest visible path to "I need to write to `/sys`", and it works on the developer's machine. The second-execution and ownership side effects are invisible until a user reports "permission denied" on their own config.
+`sudo` re-exec is the easiest shortcut to write to `/sys`. In the legacy Python CLI, `rgb set` executed twice (once as user, once as root), changing config ownership.
 
 **How to avoid:**
-One narrow system service (`com.zenomen.Hardware1`) owns every privileged write; the GUI is always unprivileged and talks to it over D-Bus with polkit authorization. The service accepts only named operations with whitelisted/validated parameters, builds paths from constants, and never accepts a path or command from the caller.
+A two-process architecture: `zenomen-gui` is strictly unprivileged. Privileged writes live exclusively in the `zenomen-hw` system D-Bus daemon (`com.zenomen.Hardware1`). Polkit authorization (`com.zenomen.hardware.control`) is **mandatory** for every mutating method (`SetFanMode`, `SetPowerProfile`, `ApplyRgbProfile`, `SetRgbEnabled`). The daemon rejects arbitrary filesystem paths and shell commands.
 
 **Warning signs:**
-`ensure_root`-style code anywhere in the GUI; any `sudo`, `execvp` or setuid usage; a config file whose owner changes after a control operation; a D-Bus method that takes a path parameter.
+`ensure_root`-style code anywhere in the GUI; any `sudo` or `setuid` call; describing polkit authorization as optional; a D-Bus method that accepts a path parameter.
 
 **Phase to address:**
-The privileged-control phase. It must exist *before* any write-capable UI, so no write path can be built the wrong way first.
+Phase 3 (Hardware Service) — the service must be operational and audited before write capabilities are introduced in the UI.
 
 ---
 
 ### Pitfall 4: UI-thread blocking (the "lightweight app that freezes")
 
 **What goes wrong:**
-The window stutters or locks during every refresh, and idle CPU is far above the 0.1% target. A single 500 ms sampling sleep on the render path is enough to make a 40 MB app feel slower than a heavyweight one.
+The window stutters or locks during telemetry refreshes, and idle CPU exceeds the 0.1% budget. A single 500 ms sampling sleep makes a 40 MB app feel sluggish and unresponsive.
 
 **Why it happens:**
-Direct hardware reads and external commands look synchronous and cheap. `nvidia-smi` can take seconds on a slow driver; a two-sample `/proc/stat` delta requires waiting; sysfs reads on some devices block. Slint runs its event loop on the main thread, so any of these there is a visible freeze. The legacy Python dashboard does exactly this with a fixed 0.5 s sleep per render.
+Direct hardware reads look synchronous and cheap. In the legacy Python tool, `read_cpu_stats()` literally executed `time.sleep(0.5)` to calculate utilization deltas, and `monitor_stats_loop()` polled synchronously. Furthermore, `nvidia-smi` can stall for seconds if the GPU driver is suspended.
 
 **How to avoid:**
-One long-lived monitoring worker with deadline scheduling and per-metric periods (CPU 1 s, GPU 2 s, RAM 5 s, profile 5 s; slower in tray mode). It keeps its own previous counters, so no sleep is needed to compute deltas. The UI only consumes published snapshots. Resolve external tools once and cache the negative result.
+One long-lived monitoring worker with deadline scheduling running in a background thread. It preserves prior-tick counters to calculate CPU and disk deltas instantaneously without sleeps. Slint runs on the main thread and receives immutable `TelemetrySnapshot` events. External tools like `nvidia-smi` are resolved once and negative results are cached.
 
 **Warning signs:**
-Any hardware read or `Command::new` reachable from a Slint callback; a `sleep` in the sampling path; a chart whose frame rate is tied to the sampling rate; the window's frame time changing when telemetry refreshes.
+Any `sleep()` in a sampling function; running `Command::new` or sysfs reads on the main thread; window frame time fluctuating when telemetry updates.
 
 **Phase to address:**
-The GUI foundation phase (the worker and the command/event split must be the first design, not a later optimization) — then re-measured in the optimization phase.
+Phase 1 (Foundation) — the worker thread and `AppCommand`/`AppEvent` bridge must be established in the initial scaffold.
 
 ---
 
 ### Pitfall 5: Unbounded memory in the "bounded memory" app
 
 **What goes wrong:**
-RSS starts at 25 MB and reaches 200 MB after a few hours in tray mode. The product's headline claim fails on a long-running session, which is exactly the case a tray app must survive.
+Process RSS starts at 25 MB but climbs past 150 MB after several hours in the tray. The core promise of lightweight system software is broken.
 
 **Why it happens:**
-History vectors, log buffers, path caches and per-refresh allocations accumulate. Slint model churn can grow without bound if models are rebuilt per tick. It is invisible in a 30-second smoke test.
+Uncapped telemetry vectors, log buffers, and repeated Slint model allocations accumulate. Developers measure memory over a 30-second smoke test and miss long-term leaks.
 
 **How to avoid:**
-Fixed-capacity `VecDeque` (120 samples) with explicit eviction; mutate model rows in place instead of rebuilding them; cap log retention; run a long-session memory test (30 min dashboard, 2 h tray, repeated open/close) in the optimization phase with RSS recorded as a first-class verification item.
+1. Use a fixed-capacity ring buffer (`VecDeque<TelemetryPoint>` capped at 120 samples) that drops the oldest sample before pushing.
+2. Mutate Slint model rows in place rather than rebuilding arrays per tick.
+3. Distinguish memory budgets: UI process peak RSS ≤40 MB (cold start <30 MB, warm dashboard <38 MB, minimized tray <25 MB); hardware service RSS ≤15 MB (measured separately).
+4. Profile memory with `heaptrack` and `valgrind --tool=massif` during long-session tests (2 hours in tray).
 
 **Warning signs:**
-Any `Vec::push` in the sampling loop with no corresponding cap; model arrays re-assigned per telemetry event; RSS growth that does not plateau over 30 minutes.
+Unbounded `Vec::push` in the sampling loop; re-allocating Slint model arrays per tick; memory growing continuously over a 30-minute test.
 
 **Phase to address:**
-Foundation phase for the buffer; optimization phase for the measured long-session test.
+Phase 1 for the ring buffer; Phase 5 for automated 2-hour long-session verification.
 
 ---
 
-### Pitfall 6: Optimistic or partial-success reporting on hardware writes
+### Pitfall 6: Optimistic or "transactional" claims on hardware writes
 
 **What goes wrong:**
-The UI shows a green check, but the fans did not change, or a combined preset applied the power profile and silently failed on the fan mode. Users trust a lie, and the failure is undiagnosable.
+The UI claims a combined preset (e.g. "Gaming") applied successfully, but only the ACPI power profile stuck while the fan mode failed. Or the app claims "transactional rollback" for hardware operations that cannot be rolled back atomically.
 
 **Why it happens:**
-The write "succeeded" from the OS's perspective — `write()` returned without error and the EC ignored the value. Verification feels redundant when the write already returned `Ok`.
+`write()` returning `Ok` only means the kernel accepted the buffer; the embedded controller might ignore the value. Furthermore, ACPI `platform_profile` and HP-WMI `pwm1_enable` are separate hardware endpoints without kernel transaction support.
 
 **How to avoid:**
-Read back after every write, with retry/backoff rather than one fixed 0.1 s delay (a slow EC/firmware can fail a single-sample check spuriously). Distinguish `applied` / `partially applied` / `failed` in the event model and the UI. Never render a fabricated value — missing data is `Unavailable`, not `0`.
+1. Verify every write by reading back state with retry/backoff (100 ms, 200 ms, 400 ms).
+2. Never claim atomic transactions or rollback for combined presets. Use `PresetResult`:
+   ```rust
+   pub struct PresetResult {
+       pub power_applied: bool,
+       pub fan_applied: bool,
+       pub partial_success: bool,
+   }
+   ```
+3. Report partial applications honestly to the user (e.g. "Power profile set to Performance, but fan mode could not be changed").
 
 **Warning signs:**
-A write path without a read-back; a success toast with no state re-read; a value of 0 displayed for an absent sensor; no `VERIFICATION_FAILED` error code in use.
+Success toast displayed immediately after `fs::write()`; absence of `PresetResult` or partial-apply UI states; claiming atomic rollback for ACPI/fan writes.
 
 **Phase to address:**
-The privileged-control phase (verification is part of the write contract, not a follow-up).
+Phase 3 (Verified Hardware Control).
 
 ---
 
-### Pitfall 7: Recipe-packaging toolchain chosen for the wrong platform or state of maintenance
+### Pitfall 7: Packaging toolchain risk (`cargo-packager`)
 
 **What goes wrong:**
-The release pipeline is blocked late in the project because the packaging tool produces wrong artifacts, has unpatched advisories, or cannot produce the required format. Discovered at release time, this costs days.
+Late in the project, packaging fails due to unmaintained dependencies or unaddressed RUSTSEC advisories in `cargo-packager`.
 
 **Why it happens:**
-`cargo-packager` is the documented default for Rust desktop packaging and appears in the spec, but it changed hands (a post-handoff 0.12.0 release in Feb 2026) and an open issue (Jul 2026) reports it not really maintained with unaddressed RUSTSEC advisories. It is still used successfully in the wild, so the risk is "unmanaged", not "unusable".
+`cargo-packager` underwent an ownership transfer and has known advisories in its dependency tree.
 
 **How to avoid:**
-Pin an exact `cargo-packager` version from day one, gate CI on `cargo audit`, and prove the DEB/AppImage pipeline early — in the packaging phase, not at first release. Keep `cargo-deb` + `appimagetool`/`linuxdeploy` as a documented fallback. Verify on a clean Ubuntu image that the DEB installs and the AppImage runs on a machine without the build toolchain.
+Pin an exact version of `cargo-packager`, enforce `cargo audit` in CI, and establish `cargo-deb` + `appimagetool` as the documented fallback pipeline. Verify early on clean Ubuntu virtual environments.
 
 **Warning signs:**
-`cargo install cargo-packager --locked` without a version; `cargo audit` failing or not present in CI; packaging first attempted in the same phase as the release; AppImage that only runs on the build machine.
+Floating `cargo-packager` version; `cargo audit` disabled or ignored in CI.
 
 **Phase to address:**
-The Linux packaging/distribution phase, plus a `cargo audit` gate established in the CI phase.
+Phase 1 for CI audit gates; Phase 5 for final package distribution.
 
 ---
 
-### Pitfall 8: Tray and autostart behaving differently per desktop environment
+### Pitfall 8: Tray invisibility on stock GNOME & window trap
 
 **What goes wrong:**
-On stock GNOME there is no tray icon at all (GNOME does not display StatusNotifierItem without the AppIndicator extension). If the app's only path back to its window is the tray, "close to tray" becomes "close forever" for GNOME users.
+On stock GNOME (which lacks StatusNotifierItem support out of the box), closing the app to the tray makes it disappear with no tray icon to restore it. The user believes the app crashed or became unreachable.
 
 **Why it happens:**
-Slint's Linux tray support is D-Bus-based (not XEmbed), which modern desktops mostly support — except stock GNOME. Testing on one KDE/XFCE machine hides it entirely.
+Slint's Linux tray uses D-Bus StatusNotifierItem, which requires the AppIndicator GNOME Shell extension. Testing only on KDE or XFCE hides this issue.
 
 **How to avoid:**
-Never make the tray the sole access path: relaunching the app should focus the existing window (single-instance handling covers this), and Settings must always let the user reach the window. Add a first-run note when tray support is unavailable. Test on GNOME, KDE and at least one X11 environment.
+1. Implement a single-instance D-Bus activation mechanism: `zenomen-gui` registers `com.zenomen.App` on the session bus.
+2. Launching ZenOmen again invokes `PresentWindow()` on `com.zenomen.App`, bringing the existing window to the front and focusing it, then the new process exits.
+3. Provide an explicit "Close to tray" toggle in Settings, and test across GNOME, KDE, and X11.
 
 **Warning signs:**
-"Hide window" with no other way back; no single-instance handling; autostart entry hardcoding an absolute path that breaks when installed to a different prefix.
+Relying solely on the tray icon to reopen the main window; absence of single-instance D-Bus focus handling.
 
 **Phase to address:**
-The desktop-integration phase (tray/autostart/single-instance are one coherent slice).
+Phase 4 (Desktop Integration, Config & Basic RGB).
 
 ---
 
-### Pitfall 9: Rendering the generic layout instead of this machine's reality
+### Pitfall 9: Rendering generic layouts instead of hardware reality
 
 **What goes wrong:**
-The app looks identical on every laptop: controls that do nothing, sensors showing zeros, and no explanation. Users conclude it does not support their device — when the real answer was "this model exposes two of the five sensors".
+The UI renders non-functional controls or fabricated zeros on laptops where specific sensors or controls are missing.
 
 **Why it happens:**
-Designing from the developer's machine and greying out what is missing is the path of least resistance, and `Option::unwrap_or_default()` pages over the gap with a plausible-looking zero.
+Defaulting missing `Option<T>` values to `0` or hiding missing controls without explaining why.
 
 **How to avoid:**
-Capabilities drive rendering: show supported features, and for unsupported ones state why in plain language ("Fan control is unavailable on this device — firmware-controlled operation remains active"). Never substitute 0 for missing data.
+Capabilities drive UI rendering: every missing sensor displays an explicit "Unavailable" state with an explanation (e.g. "Fan control is unavailable on this device — firmware-controlled operation remains active"). Never substitute `0` for missing telemetry.
 
 **Warning signs:**
-`unwrap_or_default()` on a sensor reading; a UI value with no "unavailable" representation; capability detection added after the pages were built.
+Using `.unwrap_or_default()` on sensor readings; cards displaying `0 RPM` or `0°C` when sensors are absent.
 
 **Phase to address:**
-The GUI foundation phase for the model; every later phase must respect it.
+Phase 1 (UI Shell) for mock states; Phase 2 for real capability-driven rendering.
 
 ---
 
-### Pitfall 10: Configuration handling that destroys user data or silently misbehaves
+### Pitfall 10: Configuration corruption and destructive migration
 
 **What goes wrong:**
-A corrupt `config.toml` is overwritten with defaults, losing the user's setup. Or a bad value (e.g. a 0 ms polling interval) is accepted and pegs a core.
+A corrupt `config.toml` is silently overwritten with defaults, losing user preferences. Or legacy RGB migration deletes unparseable JSON files.
 
 **Why it happens:**
-"Parse; on error write defaults" is the simplest code and looks robust.
+Naïve error handling that writes default config whenever deserialization fails.
 
 **How to avoid:**
-On a parse error, load safe defaults, keep the invalid file for troubleshooting, and surface the problem. Validate ranges on load (clamping intervals to sane bounds) and validate again on write. Write atomically (temp file + rename) so a crash cannot truncate config. Migrating legacy RGB profiles must never discard an unparseable file.
+1. If `config.toml` fails to parse, load safe defaults in memory, preserve the invalid file on disk (e.g. `config.toml.bak`), and notify the user.
+2. Legacy RGB migration must never delete or overwrite existing `~/.config/openomen/rgb/*.json` files.
+3. Perform atomic config writes using temporary files and atomic renames.
 
 **Warning signs:**
-`serde` errors converted directly into a default config write; no range validation; non-atomic writes; migration code that deletes the source.
+Overwriting config files without preserving invalid ones; non-atomic file writes.
 
 **Phase to address:**
-The configuration/persistence phase (and again in the RGB migration work).
+Phase 4 (Configuration and RGB Migration).
 
 ---
 
-### Pitfall 11: RGB profile fields that silently do nothing
+### Pitfall 11: RGB profile fields that silently do nothing & unverified writes
 
 **What goes wrong:**
-A user sets brightness, speed or `loop` in a profile and the keyboard ignores it — because the hardware interface only accepts zone colors. The setting appears accepted and vanishes on restart.
+Users import legacy RGB profiles containing `brightness`, `speed`, `length_ms`, `change`, and `loop`, expecting animations, but only static zone colors apply. Or writing RGB succeeds in the UI despite hardware failure.
 
 **Why it happens:**
-The legacy schema defines `length_ms`, `change`, `brightness`, `speed`, `loop` but only ever writes `zones`, and there is no UI feedback that the fields are inert. Carrying the schema forward without fixing or documenting it repeats the disappointment.
+The legacy Python tool stored these animation fields in JSON without ever applying them to hardware, and returned success even if sysfs writes failed. Carrying over these fields without clarification creates false expectations.
 
 **How to avoid:**
-Decide explicitly per field: either implement it or remove it from the schema and document that only zone colors reach hardware. Validate color values strictly (`#RRGGBB` only) — the legacy tool raises an uncaught `ValueError` traceback on `"red"` instead of reporting an invalid profile.
+1. In v1 Basic RGB, clearly identify unsupported animation and timing fields during migration rather than promising them.
+2. Validate `#RRGGBB` hex strings strictly (preventing Python's uncaught `ValueError` on strings like `"red"`).
+3. Apply RGB through the privileged hardware service and verify writes where supported by hardware.
 
 **Warning signs:**
-Profile fields with no assignment in the apply path; no color validation before `int(hex, 16)`; migration that produces fields the app will ignore.
+Exposing animation sliders that the hardware does not support; accepting invalid hex without error handling.
 
 **Phase to address:**
-The RGB capability phase (validation and schema honesty are part of it, not a polish item).
+Phase 4 (Basic RGB & Migration).
 
 ---
 
-### Pitfall 12: Leaving the old implementation's defects in place as "the baseline"
+### Pitfall 12: Porting legacy Python bugs as "behavioral baseline"
 
 **What goes wrong:**
-The Python tool is kept as the reference for behavior, so its known bugs get ported deterministically: `-w` ignored on `stats`, `-w` always showing the full dashboard, a 1.5 s interval documented as 2 s, hardcoded `card0`, double-executed `rgb set`, duplicate thermal selection. The rewrite inherits them and the "rewrite" buys nothing.
-
-**Why it happens:**
-"Match the behavior exactly" is the natural parity rule, and bugs look like behavior. Nobody re-reads the CLI help text against the code.
+The Python CLI is treated as an architectural blueprint rather than a hardware-behaviour reference, leading to inherited bugs:
+- No RAM telemetry (the legacy CLI lacked it entirely, so developers might overlook it; ZenOmen must implement it from scratch via `/proc/meminfo`).
+- `card0` hardcoding for Intel GPU.
+- 500 ms blocking sleep during CPU sampling.
+- Ignoring `-w` flag on `stats`.
+- Disabling TLS verification in updater.
+- Diverging temperature sensor selection in `doctor`.
 
 **How to avoid:**
-Write down the known defects (they are already documented in `.planning/codebase/CONCERNS.md`) as explicit requirements *not* to reproduce, and verify each with a test or a manual check. Port the proven value, not the mistakes.
+Maintain an explicit "Do Not Port" defect list in project requirements and planning documentation. Verify that each new Rust subsystem solves these issues natively.
 
 **Warning signs:**
-A phase plan that says "match legacy behavior" with no delta list; help text copied without verification; no test covering the previously broken path.
+Adopting Python script architecture (re-exec, synchronous loops, duplicate heuristics); missing RAM telemetry implementation.
 
 **Phase to address:**
-Requirements definition (now) and each phase's verification criteria (continuously).
-
-## Technical Debt Patterns
-
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| `nvidia-smi` subprocess instead of NVML | No extra dependency, works today | ~5 s timeouts and per-tick process spawns; the top CPU/RSS offender | Acceptable for the first GPU implementation; replace during optimization |
-| `MockHardware` shipped in the binary behind a flag | UI development without a laptop | Dead code risk if it leaks into release behavior | Acceptable and encouraged — it is how the app is tested at all |
-| Single crate instead of a workspace (until the daemon lands) | Faster start, less config | The privileged daemon must not live in the GUI binary | Acceptable in M1; split before the service exists |
-| Inline `.slint` files until components stabilize | Fewer files to manage | Copy-pasted UI diverges | Acceptable for one phase, never for shared metric cards |
-| Skipping `cargo audit` locally | Faster commits | Advisory creep in a root-privileged tool | Never acceptable once the daemon exists |
-| Deferring the Windows backend | Focus on the validated platform | The trait boundary can rot if nothing exercises it | Acceptable — provided the trait stays honest and tests use `MockHardware` rather than Linux paths |
-
-## Integration Gotchas
-
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| D-Bus system bus | Registering with no bus policy, letting any process claim the name | Ship a policy file restricting ownership to the service user |
-| polkit | Granting `yes` to every caller | Authorize per action; `auth_admin_keep` for hardware writes |
-| systemd unit | Running the daemon as root with full filesystem access | Sandbox it (`ProtectSystem`, `ProtectHome`, `PrivateTmp`, a limited `DeviceAllow`/read-write path set) since the only thing it needs is a few sysfs paths |
-| XDG autostart | Absolute `Exec` path that breaks across prefixes | Resolve via `$PATH`/the installed location; `Exec=zenomen --minimized` |
-| Desktop tray | Assuming the icon is visible on every DE | Fallback path to the window; detect and explain when unavailable |
-| GitHub Releases | Calling the API on every launch (rate limits, offline failures) | v1 only links to the Releases page; no API dependency for core function |
-| /sys writes | Trusting `write()` returning `Ok` as confirmation | Read back with retry/backoff; distinguish observed state |
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Full sensor sweep at a fixed 1 s interval | Idle CPU above target; fans of the app itself audibly spinning up | Per-metric deadlines (CPU 1 s, GPU 2 s, RAM 5 s, profile 5 s), slower in tray | Immediately on old/low-power CPUs |
-| `nvidia-smi` per tick | 1–5 s stalls, process churn, idle CPU spikes | Resolve once, cache the negative, then NVML | As soon as a dashboard is left open |
-| Re-globbing `/sys` every tick | Steady wasted CPU and syscalls | Enumerate hwmon/drm once at loop start; re-read only values | Within minutes of tray residency |
-| Rebuilding Slint models per telemetry event | RSS climb + render spikes | Mutate rows in place; publish deltas | Hours of uptime (the tray case) |
-| Unbounded history/log growth | "Lightweight" app at hundreds of MB | `VecDeque` cap 120; bounded log retention | Long sessions — exactly the tray scenario |
-| Continuous value animation in the UI | Idle CPU never reaches 0.1% | Update values without animating them; animate only deliberate transitions | Immediately; it is a constant floor, not a spike |
-
-## Security Mistakes
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| GUI or daemon accepting a path/command from the caller | Arbitrary root file write / code execution | Whitelisted operations, constants for paths, schema validation before any write |
-| TLS verification disabled in any network path | On-path binary substitution | v1 performs no downloads at all; if a check is added, use the default TLS context |
-| Executing a downloaded artifact | Remote root code execution (the legacy updater's defect) | Never execute downloaded content; v1 links to Releases instead |
-| Shipping root code without an audit gate | Privilege-boundary changes land unreviewed | `cargo audit` + clippy in CI from the first phase; security review before the service ships |
-| Unvalidated values interpolated into sysfs paths or RGB hex parsing | Crashes and (future) injection into a root path | Strict `#RRGGBB` validation; reject rather than repair; error code, not traceback |
-| Daemon with unrestricted filesystem access | A compromised daemon owns the machine | systemd sandboxing + the minimum writable path set |
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Zero instead of "Unavailable" | Users chase a phantom problem | Explicit unavailable state with the reason |
-| Silent success on an ignored write | User believes cooling changed | Show observed state; partial-apply messaging |
-| Generic layout, unexplained gaps | "It doesn't support my laptop" | Capability-driven pages with plain-language explanations |
-| A single aggregated "CPU" temperature when several exist | Wrong sensor becomes the headline number | Prefer the driver/label-prioritized CPU sensor; expose others on demand |
-| Tray-only access on GNOME | App seems to vanish | Relaunch focuses the window; Settings reachable without the tray |
-| RGB settings that silently don't apply | Distrust of every setting | Only offer what the hardware honors; document the rest |
-| Animating numbers to look "alive" | Constant CPU floor, contradicts the product promise | Static values, restrained transitions |
-
-## "Looks Done But Isn't" Checklist
-
-- [ ] **Fan control:** renders, but was it read back and the *observed* mode shown? Verify with a forced failure (write then restore, confirm the UI reports the real state).
-- [ ] **Power profiles:** applied, but is the profile re-read after the write, and are choices read from `platform_profile_choices` rather than hardcoded?
-- [ ] **Unsupported hardware:** controls hidden/disabled with an explanation on a machine lacking `pwm1_enable` — not merely greyed out with a zero value.
-- [ ] **Memory budget:** measured on a 2-hour tray session with RSS recorded, not inferred from a short smoke test.
-- [ ] **Tray:** verified on GNOME (with and without AppIndicator) and KDE; quitting works from the tray; relaunch focuses the existing instance.
-- [ ] **Packaging:** DEB installs on a clean Ubuntu image and the AppImage runs on a machine without the build toolchain; desktop entry and systemd unit both land where expected.
-- [ ] **Privilege boundary:** no `sudo`/`execvp`/setuid anywhere in the GUI; the daemon rejects an out-of-whitelist parameter with an error code, not a traceback.
-- [ ] **Config robustness:** corrupt `config.toml` → safe defaults, original preserved, user told; legacy RGB migration keeps the source.
-- [ ] **RGB honesty:** profile fields either honored or absent from the schema; `"red"` produces an error message, not a traceback.
-- [ ] **CI:** `fmt`, `clippy -D warnings`, `test`, `cargo audit` all fail the build on violation.
-- [ ] **Legacy defects:** each item in `CONCERNS.md` that ZenOmen replaces is either absent by design or has a check proving so.
-
-## Recovery Strategies
-
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Wrong sensor reported to users | MEDIUM | Add the label/driver resolution helper, route both call sites through it, export detection in Diagnostics, release a patch with an explanation |
-| Unsafe root write path discovered | HIGH | Disable the affected operation immediately, move it behind the service with validation, add a regression test, audit all other write paths |
-| Memory grows in tray mode | MEDIUM | Cap the buffer, stop rebuilding models, add a long-session RSS test, release with measured numbers |
-| Shipping toolchain blocked by advisories | MEDIUM | Freeze releases, migrate to `cargo-deb` + `appimagetool`, re-verify DEB/AppImage on a clean image |
-| Config destroyed by a bad write | LOW-USERS / HIGH-TRUST | Restore from the preserved invalid file, move to atomic writes, add a validation test |
-| Tray invisible on GNOME | LOW | Document the extension requirement, guarantee the relaunch-to-focus path |
-
-## Pitfall-to-Phase Mapping
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Sensor identity by name, not index | Foundation / Linux telemetry | Unit test with a synthetic hwmon tree; dashboard and diagnostics agree on the CPU sensor |
-| Fan control capability + verified writes | Cooling control | Forced verification failure shows a failure message; unsupported device hides the control with a reason |
-| Privilege escalation | Hardware service | No `sudo`/`execvp` in the GUI binary; daemon rejects an invalid parameter with a coded error |
-| UI-thread blocking | GUI foundation | Window frame time unchanged while a GPU sample runs; full sweeps happen only on the worker |
-| Unbounded memory | Foundation buffer + Optimization | 2-hour tray session RSS within budget and flat |
-| Optimistic success reporting | Cooling/power control | Read-back mismatch produces `VERIFICATION_FAILED` on screen |
-| Packaging toolchain risk | Packaging + CI | `cargo audit` green; DEB installs on a clean Ubuntu VM; AppImage runs off-machine |
-| Tray/autostart DE variance | Desktop integration | Manual check on GNOME (with/without extension) and KDE; autostart works after a real login |
-| Generic layout vs. machine reality | GUI foundation | Run on a machine or mock with a deliberately limited capability set |
-| Config data loss | Configuration | Corrupt-file test preserves the original; interval out of range is clamped |
-| Inert RGB fields | RGB capability | Setting a non-honored field is either impossible or clearly documented; invalid color gives a clean error |
-| Inherited legacy defects | Requirements + every phase | The `CONCERNS.md` delta list is checked off per phase |
-
-## Sources
-
-- `.planning/codebase/CONCERNS.md` and `ARCHITECTURE.md` (OpenOMEN) — pitfalls 1, 3, 4, 5, 6, 11, 12 are documented observed defects with line references; HIGH
-- https://docs.kernel.org/hwmon/sysfs-interface.html — no guarantee that `tempN`/`hwmonN` map to fixed components; HIGH
-- https://docs.kernel.org/userspace-api/sysfs-platform_profile.html — profile choices must be read dynamically; HIGH
-- https://github.com/uAtomicBoolean/slint-template/issues/6 (2026-07-28) — cargo-packager maintenance/RUSTSEC concern; MEDIUM
-- Phoronix / LKML / Arch Wiki (Jan–Jul 2026) — model-gated manual fan support and `pwm1_enable` behavior; MEDIUM
-- HP support forum and Reddit reports (2026) — models where fan control is inaccessible under Linux due to firmware/ACPI issues; MEDIUM
-- https://slint.dev/blog/slint-1.17-released and the desktop-readiness post — Linux tray via D-Bus StatusNotifierItem, GNOME caveat; HIGH for the mechanism, MEDIUM for the GNOME-extension requirement
+Continuous across all phases.
 
 ---
-*Pitfalls research for: ZenOmen*
-*Researched: 2026-10-30*
+*Pitfalls research for: ZenOmen*  
+*Updated: 2026-10-30*
