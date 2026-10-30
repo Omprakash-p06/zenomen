@@ -159,12 +159,81 @@ Which phase covers which requirement. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(filled by roadmap)_ | — | — |
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| FOUND-05 | Phase 1 | Pending |
+| MON-09 | Phase 1 | Pending |
+| PERF-03 | Phase 1 | Pending |
+| MON-01 | Phase 2 | Pending |
+| MON-02 | Phase 2 | Pending |
+| MON-03 | Phase 2 | Pending |
+| MON-04 | Phase 2 | Pending |
+| MON-05 | Phase 2 | Pending |
+| MON-06 | Phase 2 | Pending |
+| MON-07 | Phase 2 | Pending |
+| MON-08 | Phase 2 | Pending |
+| MON-10 | Phase 2 | Pending |
+| MON-11 | Phase 2 | Pending |
+| MON-12 | Phase 2 | Pending |
+| DIAG-01 | Phase 2 | Pending |
+| DIAG-02 | Phase 2 | Pending |
+| COOL-01 | Phase 3 | Pending |
+| COOL-02 | Phase 3 | Pending |
+| COOL-03 | Phase 3 | Pending |
+| COOL-04 | Phase 3 | Pending |
+| COOL-05 | Phase 3 | Pending |
+| COOL-06 | Phase 3 | Pending |
+| PWR-01 | Phase 3 | Pending |
+| PWR-02 | Phase 3 | Pending |
+| PWR-03 | Phase 3 | Pending |
+| PWR-04 | Phase 3 | Pending |
+| PWR-05 | Phase 3 | Pending |
+| PWR-06 | Phase 3 | Pending |
+| SVC-01 | Phase 3 | Pending |
+| SVC-02 | Phase 3 | Pending |
+| SVC-03 | Phase 3 | Pending |
+| SVC-04 | Phase 3 | Pending |
+| SVC-05 | Phase 3 | Pending |
+| SVC-06 | Phase 3 | Pending |
+| DIAG-04 | Phase 3 | Pending |
+| RGB-01 | Phase 4 | Pending |
+| RGB-02 | Phase 4 | Pending |
+| RGB-03 | Phase 4 | Pending |
+| RGB-04 | Phase 4 | Pending |
+| RGB-05 | Phase 4 | Pending |
+| RGB-06 | Phase 4 | Pending |
+| RGB-07 | Phase 4 | Pending |
+| SYS-01 | Phase 4 | Pending |
+| SYS-02 | Phase 4 | Pending |
+| SYS-03 | Phase 4 | Pending |
+| SYS-04 | Phase 4 | Pending |
+| SYS-05 | Phase 4 | Pending |
+| SYS-06 | Phase 4 | Pending |
+| SYS-07 | Phase 4 | Pending |
+| SYS-08 | Phase 4 | Pending |
+| SYS-09 | Phase 4 | Pending |
+| SYS-10 | Phase 4 | Pending |
+| DIAG-03 | Phase 4 | Pending |
+| REL-01 | Phase 5 | Pending |
+| REL-02 | Phase 5 | Pending |
+| REL-03 | Phase 5 | Pending |
+| REL-04 | Phase 5 | Pending |
+| REL-05 | Phase 5 | Pending |
+| REL-06 | Phase 5 | Pending |
+| REL-07 | Phase 5 | Pending |
+| REL-08 | Phase 5 | Pending |
+| PERF-01 | Phase 5 | Pending |
+| PERF-02 | Phase 5 | Pending |
+| PERF-04 | Phase 5 | Pending |
+| PERF-05 | Phase 5 | Pending |
+| PERF-06 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 70 total
-- Mapped to phases: pending
-- Unmapped: pending
+- Mapped to phases: 70
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-30*

@@ -6,6 +6,12 @@ last_mapped_at: 2026-10-30
 
 **Analysis Date:** 2026-10-30
 
+## Scope
+
+- This document maps the **legacy Python implementation** currently on disk — accurate today, and the behavioural reference during the Rust rewrite
+- The **target v1 stack is Rust (edition 2024) + Slint 1.17 with a D-Bus hardware service** — see `.planning/PROJECT.md` (Constraints, Key Decisions) and `.planning/research/STACK.md`
+- The Python CLI is removed in Phase 5 once Rust parity is verified (`REL-08`) — do not add new Python features
+
 ## Languages
 
 **Primary:**
