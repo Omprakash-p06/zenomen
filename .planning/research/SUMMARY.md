@@ -15,6 +15,8 @@ The biggest product risks are thermal and reputational, not technical: writing a
 
 ## Key Findings
 
+Each dimension is written up in full beside this file: `.planning/research/STACK.md` and `.planning/research/FEATURES.md` for the technology and feature landscape, with ARCHITECTURE.md and PITFALLS.md for structure and failure modes.
+
 ### Recommended Stack
 
 Rust (edition 2024) + Slint 1.17 with `renderer-femtovg`, `sysinfo` 0.38 restricted to CPU/RAM semantics, `serde`+`toml` for config, `zbus` for the system service, `tracing` for diagnostics, `thiserror` for the `HardwareError` contract, and `cargo-audit` + `cargo-packager` (pinned) in CI. Dependencies stay small on purpose; `tokio` and any webview are explicitly rejected.
@@ -90,14 +92,14 @@ Research suggests five phases at coarse granularity. The ordering is driven by o
 **Rationale:** Read-only telemetry needs no privilege, so it can land before the risky control work — and it is what makes the app useful on day one. Capability detection must exist here because every later control gates on it.
 **Delivers:** Real Linux provider (procfs/hwmon/DRM, NVIDIA via `nvidia-smi` for now); one shared sensor-selection helper driven by driver + label priority; `HardwareCapabilities` snapshot; telemetry charts from the bounded buffer; diagnostics export.
 **Uses:** `sysinfo` for CPU/RAM, direct sysfs for spec-mandated semantics, `tracing` for the export.
-**Implements:** `platform/linux/{procfs,hwmon,drm,acpi}.rs`, `core/{telemetry,memory}.rs`.
+**Key modules:** `platform/linux/{procfs,hwmon,drm,acpi}.rs`, `core/{telemetry,memory}.rs`.
 **Avoids:** Pitfall 1 (sensor identity by name), Pitfall 9 (generic layout), Pitfall 7's GPU cost (cache the `nvidia-smi` negative result).
 
 ### Phase 3: Verified Hardware Control Behind a Privileged Service
 
 **Rationale:** This is the trust-critical phase and the whole reason for the service. It is deliberately isolated: fan/power writes, verification, and the privilege boundary are reviewed and tested together.
 **Delivers:** `zenomen-hw` D-Bus service with polkit + systemd sandboxing; `SetFanMode` / `SetPowerProfile` / `ApplyRgbProfile` with whitelisted validation; read-back verification with retry/backoff; `VERIFICATION_FAILED` / `UNSUPPORTED_OPERATION` / `INVALID_PROFILE` surfaced in the UI; Cooling and Performance pages; combined presets with honest partial-apply reporting.
-**Implements:** `daemon/zenomen-hw/`, `security/{permissions,validation}.rs`, `platform/linux/{acpi,hp_wmi,dbus}.rs`.
+**Key modules:** `daemon/zenomen-hw/`, `security/{permissions,validation}.rs`, `platform/linux/{acpi,hp_wmi,dbus}.rs`.
 **Avoids:** Pitfall 2 (assumed fan control), Pitfall 3 (privilege escalation), Pitfall 6 (optimistic success).
 
 ### Phase 4: Desktop Integration, Config and Basic RGB
