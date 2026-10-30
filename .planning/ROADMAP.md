@@ -24,6 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: A runnable ZenOmen application whose entire UI is driven by mock hardware data, with the resource instrumentation needed to hold the 40 MB budget later.
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
+**UI hint**: yes
 **Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04, FOUND-05, MON-09, PERF-03
 **Success Criteria** (what must be TRUE):
   1. Launching the app opens the Overview page in the ZenOmen dark theme, and all six screens are reachable by sidebar click and by keyboard alone.
