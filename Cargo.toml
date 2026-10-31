@@ -1,0 +1,39 @@
+[package]
+name = "zenomen"
+version = "0.1.0"
+edition = "2024"
+authors = ["Omprakash <p06>"]
+license = "GPL-3.0-only"
+description = "Lightweight hardware control center for HP OMEN and Victus laptops"
+repository = "https://github.com/Omprakash-p06/zenomen"
+
+[dependencies]
+# Slint GUI toolkit — pinned to 1.17. Deliberately excludes the Qt and Skia
+# backends so the desktop UI process stays inside the <=40 MB RSS budget.
+slint = { version = "1.17", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-femtovg",
+] }
+
+# Core utilities
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "6.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+[build-dependencies]
+slint-build = "1.17"
+
+[profile.release]
+# Size and memory oriented: this profile exists to uphold the <=40 MB peak RSS
+# budget, not to win microbenchmarks.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

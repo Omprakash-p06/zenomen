@@ -1,0 +1,11 @@
+// Compiles the Slint UI definition into Rust at build time.
+//
+// The style is pinned here rather than left to the ambient SLINT_STYLE
+// environment variable so that a developer machine and CI render the same
+// widgets. Phase 1 draws no std-widgets yet; later phases depend on this being
+// deterministic.
+fn main() {
+    let config = slint_build::CompilerConfiguration::new().with_style("fluent".into());
+    slint_build::compile_with_config("ui/app.slint", config)
+        .expect("failed to compile ui/app.slint");
+}

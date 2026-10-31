@@ -1,0 +1,13 @@
+# Rust build output
+/target
+
+# Legacy Python tooling (removed once Rust parity is verified)
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Cargo.lock is deliberately NOT ignored: ZenOmen is an application, not a
+# library. The lockfile is committed so builds are reproducible and so
+# `cargo audit` audits the exact dependency graph that ships.
