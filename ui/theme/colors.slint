@@ -1,0 +1,38 @@
+// ZenOmen colour tokens — dark theme, Phase 1.
+//
+// Every value here is copied verbatim from `01-UI-SPEC.md` (Color section) and
+// was contrast-verified there against WCAG 2.1. No screen file may contain a
+// literal hex: it references these names instead. A light theme (SYS-08,
+// Phase 4) becomes a second token file, never a second set of screens.
+export global ThemeColors {
+    // Surfaces, 60/30/10 split.
+    out property <color> obsidian: #0B0C0F; // dominant 60%: window bg, gutters, plot bg
+    out property <color> charcoal: #15171C; // secondary 30%: sidebar, cards, chart wells
+    out property <color> slate: #1B1E25; // raised surface: notices, hover, nested rows
+
+    // Outline. Borders and grid lines only — never used for text.
+    out property <color> outline: #262A33;
+
+    // Text.
+    out property <color> text-primary: #E8E6E3;
+    out property <color> text-secondary: #9BA1AC;
+    out property <color> text-disabled: #4E5360;
+
+    // Accent (10%), reserved list in 01-UI-SPEC.md. 8.1:1 on Obsidian.
+    out property <color> gold: #C6A15B;
+
+    // Alert / destructive. 5.6:1 on Obsidian, 4.8:1 on Slate.
+    out property <color> crimson: #E0606B;
+
+    // Chart series: one accent plus two neutral tints, never an extra hue.
+    out property <color> chart-cpu: #C6A15B;
+    out property <color> chart-gpu: #9BA1AC;
+    out property <color> chart-ram: #5D6470;
+
+    // Status semantics. Colour is never the only signal: every status is also
+    // carried by a glyph and a label.
+    out property <color> status-ok: #4E9A68;
+    out property <color> status-warn: #C6A15B;
+    out property <color> status-err: #E0606B;
+    out property <color> status-info: #9BA1AC;
+}

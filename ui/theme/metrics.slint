@@ -1,0 +1,35 @@
+// ZenOmen spacing, structural and window tokens.
+//
+// Spacing values come verbatim from `01-UI-SPEC.md` (Spacing Scale): a 4px grid,
+// no ad-hoc values. Slint identifiers cannot begin with a digit, so the spec's
+// `2xl` / `3xl` are spelled `xxl` / `xxxl` here — the values are unchanged.
+export global ThemeMetrics {
+    // Spacing scale (multiples of 4).
+    out property <length> xs: 4px; // value-to-unit gap, icon-to-label gap
+    out property <length> sm: 8px; // compact stack spacing, pill padding
+    out property <length> md: 16px; // card padding, grid gap
+    out property <length> lg: 24px; // page padding, header horizontal padding
+    out property <length> xl: 32px; // gap between major blocks
+    out property <length> xxl: 48px; // spec `2xl`: empty-state breathing room
+    out property <length> xxxl: 64px; // spec `3xl`: page top offset, no header action
+
+    // Structural dimensions (all multiples of 4; not spacing tokens).
+    out property <length> sidebar-width: 200px;
+    out property <length> header-height: 64px;
+    out property <length> status-strip-height: 40px;
+    out property <length> min-card-width: 220px;
+    out property <length> sparkline-height: 28px;
+    out property <length> chart-height: 160px;
+
+    // Stroke widths. Not spacing: 1px outlines and grid lines, 2px focus ring
+    // and chart strokes.
+    out property <length> stroke-hairline: 1px;
+    out property <length> stroke-emphasis: 2px;
+
+    // Window constraints. At the default size the Overview grid is 4 columns;
+    // at the minimum size it steps to 3 and nothing is hidden or reordered.
+    out property <length> default-width: 1180px;
+    out property <length> default-height: 760px;
+    out property <length> min-width: 940px;
+    out property <length> min-height: 620px;
+}
