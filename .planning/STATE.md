@@ -1,18 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 1
+current_phase: 01
 current_phase_name: Foundation — GUI Shell on Mock Hardware
-status: ready_to_execute
-stopped_at: Phase 1 plans generated (01-01, 01-02, 01-03); ready for execution
-last_updated: "2026-10-30T19:10:00.000Z"
-last_activity: 2026-10-30
-last_activity_desc: Phase 1 implementation plans generated (01-01-PLAN.md, 01-02-PLAN.md, 01-03-PLAN.md)
-state_head: 9a69f00a58a7dd57d6bbd79b2da01a88bb5d70f0
+current_plan: 2
+status: executing
+stopped_at: Completed 01-01-PLAN.md (scaffold, theme tokens, CI gates)
+last_updated: "2026-10-31T17:35:12.410Z"
+last_activity: 2026-10-31
+last_activity_desc: Phase 01 execution started
+state_head: 65e6ef523f4526833a79f7cf8a1694c99e02d926
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -23,14 +24,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-10-30 with all review corrections)
 
 **Core value:** Hardware control you can trust — every write verified by read-back, and a missing sensor reads "Unavailable" rather than a fabricated number.  
-**Current focus:** Phase 1 — Foundation (GUI Shell on Mock Hardware)
+**Current focus:** Phase 01 — Foundation — GUI Shell on Mock Hardware
 
 ## Current Position
 
-Phase: 1 of 5 (Foundation — GUI Shell on Mock Hardware)  
-Plans: 0 of 3 completed in current phase (3 plans generated: `01-01`, `01-02`, `01-03`)  
-Status: Ready to execute (`/gsd-execute-phase 1` or `/gsd-next`)  
-Last activity: 2026-10-30 — Generated Phase 1 research and execution plans  
+Current Plan: 2
+Total Plans in Phase: 3
+Phase: 01 (Foundation — GUI Shell on Mock Hardware) — EXECUTING
+Plans: 1 of 3 completed in current phase (`01-01` done; `01-02`, `01-03` remaining)  
+Status: Executing Phase 01 — plan 01-01 complete, next is 01-02
+Last activity: 2026-10-31 — Plan 01-01 completed (Rust + Slint scaffold, theme tokens, CI gates)
 
 **Phase 1 Artifacts:**  
 - Research: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-RESEARCH.md)
@@ -60,6 +63,11 @@ Progress: [░░░░░░░░░░] 0%
 | 5. Distribution | 3 | 0 | 0 | — |
 
 *Updated after each plan generation and completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 16min | 4 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -76,6 +84,11 @@ All decisions confirmed and logged in `PROJECT.md` Key Decisions table:
 - **Safe RGB Migration:** Preserves legacy `~/.config/openomen/rgb/*.json` files intact; imports `#RRGGBB` zone colors; identifies unsupported animation fields without failing; verifies hardware writes.
 - **GNOME Tray Fallback:** Single-instance D-Bus activation (`com.zenomen.App` `PresentWindow`) ensures the window can be brought forward on desktop environments where StatusNotifierItem is absent.
 - **Rust + Slint Stack:** GUI-only product; Python `openomen` retained as behavioral reference until Rust parity, then removed.
+- [Phase 01]: Slint requirement stays 1.17 as specified; crates.io resolves it to 1.18.1 and the resolved version is recorded rather than the spec being rewritten.
+- [Phase 01]: Initial window size binds through Slint preferred-width/preferred-height; Window has no default-width/default-height. Metric token names unchanged.
+- [Phase 01]: UI-SPEC spacing tokens 2xl/3xl are spelled xxl/xxxl in Slint because identifiers cannot start with a digit; values 48px/64px unchanged.
+- [Phase 01]: Vendored Inter and JetBrains Mono ship with their SIL OFL 1.1 texts and a provenance README; GPL-3.0 redistribution requires the licence to travel with the binaries.
+- [Phase 01]: git.allow_default_branch_commits set to true because git.branching_strategy is none and the executor commit guard otherwise refuses to commit on main.
 
 ### Pending Todos
 
@@ -96,7 +109,9 @@ Execute Phase 1 plans (`01-01-PLAN.md`, `01-02-PLAN.md`, `01-03-PLAN.md`) via `/
 
 ## Session Continuity
 
-Last session: 2026-10-30T19:10:00.000Z  
-Stopped at: Phase 1 plans generated; ready for execution  
+**Resume file:** None
+
+Last session: 2026-10-31T17:34:45.427Z
+Stopped at: Completed 01-01-PLAN.md (scaffold, theme tokens, CI gates)
 Next action: Phase 1 execution (`/gsd-execute-phase 1` or `/gsd-next`)  
 Reference plan: `.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-01-PLAN.md`

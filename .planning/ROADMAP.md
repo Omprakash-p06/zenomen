@@ -23,6 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Foundation — GUI Shell on Mock Hardware
+
 **Goal**: A runnable ZenOmen application whose entire UI is driven by mock hardware data, with the resource instrumentation needed to hold the 40 MB budget later.
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
@@ -34,14 +35,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Running the app with a mock provider configured to report zero capabilities still launches and explains what is unsupported, with no panic and no blank panels.
   4. Window frame time stays stable while the monitoring worker publishes updates — no hardware read or external command is reachable from a UI callback.
   5. Memory and CPU instrumentation logs metrics distinguishing cold start, warm dashboard, minimized tray, and peak RSS; CI fails on a formatting violation, a clippy warning, a failing test, or a dependency advisory (`cargo audit`).
-**Plans**: 3 plans
+
+**Plans**: 1/3 plans executed
 
 Plans:
-- [ ] 01-01: Rust + Slint scaffold, build pipeline, theme tokens and CI gates (`fmt`, `clippy -D warnings`, `cargo audit`)
+- [x] 01-01: Rust + Slint scaffold, build pipeline, theme tokens and CI gates (`fmt`, `clippy -D warnings`, `cargo audit`)
 - [ ] 01-02: Application shell — navigation, six screens, Overview bound to core events (`AppCommand`/`AppEvent`)
 - [ ] 01-03: Mock hardware provider, monitoring worker, bounded history (120 samples) and benchmark instrumentation
 
 ### Phase 2: Linux Telemetry & Capability Detection
+
 **Goal**: ZenOmen shows real readings from this machine, knows exactly which capabilities it has, and can produce a diagnostics export.
 **Mode:** mvp
 **Depends on**: Phase 1
@@ -52,6 +55,7 @@ Plans:
   3. On this machine, a component that is genuinely absent (for example no NVIDIA GPU, or a fan sensor that is not exposed) shows "Unavailable" with a reason — never `0`.
   4. Charts accumulate from the live stream and the history window can be changed in the UI without a restart; manual refresh updates the dashboard on demand.
   5. A diagnostics export written to a file contains version, OS/kernel, hardware identifiers, detected sensors from the shared registry, capability status and recent errors.
+
 **Plans**: 3 plans
 
 Plans:
@@ -60,6 +64,7 @@ Plans:
 - [ ] 02-03: Live charts, refresh and history controls, diagnostics detection report and export
 
 ### Phase 3: Verified Hardware Control
+
 **Goal**: Fan modes and power profiles can be changed safely — through a privileged service, with every write verified by read-back and honest reporting of what actually changed.
 **Mode:** mvp
 **Depends on**: Phase 2
@@ -71,6 +76,7 @@ Plans:
   4. The service implements a formalized API contract (`GetCapabilities`, `GetFanStatus`, `SetFanMode`, `GetPowerProfiles`, `GetPowerProfile`, `SetPowerProfile`, `ApplyRgbProfile`, `SetRgbEnabled`), rejects arbitrary paths or commands, and diagnostics show service connection and permission status.
   5. Only profiles and fan modes the machine advertises are offered; unavailable controls are explained rather than hidden silently.
   6. Applying a combined preset (Gaming, Balanced, Quiet) reports granular results via `PresetResult` (`power_applied`, `fan_applied`, `partial_success`), reporting partial success honestly without claiming false atomic rollback.
+
 **Plans**: 3 plans
 
 Plans:
@@ -79,6 +85,7 @@ Plans:
 - [ ] 03-03: ACPI power profiles, combined presets with `PresetResult` partial-apply reporting, Performance page
 
 ### Phase 4: Desktop Integration, Config & Basic RGB
+
 **Goal**: ZenOmen behaves like a real desktop application — it lives in the tray, starts with the session, remembers settings, and can drive keyboard lighting with existing profiles safely carried over.
 **Mode:** mvp
 **Depends on**: Phase 3
@@ -90,6 +97,7 @@ Plans:
   4. Existing `~/.config/openomen/rgb/*.json` profiles are safely migrated without deleting or overwriting source files; valid `#RRGGBB` zone colors are imported; unsupported animation/timing fields are identified without failing.
   5. An invalid color value produces a clear error message, not a traceback; RGB writes are verified where hardware supports read-back.
   6. The app is fully reachable across GNOME, KDE, and X11 environments.
+
 **Plans**: 3 plans
 
 Plans:
@@ -98,6 +106,7 @@ Plans:
 - [ ] 04-03: Basic RGB — capability detection, presets, on/off, strict `#RRGGBB` validation, safe legacy JSON profile migration
 
 ### Phase 5: Distribution, Resource Budget & Rebrand
+
 **Goal**: ZenOmen is installable, measurable and honest — packaged for Linux, released automatically with an audit gate, proven inside its resource budget, and presented as its own project.
 **Mode:** mvp
 **Depends on**: Phase 4
@@ -108,6 +117,7 @@ Plans:
   3. A two-hour tray session stays at or below 40 MB peak RSS for the UI process with flat memory, idle CPU stays at or below 0.1% on dashboard, and hardware service stays ≤15 MB RSS (reported separately).
   4. Removing a sensor, an external tool or the hardware service one at a time never crashes the app; each absence degrades to an explained state.
   5. The README presents ZenOmen with GPL-3.0, upstream attribution and the HP disclaimer intact, the Python `openomen` CLI is removed after parity verification, and "Check for updates" opens the Releases page without downloading anything.
+
 **Plans**: 3 plans
 
 Plans:
@@ -122,7 +132,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/3 | Not started | - |
+| 1. Foundation | 1/3 | In Progress | - |
 | 2. Linux Telemetry | 0/3 | Not started | - |
 | 3. Verified Control | 0/3 | Not started | - |
 | 4. Desktop Integration | 0/3 | Not started | - |
