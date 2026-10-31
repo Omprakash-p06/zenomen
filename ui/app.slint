@@ -1,6 +1,36 @@
-// Placeholder window so the build pipeline (build.rs -> slint_build ->
-// slint::include_modules!) can be proven end to end in isolation.
-// Task 3 of this plan replaces this with the theme-wired AppWindow.
+// ZenOmen application window — Phase 1 scaffold.
+//
+// This is the entry component compiled by build.rs. It carries only the window
+// contract from `01-UI-SPEC.md` (title, obsidian background, default and minimum
+// size) and a centred placeholder. The sidebar, header, status strip and the six
+// screens replace the placeholder in plan 01-02; every colour and type value must
+// keep coming from `ui/theme/`, never from a literal in a screen file.
+import { ThemeColors } from "theme/colors.slint";
+import { ThemeTypography } from "theme/typography.slint";
+import { ThemeMetrics } from "theme/metrics.slint";
+
 export component AppWindow inherits Window {
     title: "ZenOmen";
+    background: ThemeColors.obsidian;
+
+    // 1180x760 default, 940x620 minimum: the sizes the Overview grid's 4- and
+    // 3-column breakpoints were designed against. Slint names the initial size
+    // `preferred-width`/`preferred-height`; there is no `default-width` property
+    // on Window.
+    preferred-width: ThemeMetrics.default-width;
+    preferred-height: ThemeMetrics.default-height;
+    min-width: ThemeMetrics.min-width;
+    min-height: ThemeMetrics.min-height;
+
+    Text {
+        width: 100%;
+        height: 100%;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: ThemeColors.text-primary;
+        font-family: ThemeTypography.font-prose;
+        font-size: ThemeTypography.heading;
+        font-weight: ThemeTypography.weight-semibold;
+        text: "ZenOmen";
+    }
 }
