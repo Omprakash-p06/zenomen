@@ -1,0 +1,69 @@
+name: CI
+
+# Quality gates for the Rust + Slint application. Every gate here is one that
+# would have caught a real defect in Phase 1, so none of them are advisory:
+# formatting, zero-warning clippy, headless tests, and a dependency audit of the
+# committed Cargo.lock.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: this workflow only reads the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Installed through rustup rather than a third-party action so the CI
+      # supply chain stays limited to actions/checkout and the cargo-audit
+      # installer.
+      - name: Install Rust toolchain (stable, clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component clippy --component rustfmt
+          rustup default stable
+
+      # winit needs xkbcommon and X11, femtovg needs a GL stack and fontconfig,
+      # and xvfb provides the virtual display the test job renders into.
+      - name: Install native Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libfontconfig1-dev \
+            libgl1-mesa-dev \
+            xvfb
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (zero warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # Tests instantiate the Slint window, which needs a display server even
+      # when nothing is drawn. xvfb-run supplies one on a headless runner.
+      - name: Test (headless)
+        run: xvfb-run --auto-servernum cargo test --all
+
+      # Audits the committed Cargo.lock: the exact graph that ships.
+      - name: Security audit
+        run: cargo audit
