@@ -1,0 +1,40 @@
+// ZenOmen telemetry chart — the wide secondary anchor on Overview.
+//
+// Wave 2 ships the container and its three series properties so
+// `overview.slint` compiles; plan 01-03 fills the plot with grid lines, the
+// three 2px series paths and the legend row. The properties are declared here
+// now because the Rust side generates one path string per series — CPU (gold),
+// GPU (text-secondary) and RAM (neutral tint) — never a single combined trace.
+//
+// The fixed 160px plot height is deliberate: a new snapshot must never reflow
+// the page, otherwise the frame-time budget cannot be measured meaningfully.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+
+export component TelemetryChart inherits Rectangle {
+    in property <string> cpu-path: "";
+    in property <string> gpu-path: "";
+    in property <string> ram-path: "";
+
+    height: ThemeMetrics.chart-height;
+    background: ThemeColors.obsidian;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: ThemeColors.outline;
+    border-radius: 4px;
+
+    // Empty state: fewer than two samples for every series. Zero would be
+    // indistinguishable from a real reading, so the chart says so instead.
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.cpu-path == "" && root.gpu-path == "" && root.ram-path == ""
+            ? "Waiting for first reading"
+            : "";
+        color: ThemeColors.text-secondary;
+        font-family: ThemeTypography.font-prose;
+        font-size: ThemeTypography.body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

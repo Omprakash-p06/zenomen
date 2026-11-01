@@ -1,0 +1,71 @@
+// ZenOmen status pill — the only component allowed to signal state.
+//
+// Colour is never the only signal (`01-UI-SPEC.md`, Alert semantics): every
+// pill also carries a glyph or a dot plus a label, so the state survives a
+// colour-blind reading and a greyscale screenshot.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { Icon } from "icons.slint";
+
+export component StatusPill inherits Rectangle {
+    /// One of `ok`, `warning`, `error`, `info`, `unavailable`.
+    in property <string> status: "info";
+    /// Short human label, e.g. `Elevated`, `Critical`, `Unavailable`.
+    in property <string> label: "";
+    /// Optional glyph name; when empty a dot is drawn instead.
+    in property <string> glyph: "";
+    /// Filled pills invert the label to obsidian on the semantic colour.
+    in property <bool> filled: false;
+
+    height: 24px;
+    min-width: 0;
+    background: root.filled ? root.tone : transparent;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: root.tone;
+    border-radius: 12px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+
+    private property <color> tone:
+        root.status == "ok"
+            ? ThemeColors.status-ok
+        : root.status == "warning"
+            ? ThemeColors.status-warn
+        : root.status == "error"
+            ? ThemeColors.status-err
+        : root.status == "unavailable"
+            ? ThemeColors.text-disabled
+        : ThemeColors.status-info;
+
+    private property <color> ink: root.filled ? ThemeColors.obsidian : root.tone;
+
+    HorizontalLayout {
+        padding-left: ThemeMetrics.sm;
+        padding-right: ThemeMetrics.sm;
+        spacing: ThemeMetrics.xs;
+        alignment: center;
+
+        if root.glyph != "" : Icon {
+            name: root.glyph;
+            tint: root.ink;
+            size: 12px;
+            vertical-stretch: 0;
+        }
+        if root.glyph == "" : Rectangle {
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: root.ink;
+            vertical-stretch: 0;
+        }
+        Text {
+            text: root.label;
+            color: root.ink;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

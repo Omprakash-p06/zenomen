@@ -5,6 +5,8 @@
 //! reaches the UI as typed events; this file must never read a sysfs path or
 //! spawn a hardware command.
 
+mod hardware;
+
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

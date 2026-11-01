@@ -9,6 +9,24 @@ import { ThemeColors } from "theme/colors.slint";
 import { ThemeTypography } from "theme/typography.slint";
 import { ThemeMetrics } from "theme/metrics.slint";
 
+// Task 1 of plan 01-02 authors the reusable component library. Importing every
+// component here forces the Slint compiler to type-check each file (a .slint
+// file that nothing imports is never compiled), which is what makes this task's
+// `cargo check` meaningful. Task 2 replaces this block with the real shell that
+// instantiates them.
+import { Icon } from "components/icons.slint";
+import { PrimaryButton, SecondaryButton } from "components/action-button.slint";
+import { StatusPill } from "components/status-pill.slint";
+import { ValueReadout } from "components/value-readout.slint";
+import { Sparkline } from "components/sparkline.slint";
+import { TelemetryChart } from "components/telemetry-chart.slint";
+import { MetricCard } from "components/metric-card.slint";
+import { SectionCard } from "components/section-card.slint";
+import { ScreenHeader } from "components/screen-header.slint";
+import { StatusStrip } from "components/status-strip.slint";
+import { UnavailablePanel } from "components/unavailable-panel.slint";
+import { CapabilityNotice } from "components/capability-notice.slint";
+
 export component AppWindow inherits Window {
     title: "ZenOmen";
     background: ThemeColors.obsidian;

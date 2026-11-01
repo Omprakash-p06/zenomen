@@ -1,0 +1,44 @@
+// ZenOmen numeric readout.
+//
+// Every numeric value in the app is JetBrains Mono (`01-UI-SPEC.md`,
+// Typography), and the unit is a *separate* text node so a long value never
+// shrinks its type size — the unit drops to its own line beneath the number
+// instead (Data & Text States).
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+
+export component ValueReadout inherits Rectangle {
+    in property <string> value: "Unavailable";
+    in property <string> unit: "";
+    /// When false the value renders in text-secondary, matching the
+    /// "sensor absent" treatment; the caller is expected to pass
+    /// `Unavailable` as the value in that case.
+    in property <bool> available: true;
+    /// Display (32px) for a screen's primary anchor, Heading (20px) elsewhere.
+    in property <length> value-size: ThemeTypography.display;
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 0;
+        alignment: start;
+
+        Text {
+            text: root.value;
+            color: root.available ? ThemeColors.text-primary : ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-mono;
+            font-size: root.value-size;
+            font-weight: ThemeTypography.weight-regular;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+        if root.unit != "" : Text {
+            text: root.unit;
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            letter-spacing: 0.5px; // UI-SPEC 0.04em at 12px; Slint has no `em` unit
+            horizontal-alignment: left;
+        }
+    }
+}

@@ -1,0 +1,42 @@
+// ZenOmen screen header — 64px, screen title at Heading weight 600, with a
+// right-aligned action slot. The action is shown only on screens that have one
+// (Overview's `Refresh Telemetry`); every other screen leaves the slot empty.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { PrimaryButton } from "action-button.slint";
+
+export component ScreenHeader inherits Rectangle {
+    in property <string> title: "";
+    in property <bool> show-action: false;
+    in property <string> action-label: "Refresh Telemetry";
+
+    callback action();
+
+    height: ThemeMetrics.header-height;
+    background: ThemeColors.obsidian;
+
+    HorizontalLayout {
+        padding-left: ThemeMetrics.lg;
+        padding-right: ThemeMetrics.lg;
+        spacing: ThemeMetrics.md;
+        alignment: space-between;
+
+        Text {
+            text: root.title;
+            color: ThemeColors.text-primary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.heading;
+            font-weight: ThemeTypography.weight-semibold;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        if root.show-action : PrimaryButton {
+            label: root.action-label;
+            clicked => {
+                root.action();
+            }
+        }
+    }
+}

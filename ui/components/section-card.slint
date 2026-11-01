@@ -1,0 +1,34 @@
+// ZenOmen section card — title + body container, 1px outline, no shadow.
+//
+// The body is a `@children` slot so each screen supplies its own content
+// without a new container component per screen.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+
+export component SectionCard inherits Rectangle {
+    in property <string> title: "";
+
+    background: ThemeColors.charcoal;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: ThemeColors.outline;
+    border-radius: 4px;
+
+    VerticalLayout {
+        padding: ThemeMetrics.md;
+        spacing: ThemeMetrics.sm;
+        alignment: start;
+
+        if root.title != "" : Text {
+            text: root.title;
+            color: ThemeColors.text-primary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.heading;
+            font-weight: ThemeTypography.weight-semibold;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+
+        @children
+    }
+}

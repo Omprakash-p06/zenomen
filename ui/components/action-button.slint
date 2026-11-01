@@ -1,0 +1,133 @@
+// ZenOmen buttons.
+//
+// `01-UI-SPEC.md` allows a new repo-authored component when two or more screens
+// need the same shape, which is exactly the case here: the header's
+// `Refresh Telemetry` primary action and the `View Diagnostics` secondary
+// action both appear on several screens. `std-widgets` buttons cannot be
+// re-coloured to the spec (their fluent style owns the fill), so the two
+// buttons are authored from primitives instead.
+//
+// Both are `FocusScope`s: every click target is also a tab stop, `Return` and
+// `Space` activate it, and the focus ring is a 2px gold outline drawn *outside*
+// the fill with a 2px offset, as the interaction contract requires.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+
+/// Gold fill, obsidian label — reserved for the one primary action per screen.
+export component PrimaryButton inherits FocusScope {
+    in property <string> label: "Refresh Telemetry";
+    callback clicked();
+
+    width: 168px;
+    height: 40px;
+
+    key-pressed(event) => {
+        if (event.text == Key.Return || event.text == Key.Space) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    // The ring sits outside the fill: 2px transparent padding all round, then
+    // the gold ring when focused, then the gold fill inside it.
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        border-width: ThemeMetrics.stroke-emphasis;
+        border-color: root.has-focus ? ThemeColors.gold : transparent;
+        border-radius: 6px;
+
+        Rectangle {
+            x: ThemeMetrics.stroke-emphasis;
+            y: ThemeMetrics.stroke-emphasis;
+            width: parent.width - 2 * ThemeMetrics.stroke-emphasis;
+            height: parent.height - 2 * ThemeMetrics.stroke-emphasis;
+            background: ThemeColors.gold;
+            border-radius: 4px;
+
+            HorizontalLayout {
+                padding-left: ThemeMetrics.md;
+                padding-right: ThemeMetrics.md;
+                alignment: center;
+                Text {
+                    text: root.label;
+                    color: ThemeColors.obsidian;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.body;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        TouchArea {
+            clicked => {
+                root.focus();
+                root.clicked();
+            }
+            mouse-cursor: pointer;
+        }
+    }
+}
+
+/// Outline border + secondary text — everything that is not the primary action.
+export component SecondaryButton inherits FocusScope {
+    in property <string> label: "View Diagnostics";
+    callback clicked();
+
+    width: 156px;
+    height: 32px;
+
+    key-pressed(event) => {
+        if (event.text == Key.Return || event.text == Key.Space) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        border-width: ThemeMetrics.stroke-emphasis;
+        border-color: root.has-focus ? ThemeColors.gold : transparent;
+        border-radius: 6px;
+
+        Rectangle {
+            x: ThemeMetrics.stroke-emphasis;
+            y: ThemeMetrics.stroke-emphasis;
+            width: parent.width - 2 * ThemeMetrics.stroke-emphasis;
+            height: parent.height - 2 * ThemeMetrics.stroke-emphasis;
+            background: transparent;
+            border-width: ThemeMetrics.stroke-hairline;
+            border-color: ThemeColors.outline;
+            border-radius: 4px;
+
+            HorizontalLayout {
+                padding-left: ThemeMetrics.md;
+                padding-right: ThemeMetrics.md;
+                alignment: center;
+                Text {
+                    text: root.label;
+                    color: ThemeColors.text-secondary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.label;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        TouchArea {
+            clicked => {
+                root.focus();
+                root.clicked();
+            }
+            mouse-cursor: pointer;
+        }
+    }
+}
