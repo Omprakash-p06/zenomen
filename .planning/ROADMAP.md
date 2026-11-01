@@ -59,9 +59,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Linux provider — procfs, hwmon, DRM and NVIDIA paths behind `HardwareProvider`, with RAM from `/proc/meminfo`
-- [ ] 02-02: Capability detection plus the single shared `SensorRegistry` used by both dashboard and diagnostics
-- [ ] 02-03: Live charts, refresh and history controls, diagnostics detection report and export
+- [ ] 02-01: Linux hardware provider — procfs (stat delta, meminfo), dynamic DRM sysfs, NVIDIA fallback, and hwmon telemetry (Wave 1)
+- [ ] 02-02: Capability detection and single shared SensorRegistry across dashboard and diagnostics (Wave 2, depends on 02-01)
+- [ ] 02-03: Live charts, history window controls, on-demand refresh, diagnostics detection report and export (Wave 3, depends on 02-02)
 
 ### Phase 3: Verified Hardware Control
 

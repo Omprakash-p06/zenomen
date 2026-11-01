@@ -1,0 +1,38 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": null,
+  "phases": [
+    {
+      "number": "1",
+      "name": "Foundation",
+      "status": "in_progress"
+    },
+    {
+      "number": "2",
+      "name": "Linux Telemetry",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Verified Control",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "Desktop Integration",
+      "status": "pending"
+    },
+    {
+      "number": "5",
+      "name": "Distribution",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd-progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 1 of 5 · 0% · executing"
+  },
+  "updated_at": "2026-11-01T06:01:30.630Z"
+}

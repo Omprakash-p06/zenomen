@@ -1,0 +1,100 @@
+---
+phase: "01-foundation-gui-shell-on-mock-hardware"
+plan: "02"
+type: implementation
+prefix: "01-02"
+wave: 2
+depends_on:
+  - "01-01"
+requirements:
+  - FOUND-02
+  - FOUND-04
+  - FOUND-05
+files_modified:
+  - src/core/mod.rs
+  - src/core/events.rs
+  - src/core/state.rs
+  - src/app.rs
+  - ui/components/icons.slint
+  - ui/components/sidebar.slint
+  - ui/components/screen-header.slint
+  - ui/components/status-strip.slint
+  - ui/components/status-pill.slint
+  - ui/components/unavailable-panel.slint
+  - ui/components/capability-notice.slint
+  - ui/components/section-card.slint
+  - ui/components/metric-card.slint
+  - ui/components/value-readout.slint
+  - ui/screens/overview.slint
+  - ui/screens/cooling.slint
+  - ui/screens/performance.slint
+  - ui/screens/lighting.slint
+  - ui/screens/settings.slint
+  - ui/screens/diagnostics.slint
+  - ui/app.slint
+  - src/main.rs
+autonomous: true
+---
+
+# Plan 01-02: Application Shell, Navigation, Six Screens & Event Bridge
+
+## Objective
+Implement the full Slint UI shell with all six screens (`Overview`, `Cooling`, `Performance`, `Lighting`, `Settings`, `Diagnostics`), keyboard navigation, reusable components, zero-capability degradation handling, and the Rust core `AppCommand`/`AppEvent` message-passing bridge.
+
+## Context & Design Rules
+- Adhere strictly to [`01-UI-SPEC.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-UI-SPEC.md):
+  - Sidebar: fixed `200px` width, 6 nav rows with 2px gold rail on active row, Up/Down arrow key traversal.
+  - Keyboard navigation: declaration order `Tab` / `Shift+Tab`, `Return`/`Space` activation, `Escape` clears focus to active sidebar row.
+  - Responsive layout: 4 columns at ≥928px content width (window 1180px), 3 columns at ≥692px content width (window 940px min size).
+  - No hardware access from the UI: all state arrives via typed `AppEvent`s into Slint callbacks/properties (**FOUND-05**).
+  - Zero-capability run (**FOUND-04**): if zero capabilities are reported, navigation and shell remain interactive, while content areas render `UnavailablePanel` stating the missing interfaces.
+
+## Tasks
+
+### Task 1: Reusable Slint Component Library (`ui/components/`)
+1. Create `ui/components/icons.slint`: 20×20 hand-crafted SVG `Path` glyphs for `enso`, `cpu`, `gpu`, `memory`, `fan`, `power`, `keyboard`, `settings`, `diagnostics`, `warning`, `unavailable`.
+2. Create `ui/components/status-pill.slint`: semantic status indicator (Normal, Degraded, Unavailable).
+3. Create `ui/components/value-readout.slint`: monospace numeric readout that wraps the unit to a second line if space is constrained.
+4. Create `ui/components/metric-card.slint`: card with title, readout, status pill, and sparkline slot.
+5. Create `ui/components/section-card.slint`: container with 1px Outline border and Charcoal background.
+6. Create `ui/components/screen-header.slint`: screen title + right-aligned action button slot.
+7. Create `ui/components/status-strip.slint`: 40px bottom strip showing global status summary.
+8. Create `ui/components/unavailable-panel.slint`: heading, reason, and next-step button for unsupported features.
+9. Create `ui/components/capability-notice.slint`: inline banner explaining features arriving in later phases.
+
+### Task 2: Implement Navigation & App Shell (`ui/components/sidebar.slint`, `ui/app.slint`)
+1. Create `ui/components/sidebar.slint`:
+   - 6 items: Overview, Cooling, Performance, Lighting, Settings, Diagnostics.
+   - `FocusScope` with `key-pressed` handling Up/Down arrows and Return/Space activation.
+   - Selected state: 2px gold left rail + font-weight 600.
+2. In `ui/app.slint`:
+   - Compose `Sidebar`, `ScreenHeader`, content viewport, and `StatusStrip`.
+   - Maintain `active-screen` index property.
+   - Support `Tab`/`Shift+Tab` traversing sidebar -> header action -> screen controls.
+
+### Task 3: Implement All Six Screens (`ui/screens/`)
+1. `overview.slint`: responsive grid of 4 metric cards (CPU, GPU, RAM, Fan) + wide chart slot.
+2. `cooling.slint`: fan RPM rows, read-only mode pill, and `CapabilityNotice` explaining fan control arrives in Phase 3.
+3. `performance.slint`: list of advertised ACPI profiles, active profile pill, and `CapabilityNotice`.
+4. `lighting.slint`: RGB interface status pill, active profile display, and `CapabilityNotice`.
+5. `settings.slint`: version readout, provider mode (`mock`), theme (`Dark`), and `CapabilityNotice`.
+6. `diagnostics.slint`: capability summary table and `CapabilityNotice`.
+7. Verify zero-capability support: when `capabilities.is_empty`, render `UnavailablePanel` on relevant screens.
+
+### Task 4: Rust Event Bridge (`src/core/events.rs`, `src/app.rs`)
+1. Define `AppCommand` in `src/core/events.rs`:
+   - `Navigate(ScreenId)`
+   - `RefreshTelemetry`
+   - `SetHistoryWindow(usize)`
+2. Define `AppEvent` in `src/core/events.rs`:
+   - `ScreenChanged(ScreenId)`
+   - `CapabilitiesLoaded(HardwareCapabilities)`
+   - `TelemetryUpdated(TelemetrySnapshot)`
+3. Create `src/app.rs` bridging Slint callbacks and UI property updates via `slint::invoke_from_event_loop`.
+
+## Verification
+- App compiles and runs without warnings.
+- All six screens can be navigated via sidebar clicks and keyboard (`Tab`, `Up`/`Down`, `Enter`).
+- Window resizes cleanly from 1180×760 to 940×620, reflowing Overview cards from 4 to 3 columns without clipping.
+- Zero-capability test renders `UnavailablePanel` without panic or blank screens.
+

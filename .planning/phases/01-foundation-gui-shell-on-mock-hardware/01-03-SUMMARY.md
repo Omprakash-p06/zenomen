@@ -97,3 +97,4 @@ Delivered the telemetry pipeline for Phase 1:
 3. **Multi-Series Chart & Sparklines**: Completed `TelemetryChart` and `Sparkline` Slint components bound to SVG path strings with pen-up gap handling across `None` readings.
 4. **Non-Blocking Monitoring Worker**: Implemented `spawn_monitoring_worker` with channel timeout scheduling (`recv_timeout`), guaranteeing on-demand refresh responsiveness without `thread::sleep`.
 5. **Memory & Performance Benchmarks**: Created `/proc/self/smaps_rollup` parser and headless test suite verifying memory footprint stays well under the 40 MB threshold.
+
