@@ -1,121 +1,59 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 02
-current_phase_name: Linux Telemetry & Capability Detection
+current_phase: 03
+current_phase_name: Verified Hardware Control
 current_plan: 1
-status: planning_complete
-stopped_at: Completed planning for Phase 02 (02-01, 02-02, 02-03)
-last_updated: "2026-11-01T21:35:00.000Z"
+status: phase_complete
+stopped_at: Completed Phase 02 (Linux Telemetry & Capability Detection)
+last_updated: "2026-11-01T22:48:00.000Z"
 last_activity: 2026-11-01
-last_activity_desc: Phase 02 planned — 3 plans authored and verified
-state_head: e9f9f00
+last_activity_desc: Phase 02 executed — all 3 plans complete, verified with 52 tests
+state_head: c57c72b
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 0
-  percent: 20
+  completed_phases: 2
+  total_plans: 6
+  completed_plans: 6
+  percent: 40
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-10-30 with all review corrections)
+See: `.planning/PROJECT.md`
 
 **Core value:** Hardware control you can trust — every write verified by read-back, and a missing sensor reads "Unavailable" rather than a fabricated number.  
-**Current focus:** Phase 01 — Foundation — GUI Shell on Mock Hardware
+**Current focus:** Phase 03 — Verified Hardware Control
 
 ## Current Position
 
-Current Plan: 3
-Total Plans in Phase: 3
-Phase: 01 (Foundation — GUI Shell on Mock Hardware) — EXECUTING
-Plans: 2 of 3 completed in current phase (`01-01`, `01-02` done; `01-03` remaining)  
-Status: Ready to execute plan 01-03 (mock provider, monitoring worker, resource instrumentation)
-Last activity: 2026-11-01 — Plan 01-02 completed (shell, six screens, keyboard navigation, typed event bridge)
+Current Phase: 03 (Verified Hardware Control)
+Phase 02 Status: COMPLETE
+Phase 01 Status: COMPLETE
+All Phase 2 Plans Executed:
+- `02-01`: Linux hardware provider — procfs (stat delta, meminfo), dynamic DRM sysfs, NVIDIA fallback, and hwmon telemetry (`85694b5`)
+- `02-02`: Capability detection and single shared SensorRegistry across dashboard and diagnostics (`f9455c0`)
+- `02-03`: Live charts, history window controls, on-demand refresh, diagnostics detection report and export (`c57c72b`)
 
-**Phase 1 Artifacts:**  
-- Research: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-RESEARCH.md)
-- UI Specification: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-UI-SPEC.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-UI-SPEC.md)
-- Plan 01-01: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-01-PLAN.md)
-- Plan 01-02: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-02-PLAN.md)
-- Plan 01-03: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-03-PLAN.md)
+**Phase 2 Artifacts:**
+- Research: [`.planning/phases/02-linux-telemetry-capability-detection/02-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-RESEARCH.md)
+- Plan 02-01: [`.planning/phases/02-linux-telemetry-capability-detection/02-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-01-PLAN.md)
+- Summary 02-01: [`.planning/phases/02-linux-telemetry-capability-detection/02-01-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-01-SUMMARY.md)
+- Plan 02-02: [`.planning/phases/02-linux-telemetry-capability-detection/02-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-02-PLAN.md)
+- Summary 02-02: [`.planning/phases/02-linux-telemetry-capability-detection/02-02-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-02-SUMMARY.md)
+- Plan 02-03: [`.planning/phases/02-linux-telemetry-capability-detection/02-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-03-PLAN.md)
+- Summary 02-03: [`.planning/phases/02-linux-telemetry-capability-detection/02-03-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-03-SUMMARY.md)
 
-Progress: [░░░░░░░░░░] 0%
-
-## Performance Metrics
-
-**Velocity:**
-- Total execution plans generated: 3
-- Total plans completed: 2
-- Average duration: 19min
-- Total execution time: 0.6 hours
-
-**By Phase:**
-
-| Phase | Planned Tasks | Generated Plans | Completed | Avg/Plan |
-|-------|---------------|-----------------|-----------|----------|
-| 1. Foundation | 3 | 3 | 0 | — |
-| 2. Linux Telemetry | 3 | 0 | 0 | — |
-| 3. Verified Control | 3 | 0 | 0 | — |
-| 4. Desktop Integration | 3 | 0 | 0 | — |
-| 5. Distribution | 3 | 0 | 0 | — |
-
-*Updated after each plan generation and completion*
-**Per-Plan Metrics:**
-
-| Plan | Duration | Tasks | Files |
-|------|----------|-------|-------|
-| Phase 01 P01 | 16min | 4 tasks | 16 files |
-| Phase 01 P02 | 22min | 4 tasks | 30 files |
+Progress: [████░░░░░░] 40%
 
 ## Accumulated Context
 
 ### Decisions
-
-All decisions confirmed and logged in `PROJECT.md` Key Decisions table:
-
 - **Two-Process Architecture:** Unprivileged desktop GUI (`zenomen-gui`, ≤40 MB peak RSS) + privileged system D-Bus daemon (`zenomen-hw`, ≤15 MB RSS) over 3 logical layers. Kernel interfaces are an interface layer, not an application process.
-- **Formalized D-Bus Contract:** `com.zenomen.Hardware1` with mandatory polkit authorization (`com.zenomen.hardware.control`) for all mutating operations (`SetFanMode`, `SetPowerProfile`, `ApplyRgbProfile`, `SetRgbEnabled`). Arbitrary paths and commands rejected.
-- **Single Shared SensorRegistry:** Centralized sensor discovery eliminates heuristic drift between dashboard telemetry and diagnostics export. Dynamic DRM card resolution replaces legacy hardcoded `card0`.
-- **Granular Combined Presets:** `PresetResult` (`power_applied`, `fan_applied`, `partial_success`) replaces false claims of atomic rollback or transactions.
-- **RAM Telemetry from Scratch:** Legacy Python CLI had no RAM telemetry; ZenOmen implements it using `MemAvailable` math from `/proc/meminfo`.
-- **Fan Control 3-State Model:** Accurately reads states 0 (Max), 1 (Manual), 2 (Auto); offers switching only for validated modes (Auto and Max in v1); does not expose manual mode without curve support.
-- **Safe RGB Migration:** Preserves legacy `~/.config/openomen/rgb/*.json` files intact; imports `#RRGGBB` zone colors; identifies unsupported animation fields without failing; verifies hardware writes.
-- **GNOME Tray Fallback:** Single-instance D-Bus activation (`com.zenomen.App` `PresentWindow`) ensures the window can be brought forward on desktop environments where StatusNotifierItem is absent.
-- **Rust + Slint Stack:** GUI-only product; Python `openomen` retained as behavioral reference until Rust parity, then removed.
-- [Phase 01]: Slint requirement stays 1.17 as specified; crates.io resolves it to 1.18.1 and the resolved version is recorded rather than the spec being rewritten.
-- [Phase 01]: Initial window size binds through Slint preferred-width/preferred-height; Window has no default-width/default-height. Metric token names unchanged.
-- [Phase 01]: UI-SPEC spacing tokens 2xl/3xl are spelled xxl/xxxl in Slint because identifiers cannot start with a digit; values 48px/64px unchanged.
-- [Phase 01]: Vendored Inter and JetBrains Mono ship with their SIL OFL 1.1 texts and a provenance README; GPL-3.0 redistribution requires the licence to travel with the binaries.
-- [Phase 01]: git.allow_default_branch_commits set to true because git.branching_strategy is none and the executor commit guard otherwise refuses to commit on main.
-- [Phase 01]: Status strip sits directly under the header (UI-SPEC reading order), not at the window bottom as the plan text said
-- [Phase 01]: Overview grid uses absolute positioning with computed columns (928/692/456px breakpoints) because Slint GridLayout row/col must be compile-time constants
-- [Phase 01]: AppState starts with no capabilities while the Slint properties default to nominal; ZenOmenApp::initialize publishes the real set before the first frame
-
-### Pending Todos
-
-Execute Phase 1 plans (`01-01-PLAN.md`, `01-02-PLAN.md`, `01-03-PLAN.md`) via `/gsd-execute-phase 1`.
-
-### Blockers/Concerns
-
-- Phase 2: hp-wmi capability varies per model; detect dynamically via `HardwareCapabilities`, never assume kernel version alone determines support.
-- Phase 3: D-Bus/polkit/systemd sandboxing policy files must be drafted and tested against the formal contract.
-- Phase 5: `cargo-packager` pinned version must pass `cargo audit`; fallback to `cargo-deb` + `appimagetool` if unresolvable advisories arise.
-- Phase 5: Slint's "<300 KiB" claim is a runtime baseline; 40 MB peak UI process RSS budget must be validated through the 2-hour long-session test.
-
-## Deferred Items
-
-| Category | Item | Status | Deferred At | Milestone |
-|----------|------|--------|-------------|-----------|
-| *(none)* | | | | |
-
-## Session Continuity
-
-**Resume file:** None
-
-Last session: 2026-11-01T06:01:35.794Z
-Stopped at: Completed 01-02-PLAN.md (shell, six screens, keyboard nav, typed event bridge)
-Next action: Phase 1 execution (`/gsd-execute-phase 1` or `/gsd-next`)  
-Reference plan: `.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-01-PLAN.md`
+- **Single Shared SensorRegistry:** Centralized sensor discovery (`src/hardware/registry.rs`) eliminates heuristic drift between dashboard telemetry and diagnostics export (MON-12). Dynamic DRM card resolution replaces legacy hardcoded `card0` (MON-05).
+- **Driver & Label Priority Matrix:** Resolves CPU temperature strictly via `k10temp` (AMD Zen: Tctl/Tdie) > `coretemp` (Intel: Package id 0) > `acpitz` fallback (MON-04).
+- **RAM Telemetry from Scratch:** Computed accurately from `/proc/meminfo` via `MemTotal - MemAvailable`, never `MemFree` (MON-07).
+- **Dynamic Telemetry History Window:** Bounded ring buffer supports dynamic resizing without restarting (30s, 60s, 120s, 300s); evicts oldest entries cleanly (MON-11).
+- **Diagnostics Report & File Export:** Serializes system OS/kernel, DMI identifiers, capability status, canonical sensor paths, and latest telemetry to formatted JSON written atomically to disk (DIAG-01, DIAG-02).
+- **Default Runtime LinuxHardwareProvider:** Defaults to real Linux hardware sampling on host, preserving `ZENOMEN_MOCK_SCENARIO` for tests (MON-10).

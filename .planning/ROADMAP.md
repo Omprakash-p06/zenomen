@@ -15,7 +15,7 @@ Phase 1 puts a working GUI on mock hardware so the UI, the worker and the resour
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation — GUI Shell on Mock Hardware** - Rust + Slint app with all six screens, theme, worker and instrumentation, running end-to-end on a mock provider
-- [ ] **Phase 2: Linux Telemetry & Capability Detection** - Real CPU/GPU/RAM/thermal readings, shared SensorRegistry, capability-aware UI, charts and diagnostics export
+- [x] **Phase 2: Linux Telemetry & Capability Detection** - Real CPU/GPU/RAM/thermal readings, shared SensorRegistry, capability-aware UI, charts and diagnostics export
 - [ ] **Phase 3: Verified Hardware Control** - Privileged D-Bus service, mandatory polkit, verified fan and ACPI writes, PresetResult reporting
 - [ ] **Phase 4: Desktop Integration, Config & Basic RGB** - Tray, autostart, single instance with GNOME fallback, persisted settings, RGB presets with safe legacy JSON migration
 - [ ] **Phase 5: Distribution, Resource Budget & Rebrand** - DEB/AppImage, audit-gated releases, empirical memory/CPU verification, ZenOmen rebrand, Python CLI removed
@@ -56,12 +56,12 @@ Plans:
   4. Charts accumulate from the live stream and the history window can be changed in the UI without a restart; manual refresh updates the dashboard on demand.
   5. A diagnostics export written to a file contains version, OS/kernel, hardware identifiers, detected sensors from the shared registry, capability status and recent errors.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans executed
 
 Plans:
-- [ ] 02-01: Linux hardware provider — procfs (stat delta, meminfo), dynamic DRM sysfs, NVIDIA fallback, and hwmon telemetry (Wave 1)
-- [ ] 02-02: Capability detection and single shared SensorRegistry across dashboard and diagnostics (Wave 2, depends on 02-01)
-- [ ] 02-03: Live charts, history window controls, on-demand refresh, diagnostics detection report and export (Wave 3, depends on 02-02)
+- [x] 02-01: Linux hardware provider — procfs (stat delta, meminfo), dynamic DRM sysfs, NVIDIA fallback, and hwmon telemetry (Wave 1)
+- [x] 02-02: Capability detection and single shared SensorRegistry across dashboard and diagnostics (Wave 2, depends on 02-01)
+- [x] 02-03: Live charts, history window controls, on-demand refresh, diagnostics detection report and export (Wave 3, depends on 02-02)
 
 ### Phase 3: Verified Hardware Control
 
