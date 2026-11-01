@@ -93,13 +93,22 @@
     - If unsupported keys exist (`brightness`, `speed`, `length_ms`, `change`, `loop`), note them as unsupported in metadata without failing.
   - Write normalized JSON to `~/.config/zenomen/rgb/`.
 
+### 5. Multi-Platform Logo & Icon Integration
+- **Serene Eyeball Logo (`logo/zenomen-logo-v3-indigo-gold.svg`):**
+  - Updated by removing the flame from the pupil and replacing it with a calm dark pupil with a delicate gold accent ring and specular reflections.
+  - Serves as the single master vector asset across all platforms.
+- **Icon Packaging Strategy:**
+  - **Linux Desktop & `.deb`/AppImage:** Scalable SVG installed at `data/icons/zenomen.svg` and standard PNG raster icons (16, 32, 48, 64, 128, 256, 512px) in `data/icons/hicolor/`. Referenced by `zenomen.desktop` (`Icon=zenomen`) and StatusNotifierItem (`IconName = "zenomen"`).
+  - **Slint GUI Window:** Embedded via `icon: @image-url("../logo/zenomen-logo-v3-indigo-gold.svg")` on `AppWindow`.
+  - **Windows `.exe` Binary:** Multi-resolution `.ico` file `data/icons/zenomen.ico` embedded into the PE binary resource table via `winres` in `build.rs` when compiling for Windows target.
+
 ---
 
 ## Plan Decomposition
 
 | Plan | Focus | Key Deliverables |
 |:---|:---|:---|
-| **04-01** | Desktop Integration & Single-Instance | Single-instance session D-Bus service (`com.zenomen.App`), `PresentWindow` handler, StatusNotifierItem tray service, close-to-tray lifecycle, XDG autostart helper. |
+| **04-01** | Desktop Integration & Single-Instance | Single-instance session D-Bus service (`com.zenomen.App`), `PresentWindow` handler, StatusNotifierItem tray service, close-to-tray lifecycle, XDG autostart helper, and serene logo/icon embedding across Linux and Windows. |
 | **04-02** | Config Persistence & Settings UI | `AppConfig` TOML schema, atomic writes, corrupt file backup/recovery, telemetry polling bounds, Settings screen UI binding. |
 | **04-03** | Keyboard RGB Lighting & Migration | Hardware variant detection (`four_zone`, `legacy`, `kernel_patch`), strict `#RRGGBB` parser, safe OpenOMEN profile migration, privileged service write/read-back, Lighting screen UI. |
 
