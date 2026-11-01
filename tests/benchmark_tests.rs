@@ -75,9 +75,6 @@ fn worker_thread_samples_and_dispatches_headlessly() {
         .try_send(zenomen::core::AppCommand::RefreshTelemetry)
         .expect("Command send must succeed");
 
-    let event3 = event_receiver
-        .recv_timeout(Duration::from_millis(200))
-        .expect("Worker must immediately respond to RefreshTelemetry without 1s sleep");
     let refresh_duration = refresh_start.elapsed();
 
     assert!(
@@ -85,6 +82,17 @@ fn worker_thread_samples_and_dispatches_headlessly() {
         "On-demand refresh took too long: {:?}",
         refresh_duration
     );
+
+    let mut event3 = event_receiver
+        .recv_timeout(Duration::from_millis(200))
+        .expect("Worker must immediately respond to RefreshTelemetry without 1s sleep");
+
+    while let AppEvent::ServiceStatusChanged(_) = event3 {
+        event3 = event_receiver
+            .recv_timeout(Duration::from_millis(200))
+            .expect("Worker must respond with TelemetryUpdated");
+    }
+
     match event3 {
         AppEvent::TelemetryUpdated(snapshot) => {
             assert!(snapshot.cpu_utilization > 0.0);

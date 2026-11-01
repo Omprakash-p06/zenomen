@@ -75,6 +75,14 @@ pub enum AppCommand {
     RefreshTelemetry,
     /// The user changed how many samples the charts keep (MON-11).
     SetHistoryWindow(usize),
+    /// Request to change the fan mode ("auto", "max").
+    SetFanMode(String),
+    /// Request to change the ACPI power profile.
+    SetPowerProfile(String),
+    /// Request to apply a combined preset ("quiet", "balanced", "gaming").
+    ApplyPreset(String),
+    /// Dismiss the active hardware control error banner.
+    DismissControlError,
 }
 
 /// Something the core wants the UI to show.
@@ -98,4 +106,14 @@ pub enum AppEvent {
     TelemetrySamplingFailed(String),
     /// Telemetry history window size was changed (MON-11).
     HistoryWindowChanged(usize),
+    /// Fan mode change completed with confirmed mode or error.
+    FanModeChanged(Result<String, String>),
+    /// Power profile change completed with confirmed profile or error.
+    PowerProfileChanged(Result<String, String>),
+    /// Combined preset applied with granular PresetResult or error.
+    PresetApplied(Result<crate::service::types::PresetResult, String>),
+    /// Hardware D-Bus service connection status changed.
+    ServiceStatusChanged(crate::service::client::ServiceConnectionStatus),
+    /// Control error banner dismissed.
+    ControlErrorDismissed,
 }

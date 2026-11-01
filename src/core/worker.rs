@@ -58,8 +58,23 @@ pub fn spawn_monitoring_worker(
                 return;
             }
 
-            // 3. Deadline loop with channel timeout scheduling
+            // 3. Hardware Service client initialization and initial probe
+            let client = crate::service::HardwareServiceClient::new();
+            let initial_status = client.status();
+            let _ = event_sender.send(AppEvent::ServiceStatusChanged(initial_status.clone()));
+
+            if initial_status.is_connected() {
+                if let Ok((mode, _)) = client.get_fan_status() {
+                    let _ = event_sender.send(AppEvent::FanModeChanged(Ok(mode)));
+                }
+                if let Ok(profile) = client.get_power_profile() {
+                    let _ = event_sender.send(AppEvent::PowerProfileChanged(Ok(profile)));
+                }
+            }
+
+            // 4. Deadline loop with channel timeout scheduling
             let mut deadline = Instant::now() + SAMPLING_INTERVAL;
+            let mut status_check_tick: u32 = 0;
 
             loop {
                 let now = Instant::now();
@@ -93,12 +108,43 @@ pub fn spawn_monitoring_worker(
                                 break;
                             }
                         }
+                        AppCommand::SetFanMode(mode) => {
+                            tracing::info!(mode = mode.as_str(), "applying fan mode via service");
+                            let res = client.set_fan_mode(&mode);
+                            if event_sender.send(AppEvent::FanModeChanged(res)).is_err() {
+                                break;
+                            }
+                        }
+                        AppCommand::SetPowerProfile(profile) => {
+                            tracing::info!(profile = profile.as_str(), "applying power profile via service");
+                            let res = client.set_power_profile(&profile);
+                            if event_sender.send(AppEvent::PowerProfileChanged(res)).is_err() {
+                                break;
+                            }
+                        }
+                        AppCommand::ApplyPreset(preset) => {
+                            tracing::info!(preset = preset.as_str(), "applying preset via service");
+                            let res = client.apply_preset(&preset);
+                            if event_sender.send(AppEvent::PresetApplied(res)).is_err() {
+                                break;
+                            }
+                        }
+                        AppCommand::DismissControlError => {
+                            let _ = event_sender.send(AppEvent::ControlErrorDismissed);
+                        }
                     },
                     Err(RecvTimeoutError::Timeout) => {
                         // Periodic 1 Hz sample
                         if !sample_and_dispatch(&provider, &event_sender) {
                             tracing::debug!("event receiver disconnected; exiting worker");
                             break;
+                        }
+
+                        // Check service status every 5 seconds
+                        status_check_tick = status_check_tick.wrapping_add(1);
+                        if status_check_tick % 5 == 0 {
+                            let status = client.status();
+                            let _ = event_sender.send(AppEvent::ServiceStatusChanged(status));
                         }
 
                         deadline += SAMPLING_INTERVAL;

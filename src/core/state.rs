@@ -46,6 +46,20 @@ pub struct AppState {
     pub paths: TelemetryPaths,
     /// Last error encountered while sampling telemetry from the provider.
     pub last_sampling_error: Option<String>,
+    /// Currently verified fan mode ("auto", "max", "manual", or empty if unread).
+    pub fan_mode: String,
+    /// Inflight fan mode change requested by user.
+    pub pending_fan_mode: Option<String>,
+    /// Currently active ACPI power profile.
+    pub active_power_profile: String,
+    /// Advertised ACPI power profile choices.
+    pub power_profile_choices: Vec<String>,
+    /// Granular result of the last applied combined preset.
+    pub last_preset_result: Option<crate::service::types::PresetResult>,
+    /// Hardware D-Bus service connection status.
+    pub service_status: crate::service::client::ServiceConnectionStatus,
+    /// Last error encountered during hardware write / verification.
+    pub last_control_error: Option<String>,
 }
 
 impl Default for AppState {
@@ -58,6 +72,13 @@ impl Default for AppState {
             history: TelemetryHistory::new(),
             paths: TelemetryPaths::default(),
             last_sampling_error: None,
+            fan_mode: String::new(),
+            pending_fan_mode: None,
+            active_power_profile: String::new(),
+            power_profile_choices: Vec::new(),
+            last_preset_result: None,
+            service_status: crate::service::client::ServiceConnectionStatus::Disconnected,
+            last_control_error: None,
         }
     }
 }
@@ -104,6 +125,57 @@ impl AppState {
                     gpu_sparkline,
                     ram_sparkline,
                 };
+            }
+            AppEvent::FanModeChanged(res) => {
+                self.pending_fan_mode = None;
+                match res {
+                    Ok(mode) => {
+                        self.fan_mode = mode.clone();
+                        self.last_control_error = None;
+                    }
+                    Err(e) => {
+                        self.last_control_error = Some(e.clone());
+                    }
+                }
+            }
+            AppEvent::PowerProfileChanged(res) => {
+                match res {
+                    Ok(profile) => {
+                        self.active_power_profile = profile.clone();
+                        self.last_control_error = None;
+                    }
+                    Err(e) => {
+                        self.last_control_error = Some(e.clone());
+                    }
+                }
+            }
+            AppEvent::PresetApplied(res) => {
+                match res {
+                    Ok(preset_res) => {
+                        if preset_res.fan_applied {
+                            self.fan_mode = if preset_res.preset_name == "gaming" {
+                                "max".to_string()
+                            } else {
+                                "auto".to_string()
+                            };
+                        }
+                        self.last_preset_result = Some(preset_res.clone());
+                        if !preset_res.partial_success {
+                            self.last_control_error = None;
+                        } else {
+                            self.last_control_error = Some(preset_res.message.clone());
+                        }
+                    }
+                    Err(e) => {
+                        self.last_control_error = Some(e.clone());
+                    }
+                }
+            }
+            AppEvent::ServiceStatusChanged(status) => {
+                self.service_status = status.clone();
+            }
+            AppEvent::ControlErrorDismissed => {
+                self.last_control_error = None;
             }
         }
     }

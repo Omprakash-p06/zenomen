@@ -98,10 +98,18 @@ export component AppWindow inherits Window {
     in-out property <string> fan-count: "0";
     in-out property <string> export-status: "";
 
+    in-out property <bool> service-connected: false;
+    in-out property <string> pending-fan-mode: "";
+    in-out property <string> control-error-message: "";
+
     /// Emitted when history window duration is changed in Settings (MON-11).
     callback history-window-changed(int);
     /// Emitted by the Export Diagnostics action in Diagnostics screen (DIAG-02).
     callback export-diagnostics();
+    /// Emitted when user selects a fan mode ("auto", "max").
+    callback set-fan-mode(string);
+    /// Emitted when user dismisses the control error notification banner.
+    callback dismiss-control-error();
 
     // ---- Diagnostics table ------------------------------------------------
     private property <[string]> capability-names: [
@@ -251,8 +259,17 @@ export component AppWindow inherits Window {
                             if root.current-screen == 1 : Cooling {
                                 has-fan-rpm: root.has-fan-rpm;
                                 has-fan-control: root.has-fan-control;
+                                service-connected: root.service-connected;
                                 fan-mode: root.fan-mode;
+                                pending-fan-mode: root.pending-fan-mode;
+                                control-error-message: root.control-error-message;
                                 fan-values: [root.fan-1-value, root.fan-2-value];
+                                set-fan-mode(mode) => {
+                                    root.set-fan-mode(mode);
+                                }
+                                dismiss-error => {
+                                    root.dismiss-control-error();
+                                }
                                 open-diagnostics => {
                                     root.active-screen = 5;
                                     root.navigate(5);

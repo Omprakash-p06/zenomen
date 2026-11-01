@@ -108,6 +108,22 @@ impl ZenOmenApp {
         }
 
         let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_set_fan_mode(move |mode| {
+                send_command(&commands, AppCommand::SetFanMode(mode.to_string()));
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_dismiss_control_error(move || {
+                send_command(&commands, AppCommand::DismissControlError);
+            });
+        }
+
+        let ui = self.ui.clone();
         let state = Arc::clone(&self.state);
         let registry_slot = Arc::clone(&self.registry);
         if let Some(ui) = ui.upgrade() {
@@ -267,6 +283,20 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
 
     ui.set_status_text(state.status_text().into());
     ui.set_status_degraded(state.is_degraded());
+
+    ui.set_service_connected(state.service_status.is_connected());
+    let active_mode = if !state.fan_mode.is_empty() {
+        state.fan_mode.as_str()
+    } else {
+        state
+            .latest_snapshot
+            .as_ref()
+            .map(|s| s.fan_mode.as_str())
+            .unwrap_or("")
+    };
+    ui.set_fan_mode(active_mode.into());
+    ui.set_pending_fan_mode(state.pending_fan_mode.as_deref().unwrap_or("").into());
+    ui.set_control_error_message(state.last_control_error.as_deref().unwrap_or("").into());
 
     ui.set_cpu_path(state.paths.cpu_path.as_str().into());
     ui.set_gpu_path(state.paths.gpu_path.as_str().into());
