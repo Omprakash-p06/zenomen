@@ -87,7 +87,10 @@ fn worker_thread_samples_and_dispatches_headlessly() {
         .recv_timeout(Duration::from_millis(200))
         .expect("Worker must immediately respond to RefreshTelemetry without 1s sleep");
 
-    while let AppEvent::ServiceStatusChanged(_) = event3 {
+    while matches!(
+        event3,
+        AppEvent::ServiceStatusChanged(_) | AppEvent::PolkitStatusChanged(_)
+    ) {
         event3 = event_receiver
             .recv_timeout(Duration::from_millis(200))
             .expect("Worker must respond with TelemetryUpdated");

@@ -114,6 +114,8 @@ pub enum AppEvent {
     PresetApplied(Result<crate::service::types::PresetResult, String>),
     /// Hardware D-Bus service connection status changed.
     ServiceStatusChanged(crate::service::client::ServiceConnectionStatus),
+    /// Polkit authorization readiness status changed.
+    PolkitStatusChanged(String),
     /// Control error banner dismissed.
     ControlErrorDismissed,
 }

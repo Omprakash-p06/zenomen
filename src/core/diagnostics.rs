@@ -121,18 +121,7 @@ pub fn collect_diagnostics_from_roots(
     let hardware_service = Some(HardwareServiceDiagnostic {
         service_name: "com.zenomen.Hardware1".to_string(),
         status: state.service_status.description().to_string(),
-        polkit_authorization: match &state.service_status {
-            crate::service::client::ServiceConnectionStatus::Connected => {
-                let client = crate::service::client::HardwareServiceClient::new();
-                client.check_polkit_status().unwrap_or_else(|e| format!("Check failed: {e}"))
-            }
-            crate::service::client::ServiceConnectionStatus::Disconnected => {
-                "Service disconnected".to_string()
-            }
-            crate::service::client::ServiceConnectionStatus::Unavailable(err) => {
-                format!("Unavailable: {err}")
-            }
-        },
+        polkit_authorization: state.polkit_status.clone(),
     });
 
     DiagnosticsReport {

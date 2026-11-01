@@ -1,5 +1,7 @@
 //! Client layer connecting to `com.zenomen.Hardware1` on system D-Bus.
 
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
 use zbus::blocking::Connection;
 
@@ -33,6 +35,7 @@ pub struct HardwareServiceClient {
     destination: String,
     path: String,
     interface: String,
+    cached_conn: Arc<Mutex<Option<Connection>>>,
 }
 
 impl Default for HardwareServiceClient {
@@ -48,12 +51,27 @@ impl HardwareServiceClient {
             destination: "com.zenomen.Hardware1".to_string(),
             path: "/com/zenomen/Hardware1".to_string(),
             interface: "com.zenomen.Hardware1".to_string(),
+            cached_conn: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Connect to system D-Bus with a short timeout.
+    /// Connect to system D-Bus, caching the active connection across calls.
     fn connect(&self) -> Result<Connection, String> {
-        Connection::system().map_err(|e| format!("Failed to connect to system D-Bus: {e}"))
+        let mut guard = self.cached_conn.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(conn) = &*guard {
+            return Ok(conn.clone());
+        }
+        let conn = Connection::system()
+            .map_err(|e| format!("Failed to connect to system D-Bus: {e}"))?;
+        *guard = Some(conn.clone());
+        Ok(conn)
+    }
+
+    /// Reset cached connection on communication failures.
+    fn reset_connection(&self) {
+        if let Ok(mut guard) = self.cached_conn.lock() {
+            *guard = None;
+        }
     }
 
     /// Check if `com.zenomen.Hardware1` is alive and responsive.
@@ -72,7 +90,10 @@ impl HardwareServiceClient {
             &(),
         ) {
             Ok(_) => ServiceConnectionStatus::Connected,
-            Err(_) => ServiceConnectionStatus::Disconnected,
+            Err(_) => {
+                self.reset_connection();
+                ServiceConnectionStatus::Disconnected
+            }
         }
     }
 

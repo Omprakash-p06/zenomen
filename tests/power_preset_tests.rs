@@ -6,7 +6,6 @@ use zenomen::core::collect_diagnostics_from_roots;
 use zenomen::core::events::AppEvent;
 use zenomen::core::state::AppState;
 use zenomen::service::backend::HardwareBackend;
-use zenomen::service::client::ServiceConnectionStatus;
 use zenomen::service::types::{FanMode, HardwareControlError, PresetResult};
 
 struct MockSysfs {
@@ -175,8 +174,7 @@ fn test_state_handles_power_and_preset_events() {
 #[test]
 fn test_diagnostics_report_includes_hardware_service() {
     let mock = MockSysfs::new("diag_service");
-    let mut state = AppState::default();
-    state.service_status = ServiceConnectionStatus::Disconnected;
+    let state = AppState::default();
 
     let os_rel = mock.root.join("etc/os-release");
     fs::create_dir_all(os_rel.parent().unwrap()).unwrap();

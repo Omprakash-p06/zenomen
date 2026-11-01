@@ -58,6 +58,8 @@ pub struct AppState {
     pub last_preset_result: Option<crate::service::types::PresetResult>,
     /// Hardware D-Bus service connection status.
     pub service_status: crate::service::client::ServiceConnectionStatus,
+    /// Polkit authorization readiness description (DIAG-04).
+    pub polkit_status: String,
     /// Last error encountered during hardware write / verification.
     pub last_control_error: Option<String>,
 }
@@ -78,6 +80,7 @@ impl Default for AppState {
             power_profile_choices: Vec::new(),
             last_preset_result: None,
             service_status: crate::service::client::ServiceConnectionStatus::Disconnected,
+            polkit_status: "Service disconnected".to_string(),
             last_control_error: None,
         }
     }
@@ -173,6 +176,12 @@ impl AppState {
             }
             AppEvent::ServiceStatusChanged(status) => {
                 self.service_status = status.clone();
+                if !status.is_connected() {
+                    self.polkit_status = "Service disconnected".to_string();
+                }
+            }
+            AppEvent::PolkitStatusChanged(status_desc) => {
+                self.polkit_status = status_desc.clone();
             }
             AppEvent::ControlErrorDismissed => {
                 self.last_control_error = None;

@@ -374,6 +374,7 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
     }
 
     ui.set_service_status_text(state.service_status.description().into());
+    ui.set_polkit_status_text(state.polkit_status.as_str().into());
 
     ui.set_rgb_profile(snapshot.rgb_profile.as_deref().unwrap_or_default().into());
 }

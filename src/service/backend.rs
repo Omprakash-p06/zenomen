@@ -74,33 +74,33 @@ impl HardwareBackend {
     pub fn find_fan_control_path(&self) -> Result<PathBuf, HardwareControlError> {
         // 1. Direct path check under /sys/devices/platform/hp-wmi/hwmon/hwmon*/pwm1_enable
         let hp_wmi_hwmon = self.resolve_path("sys/devices/platform/hp-wmi/hwmon");
-        if hp_wmi_hwmon.is_dir() {
-            if let Ok(entries) = fs::read_dir(&hp_wmi_hwmon) {
-                for entry in entries.flatten() {
-                    let pwm_path = entry.path().join("pwm1_enable");
-                    if pwm_path.exists() {
-                        return Ok(pwm_path);
-                    }
+        if hp_wmi_hwmon.is_dir()
+            && let Ok(entries) = fs::read_dir(&hp_wmi_hwmon)
+        {
+            for entry in entries.flatten() {
+                let pwm_path = entry.path().join("pwm1_enable");
+                if pwm_path.exists() {
+                    return Ok(pwm_path);
                 }
             }
         }
 
         // 2. Fallback: search /sys/class/hwmon/hwmon* for name == "hp" or "hp-wmi" with pwm1_enable
         let class_hwmon = self.resolve_path("sys/class/hwmon");
-        if class_hwmon.is_dir() {
-            if let Ok(entries) = fs::read_dir(&class_hwmon) {
-                for entry in entries.flatten() {
-                    let dir = entry.path();
-                    let name_path = dir.join("name");
-                    let pwm_path = dir.join("pwm1_enable");
+        if class_hwmon.is_dir()
+            && let Ok(entries) = fs::read_dir(&class_hwmon)
+        {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                let name_path = dir.join("name");
+                let pwm_path = dir.join("pwm1_enable");
 
-                    if pwm_path.exists() {
-                        if let Ok(name) = fs::read_to_string(&name_path) {
-                            let name_trim = name.trim();
-                            if name_trim == "hp" || name_trim == "hp-wmi" {
-                                return Ok(pwm_path);
-                            }
-                        }
+                if pwm_path.exists()
+                    && let Ok(name) = fs::read_to_string(&name_path)
+                {
+                    let name_trim = name.trim();
+                    if name_trim == "hp" || name_trim == "hp-wmi" {
+                        return Ok(pwm_path);
                     }
                 }
             }
@@ -138,12 +138,11 @@ impl HardwareBackend {
                     let dir = entry.path();
                     for idx in 1..=4 {
                         let fan_input = dir.join(format!("fan{idx}_input"));
-                        if fan_input.is_file() {
-                            if let Ok(content) = fs::read_to_string(&fan_input) {
-                                if let Ok(rpm) = content.trim().parse::<u32>() {
-                                    rpms.push(rpm);
-                                }
-                            }
+                        if fan_input.is_file()
+                            && let Ok(content) = fs::read_to_string(&fan_input)
+                            && let Ok(rpm) = content.trim().parse::<u32>()
+                        {
+                            rpms.push(rpm);
                         }
                     }
                     if !rpms.is_empty() {

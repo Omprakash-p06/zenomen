@@ -64,12 +64,20 @@ pub fn spawn_monitoring_worker(
             let _ = event_sender.send(AppEvent::ServiceStatusChanged(initial_status.clone()));
 
             if initial_status.is_connected() {
+                let polkit = client
+                    .check_polkit_status()
+                    .unwrap_or_else(|e| format!("Check failed: {e}"));
+                let _ = event_sender.send(AppEvent::PolkitStatusChanged(polkit));
                 if let Ok((mode, _)) = client.get_fan_status() {
                     let _ = event_sender.send(AppEvent::FanModeChanged(Ok(mode)));
                 }
                 if let Ok(profile) = client.get_power_profile() {
                     let _ = event_sender.send(AppEvent::PowerProfileChanged(Ok(profile)));
                 }
+            } else {
+                let _ = event_sender.send(AppEvent::PolkitStatusChanged(
+                    "Service disconnected".to_string(),
+                ));
             }
 
             // 4. Deadline loop with channel timeout scheduling
@@ -142,9 +150,19 @@ pub fn spawn_monitoring_worker(
 
                         // Check service status every 5 seconds
                         status_check_tick = status_check_tick.wrapping_add(1);
-                        if status_check_tick % 5 == 0 {
+                        if status_check_tick.is_multiple_of(5) {
                             let status = client.status();
-                            let _ = event_sender.send(AppEvent::ServiceStatusChanged(status));
+                            let _ = event_sender.send(AppEvent::ServiceStatusChanged(status.clone()));
+                            if status.is_connected() {
+                                let polkit = client
+                                    .check_polkit_status()
+                                    .unwrap_or_else(|e| format!("Check failed: {e}"));
+                                let _ = event_sender.send(AppEvent::PolkitStatusChanged(polkit));
+                            } else {
+                                let _ = event_sender.send(AppEvent::PolkitStatusChanged(
+                                    "Service disconnected".to_string(),
+                                ));
+                            }
                         }
 
                         deadline += SAMPLING_INTERVAL;
