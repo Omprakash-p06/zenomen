@@ -1,0 +1,191 @@
+// ZenOmen sidebar — fixed 200px Charcoal rail holding the Enso mark, the
+// wordmark and the six screen rows.
+//
+// Interaction contract (`01-UI-SPEC.md`, Keyboard & Interaction):
+//   * Up / Down move between rows with wrapping and are `accept`ed so the
+//     content area never scrolls instead.
+//   * Return / Space activate the focused row.
+//   * The active row carries a 2px gold left rail plus a weight-600 label; a
+//     merely *focused* row gets the 2px gold ring and no rail. Those are two
+//     different states and they can point at different rows at the same time.
+//
+// The whole sidebar is one `FocusScope` tab stop: Tab reaches the group, then
+// Up/Down walk the rows inside it.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { Icon } from "icons.slint";
+
+export component Sidebar inherits Rectangle {
+    /// Index of the screen currently shown. Owned by `app.slint`; the sidebar
+    /// only reads it to decide which row carries the gold rail.
+    in property <int> active-screen: 0;
+    /// Row that owns the focus ring. Not the same thing as `active-screen`.
+    in-out property <int> focused-row: 0;
+
+    /// Emitted when a row is activated by click, Return or Space.
+    callback navigate(int);
+
+    width: ThemeMetrics.sidebar-width;
+    horizontal-stretch: 0;
+    height: 100%;
+    background: ThemeColors.charcoal;
+
+    // Declaration order is the tab order, so the Enso header is not focusable
+    // and the nav group is the sidebar's single stop.
+    private property <[string]> labels: [
+        "Overview",
+        "Cooling",
+        "Performance",
+        "Lighting",
+        "Settings",
+        "Diagnostics",
+    ];
+    private property <[string]> icons: [
+        "enso",
+        "fan",
+        "power",
+        "keyboard",
+        "settings",
+        "stethoscope",
+    ];
+    private property <int> row-count: 6;
+
+    /// Put keyboard focus back on the row for the screen currently shown.
+    /// `app.slint` calls this on Escape (the contract returns focus to the
+    /// sidebar's *active* row, not to whichever row was focused last).
+    public function focus-active-row() {
+        root.focused-row = root.active-screen;
+        nav-focus.focus();
+    }
+
+    nav-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        key-pressed(event) => {
+            if (event.text == Key.DownArrow) {
+                root.focused-row = root.focused-row + 1 >= root.row-count
+                    ? 0
+                    : root.focused-row + 1;
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.focused-row = root.focused-row <= 0
+                    ? root.row-count - 1
+                    : root.focused-row - 1;
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.navigate(root.focused-row);
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding-top: ThemeMetrics.md;
+            padding-bottom: ThemeMetrics.md;
+            spacing: 0;
+            alignment: start;
+
+            // Header: Enso mark + wordmark, both in the reserved accent gold.
+            HorizontalLayout {
+                height: ThemeMetrics.header-height;
+                padding-left: ThemeMetrics.md;
+                padding-right: ThemeMetrics.md;
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                Icon {
+                    name: "enso";
+                    tint: ThemeColors.gold;
+                    size: 24px;
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: "ZenOmen";
+                    color: ThemeColors.gold;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.heading;
+                    font-weight: ThemeTypography.weight-semibold;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            Rectangle {
+                height: ThemeMetrics.sm;
+                background: transparent;
+            }
+
+            for entry[index] in root.labels : Rectangle {
+                height: 40px; // minimum interactive target from the spacing table
+                background: nav-focus.has-focus && root.focused-row == index
+                    ? ThemeColors.slate
+                    : transparent;
+
+                // Selected state: 2px gold rail on the left edge only.
+                if root.active-screen == index : Rectangle {
+                    x: 0;
+                    width: ThemeMetrics.stroke-emphasis;
+                    height: 100%;
+                    background: ThemeColors.gold;
+                }
+
+                // Focused state: 2px gold ring, inset by 2px so it never
+                // collides with the rail. A focused-but-inactive row shows the
+                // ring without the rail.
+                if nav-focus.has-focus && root.focused-row == index : Rectangle {
+                    x: ThemeMetrics.stroke-emphasis;
+                    y: ThemeMetrics.stroke-emphasis;
+                    width: parent.width - 2 * ThemeMetrics.stroke-emphasis;
+                    height: parent.height - 2 * ThemeMetrics.stroke-emphasis;
+                    background: transparent;
+                    border-width: ThemeMetrics.stroke-emphasis;
+                    border-color: ThemeColors.gold;
+                    border-radius: 4px;
+                }
+
+                HorizontalLayout {
+                    padding-left: ThemeMetrics.md;
+                    padding-right: ThemeMetrics.md;
+                    spacing: ThemeMetrics.sm;
+                    alignment: start;
+
+                    Icon {
+                        name: root.icons[index];
+                        tint: root.active-screen == index
+                            ? ThemeColors.text-primary
+                            : ThemeColors.text-secondary;
+                        vertical-stretch: 0;
+                    }
+                    Text {
+                        text: root.labels[index];
+                        color: root.active-screen == index
+                            ? ThemeColors.text-primary
+                            : ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        font-weight: root.active-screen == index
+                            ? ThemeTypography.weight-semibold
+                            : ThemeTypography.weight-regular;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.focused-row = index;
+                        nav-focus.focus();
+                        root.navigate(index);
+                    }
+                }
+            }
+        }
+    }
+}

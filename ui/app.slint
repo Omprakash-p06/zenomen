@@ -1,31 +1,24 @@
-// ZenOmen application window — Phase 1 scaffold.
+// ZenOmen application window — shell and screen router.
 //
-// This is the entry component compiled by build.rs. It carries only the window
-// contract from `01-UI-SPEC.md` (title, obsidian background, default and minimum
-// size) and a centred placeholder. The sidebar, header, status strip and the six
-// screens replace the placeholder in plan 01-02; every colour and type value must
-// keep coming from `ui/theme/`, never from a literal in a screen file.
+// Layout from `01-UI-SPEC.md` (Visual Hierarchy): a fixed 200px Charcoal
+// sidebar, then a vertical stack of the 64px header, the 40px status strip and
+// a scrolling content area with 24px padding. Sidebar and header stay fixed
+// while content scrolls.
+//
+// Two rules this file exists to enforce:
+//   * No hardware access: the shell only reads Slint properties and emits
+//     callbacks. `src/app.rs` turns those callbacks into `AppCommand`s and is
+//     the only path back in (FOUND-05).
+//   * A bad screen index can never blank the window: every read goes through
+//     `current-screen`, which falls back to Overview (T-01-04).
 import { ThemeColors } from "theme/colors.slint";
 import { ThemeTypography } from "theme/typography.slint";
 import { ThemeMetrics } from "theme/metrics.slint";
+import { ScrollView } from "std-widgets.slint";
 
-// Task 1 of plan 01-02 authors the reusable component library. Importing every
-// component here forces the Slint compiler to type-check each file (a .slint
-// file that nothing imports is never compiled), which is what makes this task's
-// `cargo check` meaningful. Task 2 replaces this block with the real shell that
-// instantiates them.
-import { Icon } from "components/icons.slint";
-import { PrimaryButton, SecondaryButton } from "components/action-button.slint";
-import { StatusPill } from "components/status-pill.slint";
-import { ValueReadout } from "components/value-readout.slint";
-import { Sparkline } from "components/sparkline.slint";
-import { TelemetryChart } from "components/telemetry-chart.slint";
-import { MetricCard } from "components/metric-card.slint";
-import { SectionCard } from "components/section-card.slint";
+import { Sidebar } from "components/sidebar.slint";
 import { ScreenHeader } from "components/screen-header.slint";
 import { StatusStrip } from "components/status-strip.slint";
-import { UnavailablePanel } from "components/unavailable-panel.slint";
-import { CapabilityNotice } from "components/capability-notice.slint";
 
 export component AppWindow inherits Window {
     title: "ZenOmen";
@@ -33,22 +26,122 @@ export component AppWindow inherits Window {
 
     // 1180x760 default, 940x620 minimum: the sizes the Overview grid's 4- and
     // 3-column breakpoints were designed against. Slint names the initial size
-    // `preferred-width`/`preferred-height`; there is no `default-width` property
-    // on Window.
+    // `preferred-width`/`preferred-height`; there is no `default-width`
+    // property on Window.
     preferred-width: ThemeMetrics.default-width;
     preferred-height: ThemeMetrics.default-height;
     min-width: ThemeMetrics.min-width;
     min-height: ThemeMetrics.min-height;
 
-    Text {
+    /// Screen index requested by the sidebar or by the core. 0 = Overview.
+    in-out property <int> active-screen: 0;
+
+    /// Emitted when the user activates a nav row. `src/app.rs` forwards this
+    /// to the core as `AppCommand::Navigate`.
+    callback navigate(int);
+    /// Emitted by the header's `Refresh Telemetry` action.
+    callback refresh-telemetry();
+
+    /// Index actually rendered. Out-of-range input degrades to Overview rather
+    /// than rendering nothing (threat T-01-04).
+    private property <int> current-screen:
+        root.active-screen >= 0 && root.active-screen <= 5 ? root.active-screen : 0;
+
+    // Title per screen, indexed by `current-screen`. A plain array keeps the
+    // lookup inside a property binding (a function call would be impure).
+    private property <[string]> screen-titles: [
+        "Overview",
+        "Cooling",
+        "Performance",
+        "Lighting",
+        "Settings",
+        "Diagnostics",
+    ];
+
+    // Root focus scope: Escape clears focus from the content and returns it to
+    // the sidebar's active row (Keyboard & Interaction contract). Key events
+    // from any focused descendant bubble up to here.
+    shell-focus := FocusScope {
         width: 100%;
         height: 100%;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        color: ThemeColors.text-primary;
-        font-family: ThemeTypography.font-prose;
-        font-size: ThemeTypography.heading;
-        font-weight: ThemeTypography.weight-semibold;
-        text: "ZenOmen";
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                sidebar.focus-active-row();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            sidebar := Sidebar {
+                active-screen: root.current-screen;
+                navigate(screen) => {
+                    root.active-screen = screen;
+                    root.navigate(screen);
+                }
+            }
+
+            VerticalLayout {
+                spacing: 0;
+
+                ScreenHeader {
+                    title: root.screen-titles[root.current-screen];
+                    // Only Overview has a primary action in Phase 1.
+                    show-action: root.current-screen == 0;
+                    action-label: "Refresh Telemetry";
+                    action => {
+                        root.refresh-telemetry();
+                    }
+                }
+
+                // Global capability / provider state, directly under the header
+                // so it is read before the screen anchor (UI-SPEC reading order).
+                // Plan 01-03 binds these to the mock provider's snapshot; until
+                // then the nominal copy from the Copywriting Contract is shown.
+                StatusStrip {
+                    text: "Mock provider · 12 of 12 sensors reported";
+                    degraded: false;
+                    show-action: false;
+                }
+
+                // Content viewport. The six screens replace this placeholder in
+                // Task 3 of this plan; it is keyed on the router already so the
+                // screen switch is exercised from the first build.
+                Rectangle {
+                    background: ThemeColors.obsidian;
+                    vertical-stretch: 1;
+
+                    ScrollView {
+                        width: 100%;
+                        height: 100%;
+
+                        VerticalLayout {
+                            padding: ThemeMetrics.lg;
+                            spacing: ThemeMetrics.lg;
+                            alignment: start;
+
+                            Text {
+                                text: root.screen-titles[root.current-screen];
+                                color: ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.display;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: left;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: "Screen content arrives in Task 3 of plan 01-02.";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.body;
+                                horizontal-alignment: left;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
