@@ -205,6 +205,13 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
     ui.set_power_profile(snapshot.power_profile.as_str().into());
     ui.set_power_profile_choices(string_model(&snapshot.power_profiles));
     ui.set_rgb_profile(snapshot.rgb_profile.as_deref().unwrap_or_default().into());
+
+    ui.set_cpu_path(state.paths.cpu_path.as_str().into());
+    ui.set_gpu_path(state.paths.gpu_path.as_str().into());
+    ui.set_ram_path(state.paths.ram_path.as_str().into());
+    ui.set_cpu_sparkline(state.paths.cpu_sparkline.as_str().into());
+    ui.set_gpu_sparkline(state.paths.gpu_sparkline.as_str().into());
+    ui.set_ram_sparkline(state.paths.ram_sparkline.as_str().into());
 }
 
 /// A percentage without its sign — the screens append `%` themselves.

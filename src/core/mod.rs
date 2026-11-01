@@ -7,10 +7,10 @@
 
 pub mod events;
 pub mod state;
-// The history is complete here but has no caller until the monitoring worker
-// lands in task 3; the targeted allow keeps this commit warning-free.
-#[allow(dead_code, reason = "attached to the monitoring worker in task 3")]
 pub mod telemetry;
+pub mod worker;
 
 pub use events::{AppCommand, AppEvent, ScreenId};
 pub use state::AppState;
+pub use telemetry::{TelemetryHistory, TelemetryPaths, TelemetryPoint};
+pub use worker::spawn_monitoring_worker;

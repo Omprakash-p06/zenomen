@@ -223,9 +223,6 @@ impl Default for HardwareCapabilities {
 ///
 /// `Send + Sync` is required because the monitoring worker samples from its own
 /// thread; the UI thread never holds one.
-// `dead_code`: the mock implements this trait in task 1, but nothing samples
-// through it until the monitoring worker lands in task 3.
-#[allow(dead_code, reason = "sampled by the monitoring worker in task 3")]
 pub trait HardwareProvider: Send + Sync {
     /// Which interfaces this machine actually exposes.
     fn capabilities(&self) -> HardwareCapabilities;

@@ -10,6 +10,9 @@
 //! right now, and what should the status strip say about it.
 
 use crate::core::events::{AppEvent, ScreenId};
+use crate::core::telemetry::{
+    CHART_HEIGHT, CHART_WIDTH, TelemetryHistory, TelemetryPaths, TelemetryPoint,
+};
 use crate::hardware::{HardwareCapabilities, TelemetrySnapshot};
 
 /// One flag per interface described by [`HardwareCapabilities`].
@@ -36,12 +39,11 @@ pub struct AppState {
     /// fabricated "0 of 12 sensors".
     pub latest_snapshot: Option<TelemetrySnapshot>,
     /// Samples retained per chart. Bounded by construction (MON-11).
-    // `dead_code`: read by the history buffer plan 01-03 attaches to the charts.
-    #[allow(
-        dead_code,
-        reason = "chart history arrives with the mock provider in 01-03"
-    )]
     pub history_window: usize,
+    /// Bounded telemetry sample buffer.
+    pub history: TelemetryHistory,
+    /// Most recent SVG path strings for the chart and sparklines.
+    pub paths: TelemetryPaths,
 }
 
 impl Default for AppState {
@@ -51,6 +53,8 @@ impl Default for AppState {
             capabilities: HardwareCapabilities::default(),
             latest_snapshot: None,
             history_window: HISTORY_WINDOW,
+            history: TelemetryHistory::new(),
+            paths: TelemetryPaths::default(),
         }
     }
 }
@@ -61,7 +65,23 @@ impl AppState {
         match event {
             AppEvent::ScreenChanged(screen) => self.active_screen = *screen,
             AppEvent::CapabilitiesLoaded(capabilities) => self.capabilities = *capabilities,
-            AppEvent::TelemetryUpdated(snapshot) => self.latest_snapshot = Some(snapshot.clone()),
+            AppEvent::TelemetryUpdated(snapshot) => {
+                self.latest_snapshot = Some(snapshot.clone());
+                let point = TelemetryPoint::from_snapshot(snapshot);
+                self.history.push(point);
+                let (cpu_path, gpu_path, ram_path) =
+                    self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
+                let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
+                    self.history.generate_sparkline_paths();
+                self.paths = TelemetryPaths {
+                    cpu_path,
+                    gpu_path,
+                    ram_path,
+                    cpu_sparkline,
+                    gpu_sparkline,
+                    ram_sparkline,
+                };
+            }
         }
     }
 
