@@ -20,6 +20,10 @@ export component Sparkline inherits Rectangle {
     if root.commands != "" : Path {
         width: 100%;
         height: 100%;
+        // The core generates the path in its own 200x28 logical space; the
+        // viewbox scales it to the card width without the core knowing it.
+        viewbox-width: 200;
+        viewbox-height: 28;
         fill: transparent;
         stroke: ThemeColors.gold;
         stroke-width: ThemeMetrics.stroke-emphasis;
