@@ -3,7 +3,7 @@
 //! Main entry point: manages single-instance enforcement on session D-Bus,
 //! system tray integration, close-to-tray lifecycle, and monitoring worker orchestration.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -17,8 +17,14 @@ use zenomen::hardware::{HardwareProvider, MockHardware};
 use zenomen::AppWindow;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Check CLI args for start-minimized flag
-    let start_minimized = std::env::args().any(|arg| arg == "--minimized" || arg == "-m");
+    // 0. Load persistent configuration (SYS-06, SYS-07)
+    let config_path = zenomen::config::default_config_path()
+        .unwrap_or_else(|| std::path::PathBuf::from("config.toml"));
+    let (config, corrupt_notice) = zenomen::config::load_or_default(&config_path);
+
+    // 1. Check CLI args or config for start-minimized flag (SYS-03)
+    let start_minimized = std::env::args().any(|arg| arg == "--minimized" || arg == "-m")
+        || config.general.start_minimized;
 
     // 2. Single-instance enforcement (SYS-05)
     let (action_sender, action_receiver) = mpsc::sync_channel::<DesktopAction>(16);
@@ -51,8 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.install_callbacks();
 
     // 3. Close-to-tray lifecycle management (SYS-04)
-    let close_to_tray = Arc::new(AtomicBool::new(true));
-    let close_to_tray_flag = close_to_tray.clone();
+    let close_to_tray_flag = app.close_to_tray_flag();
+    close_to_tray_flag.store(config.general.close_to_tray, Ordering::Relaxed);
     ui.window().on_close_requested(move || {
         if close_to_tray_flag.load(Ordering::Relaxed) {
             tracing::info!("window close requested; minimizing to tray");
@@ -120,6 +126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize capabilities on the UI thread before window opens (honest first frame)
     app.initialize(provider.capabilities());
+    if let Some(notice) = corrupt_notice {
+        app.handle_event(zenomen::core::AppEvent::ConfigCorrupted(notice));
+    }
+    app.handle_event(zenomen::core::AppEvent::ConfigLoaded(config));
     log_benchmark("warm-dashboard");
 
     // Event bridge: channel from worker thread -> UI event handler

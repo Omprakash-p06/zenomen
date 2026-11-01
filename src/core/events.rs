@@ -83,6 +83,16 @@ pub enum AppCommand {
     ApplyPreset(String),
     /// Dismiss the active hardware control error banner.
     DismissControlError,
+    /// Update and persist full application configuration.
+    UpdateConfig(crate::config::AppConfig),
+    /// Change telemetry polling rate in milliseconds (SYS-09).
+    SetPollingInterval(u64),
+    /// Toggle autostart on user login (SYS-02).
+    SetAutostart(bool),
+    /// Toggle starting minimized to system tray (SYS-03).
+    SetStartMinimized(bool),
+    /// Toggle closing window to system tray (SYS-04).
+    SetCloseToTray(bool),
 }
 
 /// Something the core wants the UI to show.
@@ -95,6 +105,10 @@ pub enum AppCommand {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppEvent {
+    /// Configuration was loaded or updated (SYS-06).
+    ConfigLoaded(crate::config::AppConfig),
+    /// Configuration file was corrupted and backed up; safe defaults loaded (SYS-07).
+    ConfigCorrupted(String),
     /// The active screen changed in the core (for example after a redirect to
     /// Diagnostics from an UnavailablePanel).
     ScreenChanged(ScreenId),

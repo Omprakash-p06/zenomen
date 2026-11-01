@@ -81,7 +81,14 @@ pub fn spawn_monitoring_worker(
             }
 
             // 4. Deadline loop with channel timeout scheduling
-            let mut deadline = Instant::now() + SAMPLING_INTERVAL;
+            let (mut current_config, _) = crate::config::default_config_path()
+                .as_deref()
+                .map(crate::config::load_or_default)
+                .unwrap_or_else(|| (crate::config::AppConfig::default(), None));
+            let mut sampling_interval = Duration::from_millis(
+                current_config.telemetry.polling_interval_ms.clamp(500, 5000),
+            );
+            let mut deadline = Instant::now() + sampling_interval;
             let mut status_check_tick: u32 = 0;
 
             loop {
@@ -97,7 +104,7 @@ pub fn spawn_monitoring_worker(
                                 break;
                             }
                             // Reset deadline to full interval after immediate sample
-                            deadline = Instant::now() + SAMPLING_INTERVAL;
+                            deadline = Instant::now() + sampling_interval;
                         }
                         AppCommand::Navigate(screen) => {
                             tracing::debug!(screen = screen.title(), "navigation forwarded");
@@ -108,6 +115,11 @@ pub fn spawn_monitoring_worker(
                         }
                         AppCommand::SetHistoryWindow(samples) => {
                             tracing::debug!(samples, "history window updated");
+                            current_config.telemetry.history_window = samples;
+                            current_config.sanitize();
+                            if let Some(path) = crate::config::default_config_path() {
+                                let _ = crate::config::save_atomic(&path, &current_config);
+                            }
                             if event_sender
                                 .send(AppEvent::HistoryWindowChanged(samples))
                                 .is_err()
@@ -115,6 +127,54 @@ pub fn spawn_monitoring_worker(
                                 tracing::debug!("event receiver disconnected; exiting worker");
                                 break;
                             }
+                            let _ = event_sender.send(AppEvent::ConfigLoaded(current_config.clone()));
+                        }
+                        AppCommand::UpdateConfig(config) => {
+                            let mut new_config = config;
+                            new_config.sanitize();
+                            if let Some(path) = crate::config::default_config_path()
+                                && let Err(e) = crate::config::save_atomic(&path, &new_config)
+                            {
+                                tracing::error!(error = %e, "failed to persist config");
+                            }
+                            let _ = crate::desktop::autostart::set_autostart_enabled(new_config.general.autostart);
+                            let ms = new_config.telemetry.polling_interval_ms;
+                            sampling_interval = Duration::from_millis(ms);
+                            deadline = Instant::now() + sampling_interval;
+                            current_config = new_config.clone();
+                            let _ = event_sender.send(AppEvent::ConfigLoaded(new_config));
+                        }
+                        AppCommand::SetPollingInterval(ms) => {
+                            current_config.telemetry.polling_interval_ms = ms;
+                            current_config.sanitize();
+                            if let Some(path) = crate::config::default_config_path() {
+                                let _ = crate::config::save_atomic(&path, &current_config);
+                            }
+                            sampling_interval = Duration::from_millis(current_config.telemetry.polling_interval_ms);
+                            deadline = Instant::now() + sampling_interval;
+                            let _ = event_sender.send(AppEvent::ConfigLoaded(current_config.clone()));
+                        }
+                        AppCommand::SetAutostart(enabled) => {
+                            current_config.general.autostart = enabled;
+                            let _ = crate::desktop::autostart::set_autostart_enabled(enabled);
+                            if let Some(path) = crate::config::default_config_path() {
+                                let _ = crate::config::save_atomic(&path, &current_config);
+                            }
+                            let _ = event_sender.send(AppEvent::ConfigLoaded(current_config.clone()));
+                        }
+                        AppCommand::SetStartMinimized(enabled) => {
+                            current_config.general.start_minimized = enabled;
+                            if let Some(path) = crate::config::default_config_path() {
+                                let _ = crate::config::save_atomic(&path, &current_config);
+                            }
+                            let _ = event_sender.send(AppEvent::ConfigLoaded(current_config.clone()));
+                        }
+                        AppCommand::SetCloseToTray(enabled) => {
+                            current_config.general.close_to_tray = enabled;
+                            if let Some(path) = crate::config::default_config_path() {
+                                let _ = crate::config::save_atomic(&path, &current_config);
+                            }
+                            let _ = event_sender.send(AppEvent::ConfigLoaded(current_config.clone()));
                         }
                         AppCommand::SetFanMode(mode) => {
                             tracing::info!(mode = mode.as_str(), "applying fan mode via service");
@@ -142,7 +202,7 @@ pub fn spawn_monitoring_worker(
                         }
                     },
                     Err(RecvTimeoutError::Timeout) => {
-                        // Periodic 1 Hz sample
+                        // Periodic sample
                         if !sample_and_dispatch(&provider, &event_sender) {
                             tracing::debug!("event receiver disconnected; exiting worker");
                             break;
@@ -165,10 +225,10 @@ pub fn spawn_monitoring_worker(
                             }
                         }
 
-                        deadline += SAMPLING_INTERVAL;
+                        deadline += sampling_interval;
                         // Avoid deadline drift if stalled or suspended
                         if deadline <= Instant::now() {
-                            deadline = Instant::now() + SAMPLING_INTERVAL;
+                            deadline = Instant::now() + sampling_interval;
                         }
                     }
                     Err(RecvTimeoutError::Disconnected) => {

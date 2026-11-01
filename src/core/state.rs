@@ -62,6 +62,10 @@ pub struct AppState {
     pub polkit_status: String,
     /// Last error encountered during hardware write / verification.
     pub last_control_error: Option<String>,
+    /// Persistent application configuration (SYS-06).
+    pub config: crate::config::AppConfig,
+    /// Notification if loaded config was corrupt and safe defaults were used (SYS-07).
+    pub config_corrupt_notice: Option<String>,
 }
 
 impl Default for AppState {
@@ -82,6 +86,8 @@ impl Default for AppState {
             service_status: crate::service::client::ServiceConnectionStatus::Disconnected,
             polkit_status: "Service disconnected".to_string(),
             last_control_error: None,
+            config: crate::config::AppConfig::default(),
+            config_corrupt_notice: None,
         }
     }
 }
@@ -185,6 +191,26 @@ impl AppState {
             }
             AppEvent::ControlErrorDismissed => {
                 self.last_control_error = None;
+            }
+            AppEvent::ConfigLoaded(config) => {
+                self.config = config.clone();
+                self.history_window = config.telemetry.history_window;
+                self.history.set_capacity(config.telemetry.history_window);
+                let (cpu_path, gpu_path, ram_path) =
+                    self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
+                let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
+                    self.history.generate_sparkline_paths();
+                self.paths = TelemetryPaths {
+                    cpu_path,
+                    gpu_path,
+                    ram_path,
+                    cpu_sparkline,
+                    gpu_sparkline,
+                    ram_sparkline,
+                };
+            }
+            AppEvent::ConfigCorrupted(notice) => {
+                self.config_corrupt_notice = Some(notice.clone());
             }
         }
     }

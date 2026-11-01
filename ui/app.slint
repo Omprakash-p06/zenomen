@@ -109,8 +109,22 @@ export component AppWindow inherits Window {
     in-out property <string> polkit-status-text: "Unknown";
     in-out property <string> control-error-message: "";
 
+    in-out property <int> polling-interval-ms: 1000;
+    in-out property <bool> start-minimized: false;
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> autostart: false;
+    in-out property <string> config-corrupt-notice: "";
+
     /// Emitted when history window duration is changed in Settings (MON-11).
     callback history-window-changed(int);
+    /// Emitted when polling interval is changed in Settings (SYS-09).
+    callback polling-interval-changed(int);
+    /// Emitted when start minimized is toggled in Settings (SYS-03).
+    callback start-minimized-toggled(bool);
+    /// Emitted when close to tray is toggled in Settings (SYS-04).
+    callback close-to-tray-toggled(bool);
+    /// Emitted when autostart is toggled in Settings (SYS-02).
+    callback autostart-toggled(bool);
     /// Emitted by the Export Diagnostics action in Diagnostics screen (DIAG-02).
     callback export-diagnostics();
     /// Emitted when user selects a fan mode ("auto", "max").
@@ -327,9 +341,30 @@ export component AppWindow inherits Window {
                                 provider-mode: root.provider-mode;
                                 theme-name: root.theme-name;
                                 history-window: root.history-window;
+                                polling-interval-ms: root.polling-interval-ms;
+                                start-minimized: root.start-minimized;
+                                close-to-tray: root.close-to-tray;
+                                autostart: root.autostart;
+                                config-corrupt-notice: root.config-corrupt-notice;
                                 history-window-changed(val) => {
                                     root.history-window = val;
                                     root.history-window-changed(val);
+                                }
+                                polling-interval-changed(val) => {
+                                    root.polling-interval-ms = val;
+                                    root.polling-interval-changed(val);
+                                }
+                                start-minimized-toggled(val) => {
+                                    root.start-minimized = val;
+                                    root.start-minimized-toggled(val);
+                                }
+                                close-to-tray-toggled(val) => {
+                                    root.close-to-tray = val;
+                                    root.close-to-tray-toggled(val);
+                                }
+                                autostart-toggled(val) => {
+                                    root.autostart = val;
+                                    root.autostart-toggled(val);
                                 }
                             }
 

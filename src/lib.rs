@@ -4,6 +4,7 @@
 //! Slint UI bridge.
 
 pub mod app;
+pub mod config;
 pub mod core;
 pub mod desktop;
 pub mod hardware;

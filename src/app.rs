@@ -39,6 +39,7 @@ pub struct ZenOmenApp {
     commands: SyncSender<AppCommand>,
     state: Arc<Mutex<AppState>>,
     registry: Arc<Mutex<Option<Arc<SensorRegistry>>>>,
+    close_to_tray_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ZenOmenApp {
@@ -53,9 +54,15 @@ impl ZenOmenApp {
             commands,
             state: Arc::new(Mutex::new(AppState::default())),
             registry: Arc::new(Mutex::new(None)),
+            close_to_tray_flag: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         (app, command_receiver)
+    }
+
+    /// Access the shared close-to-tray boolean flag for window close interceptors.
+    pub fn close_to_tray_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.close_to_tray_flag.clone()
     }
 
     /// Store the canonical sensor registry and populate initial diagnostics properties.
@@ -140,6 +147,40 @@ impl ZenOmenApp {
         }
 
         let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_polling_interval_changed(move |ms| {
+                if ms >= 500 {
+                    send_command(&commands, AppCommand::SetPollingInterval(ms as u64));
+                }
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_start_minimized_toggled(move |enabled| {
+                send_command(&commands, AppCommand::SetStartMinimized(enabled));
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_close_to_tray_toggled(move |enabled| {
+                send_command(&commands, AppCommand::SetCloseToTray(enabled));
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_autostart_toggled(move |enabled| {
+                send_command(&commands, AppCommand::SetAutostart(enabled));
+            });
+        }
+
+        let ui = self.ui.clone();
         let state = Arc::clone(&self.state);
         let registry_slot = Arc::clone(&self.registry);
         if let Some(ui) = ui.upgrade() {
@@ -206,7 +247,8 @@ impl ZenOmenApp {
         }
 
         if let Some(ui) = self.ui.upgrade() {
-            let report = crate::core::collect_diagnostics(&lock_state(&self.state), None);
+            let state = lock_state(&self.state);
+            let report = crate::core::collect_diagnostics(&state, None);
             ui.set_os_name(report.os_name.into());
             ui.set_kernel_version(report.kernel_version.into());
             if let Some(prod) = report.product_name {
@@ -214,7 +256,15 @@ impl ZenOmenApp {
             } else if let Some(vendor) = report.sys_vendor {
                 ui.set_model_name(vendor.into());
             }
-            apply_to_ui(&ui, &lock_state(&self.state), &event);
+            ui.set_polling_interval_ms(state.config.telemetry.polling_interval_ms as i32);
+            ui.set_history_window(state.config.telemetry.history_window as i32);
+            ui.set_start_minimized(state.config.general.start_minimized);
+            ui.set_close_to_tray(state.config.general.close_to_tray);
+            ui.set_autostart(state.config.general.autostart);
+            if let Some(notice) = &state.config_corrupt_notice {
+                ui.set_config_corrupt_notice(notice.as_str().into());
+            }
+            apply_to_ui(&ui, &state, &event);
         }
     }
 
@@ -224,6 +274,10 @@ impl ZenOmenApp {
     /// caller's thread so the core is always the first to know; the UI update is
     /// queued onto the event loop.
     pub fn handle_event(&self, event: AppEvent) {
+        if let AppEvent::ConfigLoaded(ref cfg) = event {
+            self.close_to_tray_flag.store(cfg.general.close_to_tray, std::sync::atomic::Ordering::Relaxed);
+        }
+
         {
             let mut state = lock_state(&self.state);
             state.apply(&event);
@@ -285,6 +339,16 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
     }
     if let AppEvent::HistoryWindowChanged(window_size) = event {
         ui.set_history_window(*window_size as i32);
+    }
+    if let AppEvent::ConfigLoaded(config) = event {
+        ui.set_polling_interval_ms(config.telemetry.polling_interval_ms as i32);
+        ui.set_history_window(config.telemetry.history_window as i32);
+        ui.set_start_minimized(config.general.start_minimized);
+        ui.set_close_to_tray(config.general.close_to_tray);
+        ui.set_autostart(config.general.autostart);
+    }
+    if let AppEvent::ConfigCorrupted(notice) = event {
+        ui.set_config_corrupt_notice(notice.as_str().into());
     }
 
     let capabilities = state.capabilities;
