@@ -1,0 +1,27 @@
+[Unit]
+Description=ZenOmen Privileged Hardware Control Service
+Documentation=https://github.com/Omprakash-p06/zenomen
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+Type=dbus
+BusName=com.zenomen.Hardware1
+ExecStart=/usr/local/bin/zenomen-hw
+Restart=on-failure
+RestartSec=3s
+
+# Security Sandboxing (SVC-05)
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/
+ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

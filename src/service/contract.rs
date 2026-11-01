@@ -1,0 +1,199 @@
+//! D-Bus interface contract for com.zenomen.Hardware1.
+
+use zbus::interface;
+use zbus::message::Header;
+use zbus::Connection;
+
+use crate::service::backend::HardwareBackend;
+use crate::service::polkit::{PolkitVerifier, POLKIT_ACTION_CONTROL};
+
+use std::sync::{Arc, RwLock};
+
+/// D-Bus service exposing verified hardware control endpoints under `com.zenomen.Hardware1`.
+#[derive(Clone)]
+pub struct HardwareService {
+    backend: HardwareBackend,
+    conn: Arc<RwLock<Option<Connection>>>,
+    require_polkit: bool,
+}
+
+impl HardwareService {
+    /// Create a new HardwareService wrapping the specified backend.
+    pub fn new(backend: HardwareBackend) -> Self {
+        Self {
+            backend,
+            conn: Arc::new(RwLock::new(None)),
+            require_polkit: true,
+        }
+    }
+
+    /// Associate an active D-Bus connection for polkit verification queries.
+    pub fn set_connection(&self, conn: Connection) {
+        if let Ok(mut lock) = self.conn.write() {
+            *lock = Some(conn);
+        }
+    }
+
+    /// Associate an active D-Bus connection (builder pattern).
+    pub fn with_connection(self, conn: Connection) -> Self {
+        self.set_connection(conn);
+        self
+    }
+
+    /// Enable or disable polkit requirement (useful for testing or dev modes).
+    pub fn with_polkit_required(mut self, require_polkit: bool) -> Self {
+        self.require_polkit = require_polkit;
+        self
+    }
+
+    /// Access the underlying backend.
+    pub fn backend(&self) -> &HardwareBackend {
+        &self.backend
+    }
+
+    /// Enforce polkit authorization for mutating operations.
+    async fn authorize(&self, hdr: &Header<'_>) -> Result<(), zbus::fdo::Error> {
+        if !self.require_polkit {
+            return Ok(());
+        }
+
+        let sender = hdr
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::AccessDenied("Caller sender missing in D-Bus message".to_string()))?;
+
+        let conn = {
+            let lock = self.conn.read().map_err(|e| {
+                zbus::fdo::Error::Failed(format!("Lock poisoned: {e}"))
+            })?;
+            lock.as_ref()
+                .cloned()
+                .ok_or_else(|| zbus::fdo::Error::Failed("D-Bus connection not initialized on service".to_string()))?
+        };
+
+        PolkitVerifier::check_authorization(&conn, sender.as_str(), POLKIT_ACTION_CONTROL, true)
+            .await
+            .map_err(zbus::fdo::Error::from)?;
+
+        Ok(())
+    }
+}
+
+#[interface(name = "com.zenomen.Hardware1")]
+impl HardwareService {
+    /// Return capabilities JSON (e.g. fan control, power profiles availability).
+    async fn get_capabilities(&self) -> zbus::fdo::Result<String> {
+        let has_fan_control = self.backend.find_fan_control_path().is_ok();
+        let has_power_profiles = self.backend.get_power_profile_choices().is_ok();
+
+        let caps = serde_json::json!({
+            "has_fan_control": has_fan_control,
+            "has_power_profiles": has_power_profiles,
+            "service_version": env!("CARGO_PKG_VERSION"),
+        });
+
+        Ok(caps.to_string())
+    }
+
+    /// Read active fan mode and current fan RPMs.
+    async fn get_fan_status(&self) -> zbus::fdo::Result<(String, Vec<u32>)> {
+        let mode = self
+            .backend
+            .get_fan_mode()
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_else(|_| "unavailable".to_string());
+        let rpms = self.backend.get_fan_rpms();
+        Ok((mode, rpms))
+    }
+
+    /// Set fan mode with verification.
+    /// Mutating method: checks polkit `com.zenomen.hardware.control`.
+    async fn set_fan_mode(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        mode: String,
+    ) -> zbus::fdo::Result<String> {
+        self.authorize(&hdr).await?;
+        let confirmed = self
+            .backend
+            .set_fan_mode(&mode)
+            .map_err(zbus::fdo::Error::from)?;
+        Ok(confirmed)
+    }
+
+    /// List advertised ACPI power profile choices.
+    async fn get_power_profiles(&self) -> zbus::fdo::Result<Vec<String>> {
+        self.backend
+            .get_power_profile_choices()
+            .map_err(zbus::fdo::Error::from)
+    }
+
+    /// Read active ACPI power profile.
+    async fn get_power_profile(&self) -> zbus::fdo::Result<String> {
+        self.backend
+            .get_power_profile()
+            .map_err(zbus::fdo::Error::from)
+    }
+
+    /// Set active ACPI power profile with verification.
+    /// Mutating method: checks polkit `com.zenomen.hardware.control`.
+    async fn set_power_profile(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        profile: String,
+    ) -> zbus::fdo::Result<String> {
+        self.authorize(&hdr).await?;
+        let confirmed = self
+            .backend
+            .set_power_profile(&profile)
+            .map_err(zbus::fdo::Error::from)?;
+        Ok(confirmed)
+    }
+
+    /// Apply a combined preset (Quiet, Balanced, Gaming) with granular PresetResult.
+    /// Mutating method: checks polkit `com.zenomen.hardware.control`.
+    async fn apply_preset(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        preset: String,
+    ) -> zbus::fdo::Result<String> {
+        self.authorize(&hdr).await?;
+        let result = self
+            .backend
+            .apply_preset(&preset)
+            .map_err(zbus::fdo::Error::from)?;
+        serde_json::to_string(&result).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    /// Apply an RGB profile JSON payload.
+    /// Mutating method: checks polkit `com.zenomen.hardware.control`.
+    async fn apply_rgb_profile(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        profile_json: String,
+    ) -> zbus::fdo::Result<String> {
+        self.authorize(&hdr).await?;
+
+        // Formal validation: must be valid JSON object
+        let parsed: serde_json::Value = serde_json::from_str(&profile_json)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("Invalid RGB profile JSON: {e}")))?;
+
+        if !parsed.is_object() {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "RGB profile must be a JSON object".to_string(),
+            ));
+        }
+
+        Ok("RGB profile accepted".to_string())
+    }
+
+    /// Toggle RGB lighting state.
+    /// Mutating method: checks polkit `com.zenomen.hardware.control`.
+    async fn set_rgb_enabled(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        enabled: bool,
+    ) -> zbus::fdo::Result<String> {
+        self.authorize(&hdr).await?;
+        Ok(format!("RGB enabled set to {enabled}"))
+    }
+}

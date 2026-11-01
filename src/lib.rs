@@ -6,5 +6,6 @@
 pub mod app;
 pub mod core;
 pub mod hardware;
+pub mod service;
 
 slint::include_modules!();
