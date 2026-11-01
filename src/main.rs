@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use slint::ComponentHandle;
 use zenomen::AppWindow;
 use zenomen::app::ZenOmenApp;
-use zenomen::core::spawn_monitoring_worker;
+use zenomen::core::{log_benchmark, spawn_monitoring_worker};
 use zenomen::hardware::{HardwareProvider, MockHardware};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting ZenOmen");
+    log_benchmark("cold-start");
 
     let ui = AppWindow::new()?;
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
@@ -36,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize capabilities on the UI thread before window opens (honest first frame)
     app.initialize(provider.capabilities());
+    log_benchmark("warm-dashboard");
 
     // Event bridge: channel from worker thread -> UI event handler
     let (event_sender, event_receiver) = mpsc::channel();

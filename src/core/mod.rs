@@ -5,11 +5,13 @@
 //! `src/hardware` owns the sensor boundary, and this module is the contract
 //! between them (FOUND-05).
 
+pub mod benchmark;
 pub mod events;
 pub mod state;
 pub mod telemetry;
 pub mod worker;
 
+pub use benchmark::{BenchmarkTimer, MemoryMetrics, log_benchmark, read_memory_metrics};
 pub use events::{AppCommand, AppEvent, ScreenId};
 pub use state::AppState;
 pub use telemetry::{TelemetryHistory, TelemetryPaths, TelemetryPoint};
