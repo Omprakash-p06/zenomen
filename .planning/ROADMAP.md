@@ -36,11 +36,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Window frame time stays stable while the monitoring worker publishes updates — no hardware read or external command is reachable from a UI callback.
   5. Memory and CPU instrumentation logs metrics distinguishing cold start, warm dashboard, minimized tray, and peak RSS; CI fails on a formatting violation, a clippy warning, a failing test, or a dependency advisory (`cargo audit`).
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 - [x] 01-01: Rust + Slint scaffold, build pipeline, theme tokens and CI gates (`fmt`, `clippy -D warnings`, `cargo audit`)
-- [ ] 01-02: Application shell — navigation, six screens, Overview bound to core events (`AppCommand`/`AppEvent`)
+- [x] 01-02: Application shell — navigation, six screens, Overview bound to core events (`AppCommand`/`AppEvent`)
 - [ ] 01-03: Mock hardware provider, monitoring worker, bounded history (120 samples) and benchmark instrumentation
 
 ### Phase 2: Linux Telemetry & Capability Detection
@@ -132,7 +132,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 1/3 | In Progress | - |
+| 1. Foundation | 2/3 | In Progress | - |
 | 2. Linux Telemetry | 0/3 | Not started | - |
 | 3. Verified Control | 0/3 | Not started | - |
 | 4. Desktop Integration | 0/3 | Not started | - |

@@ -10,10 +10,10 @@ Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
 ### Foundation
 
 - [x] **FOUND-01**: User can launch ZenOmen and see the Overview page rendered in the ZenOmen dark theme
-- [ ] **FOUND-02**: Every screen (Overview, Cooling, Performance, Lighting, Settings, Diagnostics) is reachable from the sidebar and by keyboard navigation
+- [x] **FOUND-02**: Every screen (Overview, Cooling, Performance, Lighting, Settings, Diagnostics) is reachable from the sidebar and by keyboard navigation
 - [ ] **FOUND-03**: The application runs end-to-end against a mock hardware provider, so the full UI is usable and testable without the target laptop
-- [ ] **FOUND-04**: On a machine where no hardware capability is detected, the app still launches and explains what is unsupported instead of erroring or showing blank panels
-- [ ] **FOUND-05**: UI state changes only in response to typed core events (`AppEvent`); no hardware file or external command is ever read from the UI layer
+- [x] **FOUND-04**: On a machine where no hardware capability is detected, the app still launches and explains what is unsupported instead of erroring or showing blank panels
+- [x] **FOUND-05**: UI state changes only in response to typed core events (`AppEvent`); no hardware file or external command is ever read from the UI layer
 
 ### Monitoring
 
@@ -161,10 +161,10 @@ Which phase covers which requirement. Populated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | FOUND-01 | Phase 1 | Complete |
-| FOUND-02 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Complete |
 | FOUND-03 | Phase 1 | Pending |
-| FOUND-04 | Phase 1 | Pending |
-| FOUND-05 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Complete |
+| FOUND-05 | Phase 1 | Complete |
 | MON-09 | Phase 1 | Pending |
 | PERF-03 | Phase 1 | Pending |
 | MON-01 | Phase 2 | Pending |

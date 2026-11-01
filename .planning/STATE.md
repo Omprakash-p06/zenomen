@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Foundation — GUI Shell on Mock Hardware
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 01-01-PLAN.md (scaffold, theme tokens, CI gates)
-last_updated: "2026-10-31T17:35:12.410Z"
-last_activity: 2026-10-31
-last_activity_desc: Phase 01 execution started
-state_head: 65e6ef523f4526833a79f7cf8a1694c99e02d926
+stopped_at: Completed 01-02-PLAN.md (shell, six screens, keyboard nav, typed event bridge)
+last_updated: "2026-11-01T06:01:35.833Z"
+last_activity: 2026-11-01
+last_activity_desc: Plan 01-02 completed — GUI shell, six screens, keyboard navigation, typed event bridge
+state_head: bcf587aa120e3b6125838117b4fc92ff1ad01f7d
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,12 +28,12 @@ See: `.planning/PROJECT.md` (updated 2026-10-30 with all review corrections)
 
 ## Current Position
 
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 3
 Phase: 01 (Foundation — GUI Shell on Mock Hardware) — EXECUTING
-Plans: 1 of 3 completed in current phase (`01-01` done; `01-02`, `01-03` remaining)  
-Status: Executing Phase 01 — plan 01-01 complete, next is 01-02
-Last activity: 2026-10-31 — Plan 01-01 completed (Rust + Slint scaffold, theme tokens, CI gates)
+Plans: 2 of 3 completed in current phase (`01-01`, `01-02` done; `01-03` remaining)  
+Status: Ready to execute plan 01-03 (mock provider, monitoring worker, resource instrumentation)
+Last activity: 2026-11-01 — Plan 01-02 completed (shell, six screens, keyboard navigation, typed event bridge)
 
 **Phase 1 Artifacts:**  
 - Research: [`.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-RESEARCH.md)
@@ -48,9 +48,9 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 - Total execution plans generated: 3
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: 0.0 hours
+- Total plans completed: 2
+- Average duration: 19min
+- Total execution time: 0.6 hours
 
 **By Phase:**
 
@@ -68,6 +68,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 16min | 4 tasks | 16 files |
+| Phase 01 P02 | 22min | 4 tasks | 30 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,9 @@ All decisions confirmed and logged in `PROJECT.md` Key Decisions table:
 - [Phase 01]: UI-SPEC spacing tokens 2xl/3xl are spelled xxl/xxxl in Slint because identifiers cannot start with a digit; values 48px/64px unchanged.
 - [Phase 01]: Vendored Inter and JetBrains Mono ship with their SIL OFL 1.1 texts and a provenance README; GPL-3.0 redistribution requires the licence to travel with the binaries.
 - [Phase 01]: git.allow_default_branch_commits set to true because git.branching_strategy is none and the executor commit guard otherwise refuses to commit on main.
+- [Phase 01]: Status strip sits directly under the header (UI-SPEC reading order), not at the window bottom as the plan text said
+- [Phase 01]: Overview grid uses absolute positioning with computed columns (928/692/456px breakpoints) because Slint GridLayout row/col must be compile-time constants
+- [Phase 01]: AppState starts with no capabilities while the Slint properties default to nominal; ZenOmenApp::initialize publishes the real set before the first frame
 
 ### Pending Todos
 
@@ -111,7 +115,7 @@ Execute Phase 1 plans (`01-01-PLAN.md`, `01-02-PLAN.md`, `01-03-PLAN.md`) via `/
 
 **Resume file:** None
 
-Last session: 2026-10-31T17:34:45.427Z
-Stopped at: Completed 01-01-PLAN.md (scaffold, theme tokens, CI gates)
+Last session: 2026-11-01T06:01:35.794Z
+Stopped at: Completed 01-02-PLAN.md (shell, six screens, keyboard nav, typed event bridge)
 Next action: Phase 1 execution (`/gsd-execute-phase 1` or `/gsd-next`)  
 Reference plan: `.planning/phases/01-foundation-gui-shell-on-mock-hardware/01-01-PLAN.md`
