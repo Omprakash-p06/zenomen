@@ -1,0 +1,101 @@
+//! Typed messages between the core and the UI.
+//!
+//! `AppCommand` travels UI -> core: a user action becomes a command and nothing
+//! else. `AppEvent` travels core -> UI: every visible change is the result of
+//! one of these, applied inside `slint::invoke_from_event_loop`. There is no
+//! other path into the UI, which is what FOUND-05 requires.
+
+use crate::hardware::{HardwareCapabilities, TelemetrySnapshot};
+
+/// The six screens, in sidebar order.
+///
+/// This is a compile-time set, not data: an unknown index can never become a
+/// seventh screen, and `from_index` is the only way to turn a number from the
+/// UI back into one (threat T-01-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenId {
+    Overview,
+    Cooling,
+    Performance,
+    Lighting,
+    Settings,
+    Diagnostics,
+}
+
+impl ScreenId {
+    /// Sidebar order. Index into this array is the screen's `active-screen`.
+    pub const ALL: [Self; 6] = [
+        Self::Overview,
+        Self::Cooling,
+        Self::Performance,
+        Self::Lighting,
+        Self::Settings,
+        Self::Diagnostics,
+    ];
+
+    /// Index this screen is routed by in `ui/app.slint`.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Overview => 0,
+            Self::Cooling => 1,
+            Self::Performance => 2,
+            Self::Lighting => 3,
+            Self::Settings => 4,
+            Self::Diagnostics => 5,
+        }
+    }
+
+    /// The screen at `index`, or `None` when the index is out of range.
+    ///
+    /// Callers default to [`ScreenId::Overview`] rather than trusting a number
+    /// that came from the UI.
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    /// Human name, used for logs and for the status strip.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Cooling => "Cooling",
+            Self::Performance => "Performance",
+            Self::Lighting => "Lighting",
+            Self::Settings => "Settings",
+            Self::Diagnostics => "Diagnostics",
+        }
+    }
+}
+
+/// A user action, queued for the core. The UI never does the work itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppCommand {
+    /// The user selected a screen.
+    Navigate(ScreenId),
+    /// The user asked for a sample now instead of waiting for the next tick.
+    RefreshTelemetry,
+    /// The user changed how many samples the charts keep (MON-11).
+    #[allow(dead_code)] // declared contract; the settings control arrives in a later phase
+    SetHistoryWindow(usize),
+}
+
+/// Something the core wants the UI to show.
+///
+/// Each variant maps to one `slint::invoke_from_event_loop` closure in
+/// `src/app.rs`; nothing here carries a sysfs path or a command to run.
+// `large_enum_variant`: a sample is the only large payload, it is produced once
+// per tick and moved straight through a channel — boxing it would add an
+// allocation per sample and buy nothing, because these are never accumulated.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppEvent {
+    /// The active screen changed in the core (for example after a redirect to
+    /// Diagnostics from an UnavailablePanel).
+    ScreenChanged(ScreenId),
+    /// The provider reported which interfaces this machine exposes.
+    CapabilitiesLoaded(HardwareCapabilities),
+    /// One telemetry sample.
+    // `dead_code`: sent by the monitoring worker that plan 01-03 adds; the
+    // variant is declared now so the bridge is complete.
+    #[allow(dead_code, reason = "sampling worker arrives in plan 01-03")]
+    TelemetryUpdated(TelemetrySnapshot),
+}

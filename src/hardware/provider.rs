@@ -22,7 +22,7 @@
 /// detected must still launch and explain itself (FOUND-04), so the safe
 /// default is the one that produces `Unavailable` panels rather than blank
 /// panels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HardwareCapabilities {
     /// CPU model, utilization, frequency and temperature can be read.
     pub cpu_metrics: bool,
@@ -61,8 +61,20 @@ impl HardwareCapabilities {
     }
 
     /// Nothing reported — the zero-capability machine (FOUND-04).
+    ///
+    /// Also the `Default`, so a capabilities value that was never filled in
+    /// degrades the UI instead of pretending the hardware is there.
     pub fn none() -> Self {
-        Self::default()
+        Self {
+            cpu_metrics: false,
+            gpu_metrics: false,
+            ram_metrics: false,
+            fan_rpm: false,
+            fan_control: false,
+            power_profiles: false,
+            rgb_lighting: false,
+            battery_metrics: false,
+        }
     }
 
     /// True when the CPU can be monitored.
@@ -201,10 +213,19 @@ impl TelemetrySnapshot {
     }
 }
 
+impl Default for HardwareCapabilities {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
 /// The single seam between the core and a hardware backend.
 ///
 /// `Send + Sync` is required because the monitoring worker samples from its own
 /// thread; the UI thread never holds one.
+// `dead_code`: nothing implements this trait until plan 01-03 installs the mock
+// provider. Declaring it here is what lets `AppEvent` name real types today.
+#[allow(dead_code, reason = "provider implementations arrive in plan 01-03")]
 pub trait HardwareProvider: Send + Sync {
     /// Which interfaces this machine actually exposes.
     fn capabilities(&self) -> HardwareCapabilities;

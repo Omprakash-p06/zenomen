@@ -56,6 +56,13 @@ export component AppWindow inherits Window {
     in-out property <bool> has-rgb-lighting: true;
     in-out property <bool> has-battery-metrics: true;
 
+    // ---- Global status ----------------------------------------------------
+    // The one line under the header. Written by `src/app.rs` from `AppState`;
+    // the default here is the pre-sample copy, so the window is never blank
+    // between launch and the first event.
+    in-out property <string> status-text: "Mock provider · waiting for first reading";
+    in-out property <bool> status-degraded: false;
+
     // ---- About ------------------------------------------------------------
     in-out property <string> app-version: "0.1.0";
     in-out property <string> provider-mode: "mock";
@@ -176,12 +183,17 @@ export component AppWindow inherits Window {
 
                 // Global capability / provider state, directly under the header
                 // so it is read before the screen anchor (UI-SPEC reading order).
-                // Plan 01-03 binds these to the mock provider's snapshot; until
-                // then the nominal copy from the Copywriting Contract is shown.
+                // Both values come from `src/app.rs`; nothing here decides
+                // whether the machine is degraded.
                 StatusStrip {
-                    text: "Mock provider · 12 of 12 sensors reported";
-                    degraded: false;
-                    show-action: false;
+                    text: root.status-text;
+                    degraded: root.status-degraded;
+                    // A degraded machine always offers the way to the reason.
+                    show-action: root.status-degraded;
+                    action => {
+                        root.active-screen = 5;
+                        root.navigate(5);
+                    }
                 }
 
                 // Content viewport: 24px padding, one scrolling surface. The

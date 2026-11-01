@@ -7,4 +7,6 @@
 
 pub mod provider;
 
-pub use provider::{HardwareCapabilities, HardwareProvider, TelemetrySnapshot};
+// Re-exported so `crate::core` and `src/app.rs` name the boundary in one hop.
+// The trait stays behind `provider::` until a backend implements it (01-03).
+pub use provider::{HardwareCapabilities, TelemetrySnapshot};
