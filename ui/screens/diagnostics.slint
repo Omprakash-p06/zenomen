@@ -1,0 +1,129 @@
+// ZenOmen Diagnostics screen.
+//
+// Phase 1 reports on-screen only: one row per subsystem interface with its
+// availability and, when missing, the interface that could not be found. The
+// report is the screen's anchor, so it is the first thing under the header.
+// Export arrives in Phase 2 (DIAG-03) and is named in the notice.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { StatusPill } from "../components/status-pill.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+export component Diagnostics inherits Rectangle {
+    in property <[string]> capability-names: [];
+    in property <[bool]> capability-flags: [];
+    in property <[string]> capability-reasons: [];
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        SectionCard {
+            title: "Capability summary";
+
+            // Table header. Label-size uppercase treatment comes from
+            // letter-spacing, not from capitalised strings.
+            HorizontalLayout {
+                spacing: ThemeMetrics.md;
+                alignment: start;
+
+                Text {
+                    text: "Sensor interface";
+                    color: ThemeColors.text-secondary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.label;
+                    letter-spacing: 0.5px;
+                    horizontal-stretch: 3;
+                }
+                Text {
+                    text: "Status";
+                    color: ThemeColors.text-secondary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.label;
+                    letter-spacing: 0.5px;
+                    width: 128px;
+                }
+                Text {
+                    text: "Missing interface";
+                    color: ThemeColors.text-secondary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.label;
+                    letter-spacing: 0.5px;
+                    horizontal-stretch: 4;
+                }
+            }
+
+            if root.capability-names.length == 0 : Text {
+                text: "Unavailable — no capability report has arrived yet.";
+                color: ThemeColors.text-secondary;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.body;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+
+            for name[index] in root.capability-names : Rectangle {
+                height: 40px;
+                background: Math.mod(index, 2) == 0 ? ThemeColors.slate : transparent;
+
+                HorizontalLayout {
+                    padding-left: ThemeMetrics.sm;
+                    padding-right: ThemeMetrics.sm;
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: name;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 3;
+                    }
+                    Rectangle {
+                        width: 128px;
+                        height: 100%;
+                        background: transparent;
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            StatusPill {
+                                status: index < root.capability-flags.length && root.capability-flags[index]
+                                    ? "ok"
+                                    : "unavailable";
+                                label: index < root.capability-flags.length && root.capability-flags[index]
+                                    ? "Available"
+                                    : "Unavailable";
+                                glyph: index < root.capability-flags.length && root.capability-flags[index]
+                                    ? ""
+                                    : "unavailable";
+                                vertical-stretch: 0;
+                            }
+                        }
+                    }
+                    Text {
+                        text: index < root.capability-reasons.length
+                            ? root.capability-reasons[index]
+                            : "";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 4;
+                    }
+                }
+            }
+        }
+
+        CapabilityNotice {
+            text: "Export arrives in Phase 2. This report is on-screen only.";
+        }
+    }
+}

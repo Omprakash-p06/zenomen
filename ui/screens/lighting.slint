@@ -1,0 +1,84 @@
+// ZenOmen Lighting screen.
+//
+// Phase 1 shows the RGB support state and the active profile only. Applying a
+// preset needs the verified hardware service in Phase 4, so no control is
+// rendered; a machine with no supported interface gets the UnavailablePanel
+// naming which detection failed.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { StatusPill } from "../components/status-pill.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { UnavailablePanel } from "../components/unavailable-panel.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+export component Lighting inherits Rectangle {
+    in property <bool> has-rgb-lighting: true;
+    /// Active profile name, empty when no profile is applied.
+    in property <string> rgb-profile: "";
+    /// Per-zone colours of the active profile, in zone order.
+    in property <[color]> zone-colors: [];
+
+    callback open-diagnostics();
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        if root.has-rgb-lighting : SectionCard {
+            title: "Keyboard lighting";
+
+            HorizontalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                StatusPill {
+                    status: "ok";
+                    label: "Supported";
+                    glyph: "keyboard";
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: root.rgb-profile == ""
+                        ? "No active profile"
+                        : "Active profile: " + root.rgb-profile;
+                    color: ThemeColors.text-primary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.heading;
+                    font-weight: ThemeTypography.weight-semibold;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            if root.zone-colors.length > 0 : HorizontalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                for zone[index] in root.zone-colors : Rectangle {
+                    height: 56px;
+                    horizontal-stretch: 1;
+                    background: zone;
+                    border-width: ThemeMetrics.stroke-hairline;
+                    border-color: ThemeColors.outline;
+                    border-radius: 4px;
+                }
+            }
+        }
+
+        if !root.has-rgb-lighting : UnavailablePanel {
+            heading: "RGB control isn't available on this machine";
+            reason: "No supported OMEN 4-zone or legacy interface detected.";
+            open-diagnostics => {
+                root.open-diagnostics();
+            }
+        }
+
+        CapabilityNotice {
+            text: "Applying a lighting preset arrives with the verified hardware service in Phase 4.";
+        }
+    }
+}

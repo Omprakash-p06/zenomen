@@ -1,0 +1,141 @@
+// ZenOmen Cooling screen.
+//
+// Phase 1 is read-only: per-fan RPM rows plus the current fan mode as a
+// read-only StatusPill. The control itself is deliberately absent rather than
+// disabled — the spec has no disabled-but-present control — and is replaced by
+// an UnavailablePanel when `hp-wmi` exposes no writable `pwm1_enable`.
+//
+// The RPM list is the screen's primary anchor, so each reading is rendered at
+// Heading size in JetBrains Mono.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { ValueReadout } from "../components/value-readout.slint";
+import { StatusPill } from "../components/status-pill.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { UnavailablePanel } from "../components/unavailable-panel.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+export component Cooling inherits Rectangle {
+    in property <bool> has-fan-rpm: true;
+    in property <bool> has-fan-control: true;
+    in property <[string]> fan-labels: ["Fan 1", "Fan 2"];
+    in property <[string]> fan-values: [
+        "Waiting for first reading",
+        "Waiting for first reading",
+    ];
+    /// `auto`, `max`, `manual`, or empty when the kernel does not report it.
+    in property <string> fan-mode: "";
+
+    callback open-diagnostics();
+
+    background: transparent;
+
+    private property <string> fan-mode-label:
+        root.fan-mode == "" ? "Unavailable"
+        : root.fan-mode == "auto" ? "Auto"
+        : root.fan-mode == "max" ? "Max"
+        : root.fan-mode == "manual" ? "Manual"
+        : root.fan-mode;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        SectionCard {
+            title: "Fan speed";
+
+            if root.has-fan-rpm : VerticalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                for entry[index] in root.fan-values : Rectangle {
+                    height: 48px;
+                    background: transparent;
+
+                    HorizontalLayout {
+                        padding-left: ThemeMetrics.xs;
+                        padding-right: ThemeMetrics.xs;
+                        spacing: ThemeMetrics.md;
+                        alignment: start;
+
+                        Text {
+                            text: index < root.fan-labels.length
+                                ? root.fan-labels[index]
+                                : "Fan";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            letter-spacing: 0.5px;
+                            vertical-alignment: center;
+                            width: 88px;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            width: 320px;
+                            height: 100%;
+                            background: transparent;
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                ValueReadout {
+                                    value: entry == "" ? "Waiting for first reading" : entry;
+                                    unit: entry == "" ? "" : "RPM";
+                                    value-size: ThemeTypography.heading;
+                                    vertical-stretch: 0;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.has-fan-rpm : UnavailablePanel {
+                heading: "Fan speed isn't available on this machine";
+                reason: "No fan tachometer was found in hwmon, so no RPM reading can be shown.";
+                open-diagnostics => {
+                    root.open-diagnostics();
+                }
+            }
+        }
+
+        SectionCard {
+            title: "Current fan mode";
+
+            HorizontalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                StatusPill {
+                    status: root.fan-mode == "" ? "unavailable" : "info";
+                    label: root.fan-mode-label;
+                    glyph: root.fan-mode == "" ? "unavailable" : "";
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: "Read-only in this build — the mode is reported by the kernel, never written.";
+                    color: ThemeColors.text-secondary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.label;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // Granular gate: fan *speed* can be readable while fan *control* is not.
+        if !root.has-fan-control : UnavailablePanel {
+            heading: "Fan control isn't available on this machine";
+            reason: "hp-wmi exposes no writable pwm1_enable here.";
+            open-diagnostics => {
+                root.open-diagnostics();
+            }
+        }
+
+        CapabilityNotice {
+            text: "Fan control arrives with the verified hardware service in Phase 3. This build reads mock fan speed only.";
+        }
+    }
+}

@@ -1,0 +1,116 @@
+// ZenOmen Performance screen.
+//
+// The current ACPI platform profile is the anchor, rendered at Heading size in
+// JetBrains Mono, with the profiles this machine advertises listed beneath it.
+// Phase 1 never writes: applying a profile needs the verified hardware service
+// in Phase 3, so no control is shown (not even a disabled one).
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { ValueReadout } from "../components/value-readout.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { UnavailablePanel } from "../components/unavailable-panel.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+export component Performance inherits Rectangle {
+    in property <bool> has-power-profiles: true;
+    /// Active profile name, empty when the interface did not report one.
+    in property <string> power-profile: "";
+    /// Advertised profiles from `platform_profile_choices`.
+    in property <[string]> power-profile-choices: [];
+
+    callback open-diagnostics();
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        if root.has-power-profiles : SectionCard {
+            title: "Active profile";
+
+            ValueReadout {
+                value: root.power-profile == "" ? "Unavailable" : root.power-profile;
+                available: root.power-profile != "";
+                value-size: ThemeTypography.heading;
+            }
+            Text {
+                text: root.power-profile == ""
+                    ? "platform_profile is readable but reported no active profile."
+                    : "Read from the ACPI platform_profile interface.";
+                color: ThemeColors.text-secondary;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.label;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.has-power-profiles : SectionCard {
+            title: "Advertised profiles";
+
+            if root.power-profile-choices.length == 0 : Text {
+                text: "Unavailable — platform_profile_choices reported no profiles.";
+                color: ThemeColors.text-secondary;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.body;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+
+            if root.power-profile-choices.length > 0 : VerticalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                for profile[index] in root.power-profile-choices : Rectangle {
+                    height: 40px;
+                    background: transparent;
+
+                    // Selected option: 2px gold rail, weight 600 — the same
+                    // selected treatment the sidebar uses.
+                    if root.power-profile == profile : Rectangle {
+                        x: 0;
+                        width: ThemeMetrics.stroke-emphasis;
+                        height: 100%;
+                        background: ThemeColors.gold;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: ThemeMetrics.sm;
+                        padding-right: ThemeMetrics.sm;
+                        spacing: ThemeMetrics.sm;
+                        alignment: start;
+
+                        Text {
+                            text: profile;
+                            color: root.power-profile == profile
+                                ? ThemeColors.text-primary
+                                : ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            font-weight: root.power-profile == profile
+                                ? ThemeTypography.weight-semibold
+                                : ThemeTypography.weight-regular;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !root.has-power-profiles : UnavailablePanel {
+            heading: "Platform profiles aren't available on this machine";
+            reason: "ACPI platform_profile sysfs interface not exposed.";
+            open-diagnostics => {
+                root.open-diagnostics();
+            }
+        }
+
+        CapabilityNotice {
+            text: "Applying a profile arrives with the verified hardware service in Phase 3.";
+        }
+    }
+}

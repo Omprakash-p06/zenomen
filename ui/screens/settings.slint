@@ -1,0 +1,107 @@
+// ZenOmen Settings screen.
+//
+// Phase 1 has no persisted preferences: this screen is the About block (version,
+// provider mode, theme) plus a notice naming the phase that adds settings. Every
+// value is a property so the core, not the UI, owns it.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { ValueReadout } from "../components/value-readout.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+export component Settings inherits Rectangle {
+    in property <string> app-version: "0.1.0";
+    /// `mock` in Phase 1; `linux` once the real provider lands in Phase 2.
+    in property <string> provider-mode: "mock";
+    in property <string> theme-name: "Dark";
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        SectionCard {
+            title: "About";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.md;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Version";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                        width: 128px;
+                        overflow: elide;
+                    }
+                    ValueReadout {
+                        value: root.app-version;
+                        value-size: ThemeTypography.heading;
+                        vertical-stretch: 0;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Provider";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                        width: 128px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.provider-mode;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Theme";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                        width: 128px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.theme-name;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        CapabilityNotice {
+            text: "Preferences are saved from Phase 4. Nothing on this screen persists yet.";
+        }
+    }
+}

@@ -30,7 +30,8 @@ export component ValueReadout inherits Rectangle {
             font-size: root.value-size;
             font-weight: ThemeTypography.weight-regular;
             horizontal-alignment: left;
-            overflow: elide;
+            // No `overflow: elide`: a numeric value never truncates. It either
+            // fits or the unit drops to its own line beneath it.
         }
         if root.unit != "" : Text {
             text: root.unit;

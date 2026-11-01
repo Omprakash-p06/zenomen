@@ -16,6 +16,9 @@ export component MetricCard inherits Rectangle {
     /// Empty string means "no pill" — a nominal card carries no state chrome.
     in property <string> status: "";
     in property <string> status-label: "";
+    /// Optional second reading under the primary one (the GPU card shows
+    /// utilization as the value and temperature here). Empty renders nothing.
+    in property <string> detail: "";
     in property <string> sparkline-commands: "";
     in property <bool> show-sparkline: false;
 
@@ -25,7 +28,7 @@ export component MetricCard inherits Rectangle {
     border-radius: 4px;
     min-width: ThemeMetrics.min-card-width;
     max-width: 320px;
-    height: 148px;
+    height: 176px;
     horizontal-stretch: 1;
 
     VerticalLayout {
@@ -55,10 +58,31 @@ export component MetricCard inherits Rectangle {
             }
         }
 
-        ValueReadout {
+        // Before the first snapshot the value slot renders the empty-state copy
+        // at body size. At Display size that sentence would ellipsize, and the
+        // contract forbids a truncated value slot.
+        if root.value == "" : Text {
+            text: "Waiting for first reading";
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.body;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+
+        if root.value != "" : ValueReadout {
             value: root.value;
             unit: root.unit;
             available: root.available;
+        }
+
+        if root.detail != "" : Text {
+            text: root.detail;
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            horizontal-alignment: left;
+            overflow: elide;
         }
 
         if root.show-sparkline : Sparkline {

@@ -19,6 +19,12 @@ import { ScrollView } from "std-widgets.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { ScreenHeader } from "components/screen-header.slint";
 import { StatusStrip } from "components/status-strip.slint";
+import { Overview } from "screens/overview.slint";
+import { Cooling } from "screens/cooling.slint";
+import { Performance } from "screens/performance.slint";
+import { Lighting } from "screens/lighting.slint";
+import { Settings } from "screens/settings.slint";
+import { Diagnostics } from "screens/diagnostics.slint";
 
 export component AppWindow inherits Window {
     title: "ZenOmen";
@@ -35,6 +41,79 @@ export component AppWindow inherits Window {
 
     /// Screen index requested by the sidebar or by the core. 0 = Overview.
     in-out property <int> active-screen: 0;
+
+    // ---- Capability flags -------------------------------------------------
+    // Granular per-subsystem truth from `HardwareCapabilities` (FOUND-04).
+    // Each screen names the exact interface that is missing instead of showing
+    // one coarse "unsupported" state. Defaults describe the Phase 1 mock
+    // provider; `src/app.rs` overwrites them from `AppEvent::CapabilitiesLoaded`.
+    in-out property <bool> has-cpu-metrics: true;
+    in-out property <bool> has-gpu-metrics: true;
+    in-out property <bool> has-ram-metrics: true;
+    in-out property <bool> has-fan-rpm: true;
+    in-out property <bool> has-fan-control: true;
+    in-out property <bool> has-power-profiles: true;
+    in-out property <bool> has-rgb-lighting: true;
+    in-out property <bool> has-battery-metrics: true;
+
+    // ---- About ------------------------------------------------------------
+    in-out property <string> app-version: "0.1.0";
+    in-out property <string> provider-mode: "mock";
+    in-out property <string> theme-name: "Dark";
+
+    // ---- Telemetry (already formatted by the core) ------------------------
+    // The UI never reads a sensor and never invents a number: these are empty
+    // or "Waiting for first reading" until a snapshot arrives.
+    in-out property <string> cpu-utilization: "";
+    in-out property <string> gpu-utilization: "";
+    in-out property <string> gpu-temperature: "";
+    in-out property <string> ram-usage: "";
+    in-out property <string> fan-1-value: "";
+    in-out property <string> fan-2-value: "";
+    in-out property <string> fan-mode: "";
+    in-out property <string> power-profile: "";
+    in-out property <[string]> power-profile-choices: [];
+    in-out property <string> rgb-profile: "";
+    in-out property <[color]> zone-colors: [];
+
+    in-out property <string> cpu-sparkline: "";
+    in-out property <string> gpu-sparkline: "";
+    in-out property <string> ram-sparkline: "";
+    in-out property <string> cpu-path: "";
+    in-out property <string> gpu-path: "";
+    in-out property <string> ram-path: "";
+
+    // ---- Diagnostics table ------------------------------------------------
+    private property <[string]> capability-names: [
+        "CPU metrics",
+        "GPU metrics",
+        "RAM metrics",
+        "Fan speed (RPM)",
+        "Fan control",
+        "Power profiles",
+        "RGB lighting",
+        "Battery",
+    ];
+    private property <[bool]> capability-flags: [
+        root.has-cpu-metrics,
+        root.has-gpu-metrics,
+        root.has-ram-metrics,
+        root.has-fan-rpm,
+        root.has-fan-control,
+        root.has-power-profiles,
+        root.has-rgb-lighting,
+        root.has-battery-metrics,
+    ];
+    private property <[string]> capability-reasons: [
+        root.has-cpu-metrics ? "" : "No CPU temperature hwmon device (coretemp/k10temp) found.",
+        root.has-gpu-metrics ? "" : "No NVIDIA nvidia-smi or supported DRM card detected.",
+        root.has-ram-metrics ? "" : "/proc/meminfo could not be read.",
+        root.has-fan-rpm ? "" : "No fan tachometer found in hwmon.",
+        root.has-fan-control ? "" : "hp-wmi exposes no writable pwm1_enable here.",
+        root.has-power-profiles ? "" : "ACPI platform_profile sysfs interface not exposed.",
+        root.has-rgb-lighting ? "" : "No supported OMEN 4-zone or legacy interface detected.",
+        root.has-battery-metrics ? "" : "No /sys/class/power_supply battery device found.",
+    ];
 
     /// Emitted when the user activates a nav row. `src/app.rs` forwards this
     /// to the core as `AppCommand::Navigate`.
@@ -105,9 +184,9 @@ export component AppWindow inherits Window {
                     show-action: false;
                 }
 
-                // Content viewport. The six screens replace this placeholder in
-                // Task 3 of this plan; it is keyed on the router already so the
-                // screen switch is exercised from the first build.
+                // Content viewport: 24px padding, one scrolling surface. The
+                // router keys on `current-screen`; every screen is instantiated
+                // here so the Slint compiler type-checks each of them.
                 Rectangle {
                     background: ThemeColors.obsidian;
                     vertical-stretch: 1;
@@ -121,22 +200,70 @@ export component AppWindow inherits Window {
                             spacing: ThemeMetrics.lg;
                             alignment: start;
 
-                            Text {
-                                text: root.screen-titles[root.current-screen];
-                                color: ThemeColors.text-primary;
-                                font-family: ThemeTypography.font-prose;
-                                font-size: ThemeTypography.display;
-                                font-weight: ThemeTypography.weight-semibold;
-                                horizontal-alignment: left;
-                                overflow: elide;
+                            if root.current-screen == 0 : Overview {
+                                has-cpu-metrics: root.has-cpu-metrics;
+                                has-gpu-metrics: root.has-gpu-metrics;
+                                has-ram-metrics: root.has-ram-metrics;
+                                has-fan-rpm: root.has-fan-rpm;
+                                cpu-utilization: root.cpu-utilization;
+                                gpu-utilization: root.gpu-utilization;
+                                gpu-temperature: root.gpu-temperature;
+                                ram-usage: root.ram-usage;
+                                fan-1-value: root.fan-1-value;
+                                fan-2-value: root.fan-2-value;
+                                cpu-sparkline: root.cpu-sparkline;
+                                gpu-sparkline: root.gpu-sparkline;
+                                ram-sparkline: root.ram-sparkline;
+                                cpu-path: root.cpu-path;
+                                gpu-path: root.gpu-path;
+                                ram-path: root.ram-path;
+                                open-diagnostics => {
+                                    root.active-screen = 5;
+                                    root.navigate(5);
+                                }
                             }
-                            Text {
-                                text: "Screen content arrives in Task 3 of plan 01-02.";
-                                color: ThemeColors.text-secondary;
-                                font-family: ThemeTypography.font-prose;
-                                font-size: ThemeTypography.body;
-                                horizontal-alignment: left;
-                                wrap: word-wrap;
+
+                            if root.current-screen == 1 : Cooling {
+                                has-fan-rpm: root.has-fan-rpm;
+                                has-fan-control: root.has-fan-control;
+                                fan-mode: root.fan-mode;
+                                fan-values: [root.fan-1-value, root.fan-2-value];
+                                open-diagnostics => {
+                                    root.active-screen = 5;
+                                    root.navigate(5);
+                                }
+                            }
+
+                            if root.current-screen == 2 : Performance {
+                                has-power-profiles: root.has-power-profiles;
+                                power-profile: root.power-profile;
+                                power-profile-choices: root.power-profile-choices;
+                                open-diagnostics => {
+                                    root.active-screen = 5;
+                                    root.navigate(5);
+                                }
+                            }
+
+                            if root.current-screen == 3 : Lighting {
+                                has-rgb-lighting: root.has-rgb-lighting;
+                                rgb-profile: root.rgb-profile;
+                                zone-colors: root.zone-colors;
+                                open-diagnostics => {
+                                    root.active-screen = 5;
+                                    root.navigate(5);
+                                }
+                            }
+
+                            if root.current-screen == 4 : Settings {
+                                app-version: root.app-version;
+                                provider-mode: root.provider-mode;
+                                theme-name: root.theme-name;
+                            }
+
+                            if root.current-screen == 5 : Diagnostics {
+                                capability-names: root.capability-names;
+                                capability-flags: root.capability-flags;
+                                capability-reasons: root.capability-reasons;
                             }
                         }
                     }
