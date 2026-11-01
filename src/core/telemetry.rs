@@ -176,7 +176,10 @@ fn generate_svg_path_windowed(
     height: f32,
     capacity: usize,
 ) -> String {
-    let reported = samples.iter().filter(|sample| sample.is_some()).count();
+    let reported = samples
+        .iter()
+        .filter(|sample| sample.is_some_and(|v| v.is_finite()))
+        .count();
     if reported < 2 || width <= 0.0 || height <= 0.0 {
         return String::new();
     }
@@ -191,7 +194,7 @@ fn generate_svg_path_windowed(
     let mut pen_down = false;
 
     for (index, sample) in samples.iter().enumerate() {
-        let Some(value) = sample else {
+        let Some(value) = sample.filter(|v| v.is_finite()) else {
             // A gap lifts the pen; the next value resumes with `M` so the line
             // never crosses a reading that was not taken.
             pen_down = false;
@@ -246,6 +249,10 @@ mod tests {
             generate_svg_path(&[None, Some(50.0), None], 800.0, 140.0),
             ""
         );
+        assert_eq!(
+            generate_svg_path(&[Some(f32::NAN), Some(50.0)], 800.0, 140.0),
+            ""
+        );
     }
 
     #[test]
@@ -264,5 +271,26 @@ mod tests {
         // Should have an initial M, then L, then gap, then second M, then L
         let m_count = path.matches('M').count();
         assert_eq!(m_count, 2, "Expected 2 M segments due to gap, got: {path}");
+    }
+
+    #[test]
+    fn svg_path_treats_nan_and_inf_as_gaps() {
+        let samples = vec![
+            Some(10.0),
+            Some(20.0),
+            Some(f32::NAN),
+            Some(40.0),
+            Some(f32::INFINITY),
+            Some(60.0),
+            Some(70.0),
+        ];
+        let path = generate_svg_path(&samples, 100.0, 100.0);
+        assert!(!path.contains("NaN"), "Path must not contain NaN: {path}");
+        assert!(!path.contains("inf"), "Path must not contain inf: {path}");
+        let m_count = path.matches('M').count();
+        assert_eq!(
+            m_count, 3,
+            "Expected 3 M segments due to NaN and Inf gaps, got: {path}"
+        );
     }
 }
