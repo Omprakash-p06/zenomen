@@ -203,16 +203,18 @@ pub fn sample_nvidia_smi(timeout: Duration) -> Option<GpuTelemetry> {
         return None;
     };
 
-    let result = match rx.recv_timeout(timeout) {
+    let (result, should_join) = match rx.recv_timeout(timeout) {
         Ok(Ok(output)) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            parse_nvidia_smi_output(&stdout)
+            (parse_nvidia_smi_output(&stdout), true)
         }
-        _ => None,
+        Ok(_) => (None, true),
+        Err(_) => (None, false), // Timed out: do not block worker on join(); let thread detach
     };
 
-    // Detach or join thread non-blockingly
-    let _ = join_handle.join();
+    if should_join {
+        let _ = join_handle.join();
+    }
     result
 }
 

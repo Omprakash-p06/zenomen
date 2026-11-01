@@ -245,5 +245,6 @@ fn resolve_fans(
     }
 
     tachometers.sort_by_key(|f| f.index);
+    tachometers.dedup_by(|a, b| a.index == b.index && a.input_path == b.input_path);
     (tachometers, has_pwm)
 }

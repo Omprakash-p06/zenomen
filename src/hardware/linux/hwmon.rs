@@ -53,7 +53,11 @@ pub fn scan_hwmon_devices(hwmon_root: &Path) -> Vec<HwmonDevice> {
         devices.push(HwmonDevice { id, name, path });
     }
 
-    devices.sort_by(|a, b| a.id.cmp(&b.id));
+    devices.sort_by_key(|d| {
+        d.id.strip_prefix("hwmon")
+            .and_then(|num| num.parse::<u32>().ok())
+            .unwrap_or(u32::MAX)
+    });
     devices
 }
 

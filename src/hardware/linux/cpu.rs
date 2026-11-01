@@ -71,13 +71,12 @@ impl CpuJiffies {
             .system
             .saturating_add(self.irq)
             .saturating_add(self.softirq);
-        let virtual_all = self.guest.saturating_add(self.guest_nice);
+        // Note: Linux /proc/stat already includes guest in user and guest_nice in nice
         let busy = self
             .user
             .saturating_add(self.nice)
             .saturating_add(system_all)
-            .saturating_add(self.steal)
-            .saturating_add(virtual_all);
+            .saturating_add(self.steal);
 
         busy.saturating_add(self.idle())
     }

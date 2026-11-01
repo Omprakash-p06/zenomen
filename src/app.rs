@@ -115,33 +115,45 @@ impl ZenOmenApp {
             ui.on_export_diagnostics(move || {
                 let current_state = lock_state(&state).clone();
                 let reg_guard = registry_slot.lock().unwrap_or_else(|p| p.into_inner());
-                let reg = reg_guard.as_ref().map(|r| r.as_ref());
-                let report = crate::core::collect_diagnostics(&current_state, reg);
+                let reg = reg_guard.clone();
+                drop(reg_guard);
 
-                let export_dir = directories::ProjectDirs::from("com", "zenomen", "zenomen")
-                    .map(|dirs| dirs.config_dir().join("diagnostics"))
-                    .unwrap_or_else(|| std::path::PathBuf::from("diagnostics"));
+                let ui_weak = ui_weak.clone();
+                let _ = std::thread::Builder::new()
+                    .name("zenomen-diag-export".to_string())
+                    .spawn(move || {
+                        let report =
+                            crate::core::collect_diagnostics(&current_state, reg.as_deref());
 
-                let filename = format!(
-                    "zenomen-diagnostics-{}.json",
-                    report.timestamp.replace(':', "-")
-                );
-                let export_path = export_dir.join(filename);
+                        let export_dir =
+                            directories::ProjectDirs::from("com", "zenomen", "zenomen")
+                                .map(|dirs| dirs.config_dir().join("diagnostics"))
+                                .unwrap_or_else(|| std::path::PathBuf::from("diagnostics"));
 
-                let status_msg = match crate::core::export_diagnostics_to_file(&report, &export_path) {
-                    Ok(()) => {
-                        tracing::info!(path = %export_path.display(), "diagnostics report exported successfully");
-                        format!("Exported to {}", export_path.display())
-                    }
-                    Err(err) => {
-                        tracing::error!(error = %err, "failed to export diagnostics report");
-                        format!("Export failed: {err}")
-                    }
-                };
+                        let filename = format!(
+                            "zenomen-diagnostics-{}.json",
+                            report.timestamp.replace(':', "-")
+                        );
+                        let export_path = export_dir.join(filename);
 
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_export_status(status_msg.into());
-                }
+                        let status_msg =
+                            match crate::core::export_diagnostics_to_file(&report, &export_path) {
+                                Ok(()) => {
+                                    tracing::info!(path = %export_path.display(), "diagnostics report exported successfully");
+                                    format!("Exported to {}", export_path.display())
+                                }
+                                Err(err) => {
+                                    tracing::error!(error = %err, "failed to export diagnostics report");
+                                    format!("Export failed: {err}")
+                                }
+                            };
+
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_export_status(status_msg.into());
+                            }
+                        });
+                    });
             });
         }
     }

@@ -25,6 +25,7 @@ pub struct LinuxHardwareProvider {
     cpufreq_path: PathBuf,
     acpi_root: PathBuf,
     gpu_devices: Vec<GpuDevice>,
+    has_nvidia: bool,
     registry: Arc<SensorRegistry>,
     capabilities: HardwareCapabilities,
 }
@@ -61,9 +62,12 @@ impl LinuxHardwareProvider {
         let cpu_model = read_cpu_model(&cpuinfo).unwrap_or_else(|| "Unknown CPU".to_string());
 
         let gpu_devices = enumerate_drm_gpus(drm_dir);
+        let has_nvidia = gpu_devices.iter().any(|d| d.vendor == GpuVendor::Nvidia)
+            || Path::new("/usr/bin/nvidia-smi").exists()
+            || Path::new("/bin/nvidia-smi").exists();
 
         let has_cpu = !cpu_model.is_empty();
-        let has_gpu = !gpu_devices.is_empty() || Path::new("/usr/bin/nvidia-smi").exists();
+        let has_gpu = !gpu_devices.is_empty() || has_nvidia;
         let has_ram = Path::new("/proc/meminfo").exists();
 
         let registry = Arc::new(SensorRegistry::scan_roots(hwmon_root, acpi_root));
@@ -75,6 +79,7 @@ impl LinuxHardwareProvider {
             cpufreq_path: cpufreq_path.to_path_buf(),
             acpi_root: acpi_root.to_path_buf(),
             gpu_devices,
+            has_nvidia,
             registry,
             capabilities,
         }
@@ -152,8 +157,10 @@ impl HardwareProvider for LinuxHardwareProvider {
         // Check NVIDIA first if present (often discrete gaming GPU), then AMD/Intel DRM
         let mut gpu_telemetry = None;
 
-        // Try NVIDIA non-blocking query with 200ms timeout
-        if let Some(nv) = sample_nvidia_smi(Duration::from_millis(200)) {
+        // Try NVIDIA non-blocking query with 200ms timeout only if NVIDIA GPU/tool is detected
+        if self.has_nvidia
+            && let Some(nv) = sample_nvidia_smi(Duration::from_millis(200))
+        {
             gpu_telemetry = Some(nv);
         }
 
