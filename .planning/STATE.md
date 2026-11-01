@@ -2,19 +2,19 @@
 gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Verified Hardware Control
-current_plan: 1
-status: planning_complete
-stopped_at: Planned Phase 03 (Verified Hardware Control) — 3 plans authored
-last_updated: "2026-11-01T23:29:00.000Z"
-last_activity: 2026-11-01
-last_activity_desc: Phase 03 planned — 03-RESEARCH.md, 03-01-PLAN.md, 03-02-PLAN.md, 03-03-PLAN.md authored
-state_head: 891d692
+current_plan: 3
+status: phase_complete
+stopped_at: Completed Phase 03 (Verified Hardware Control)
+last_updated: "2026-11-02T00:19:00.000Z"
+last_activity: 2026-11-02
+last_activity_desc: Phase 03 executed — all 3 plans complete, verified with 66 tests
+state_head: 86fc01d
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
-  percent: 40
+  completed_phases: 3
+  total_plans: 9
+  completed_plans: 9
+  percent: 60
 ---
 
 # Project State
@@ -24,28 +24,29 @@ progress:
 See: `.planning/PROJECT.md`
 
 **Core value:** Hardware control you can trust — every write verified by read-back, and a missing sensor reads "Unavailable" rather than a fabricated number.  
-**Current focus:** Phase 03 — Verified Hardware Control
+**Current focus:** Phase 03 — Verified Hardware Control (Complete)
 
 ## Current Position
 
 Current Phase: 03 (Verified Hardware Control)
+Phase 03 Status: COMPLETE
 Phase 02 Status: COMPLETE
 Phase 01 Status: COMPLETE
-All Phase 2 Plans Executed:
-- `02-01`: Linux hardware provider — procfs (stat delta, meminfo), dynamic DRM sysfs, NVIDIA fallback, and hwmon telemetry (`85694b5`)
-- `02-02`: Capability detection and single shared SensorRegistry across dashboard and diagnostics (`f9455c0`)
-- `02-03`: Live charts, history window controls, on-demand refresh, diagnostics detection report and export (`c57c72b`)
+All Phase 3 Plans Executed:
+- `03-01`: Privileged `zenomen-hw` service — formalized D-Bus contract (`com.zenomen.Hardware1`), mandatory polkit authorization, systemd sandboxing, verified sysfs writes (`faec04c`)
+- `03-02`: Verified fan control — mode read/write (Auto/Max), read-back with retry/backoff, capability gating, Cooling screen (`f7f6072`)
+- `03-03`: ACPI power profiles, combined presets with `PresetResult` partial-apply reporting, Performance screen, diagnostics (`86fc01d`)
 
-**Phase 2 Artifacts:**
-- Research: [`.planning/phases/02-linux-telemetry-capability-detection/02-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-RESEARCH.md)
-- Plan 02-01: [`.planning/phases/02-linux-telemetry-capability-detection/02-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-01-PLAN.md)
-- Summary 02-01: [`.planning/phases/02-linux-telemetry-capability-detection/02-01-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-01-SUMMARY.md)
-- Plan 02-02: [`.planning/phases/02-linux-telemetry-capability-detection/02-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-02-PLAN.md)
-- Summary 02-02: [`.planning/phases/02-linux-telemetry-capability-detection/02-02-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-02-SUMMARY.md)
-- Plan 02-03: [`.planning/phases/02-linux-telemetry-capability-detection/02-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-03-PLAN.md)
-- Summary 02-03: [`.planning/phases/02-linux-telemetry-capability-detection/02-03-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/02-linux-telemetry-capability-detection/02-03-SUMMARY.md)
+**Phase 3 Artifacts:**
+- Research: [`.planning/phases/03-verified-hardware-control/03-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-RESEARCH.md)
+- Plan 03-01: [`.planning/phases/03-verified-hardware-control/03-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-01-PLAN.md)
+- Summary 03-01: [`.planning/phases/03-verified-hardware-control/03-01-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-01-SUMMARY.md)
+- Plan 03-02: [`.planning/phases/03-verified-hardware-control/03-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-02-PLAN.md)
+- Summary 03-02: [`.planning/phases/03-verified-hardware-control/03-02-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-02-SUMMARY.md)
+- Plan 03-03: [`.planning/phases/03-verified-hardware-control/03-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-03-PLAN.md)
+- Summary 03-03: [`.planning/phases/03-verified-hardware-control/03-03-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-03-SUMMARY.md)
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Accumulated Context
 

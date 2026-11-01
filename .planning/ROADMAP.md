@@ -77,12 +77,12 @@ Plans:
   5. Only profiles and fan modes the machine advertises are offered; unavailable controls are explained rather than hidden silently.
   6. Applying a combined preset (Gaming, Balanced, Quiet) reports granular results via `PresetResult` (`power_applied`, `fan_applied`, `partial_success`), reporting partial success honestly without claiming false atomic rollback.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans executed
 
 Plans:
-- [ ] 03-01: `zenomen-hw` service — formalized D-Bus contract (`com.zenomen.Hardware1`), mandatory polkit authorization, systemd sandboxing, whitelisted validation
-- [ ] 03-02: Verified fan control — mode read/write (Auto/Max), read-back with retry/backoff, capability gating, Cooling page
-- [ ] 03-03: ACPI power profiles, combined presets with `PresetResult` partial-apply reporting, Performance page
+- [x] 03-01: `zenomen-hw` service — formalized D-Bus contract (`com.zenomen.Hardware1`), mandatory polkit authorization, systemd sandboxing, whitelisted validation (Wave 1)
+- [x] 03-02: Verified fan control — mode read/write (Auto/Max), read-back with retry/backoff, capability gating, Cooling page (Wave 2, depends on 03-01)
+- [x] 03-03: ACPI power profiles, combined presets with `PresetResult` partial-apply reporting, Performance page (Wave 3, depends on 03-02)
 
 ### Phase 4: Desktop Integration, Config & Basic RGB
 
