@@ -56,10 +56,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.run()?;
 
-    // Clean teardown: drop app to close channels and terminate worker/pump
+    // Clean teardown: drop window and app to close channels and terminate worker/pump
+    drop(ui);
     drop(app);
-    drop(worker);
-    drop(event_pump);
+    let _ = worker.join();
+    let _ = event_pump.join();
 
     tracing::info!("ZenOmen shut down cleanly");
     Ok(())
