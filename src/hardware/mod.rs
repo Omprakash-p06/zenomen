@@ -8,8 +8,10 @@
 pub mod linux;
 pub mod mock;
 pub mod provider;
+pub mod registry;
 
 // Re-exported so `crate::core` and `src/app.rs` name the boundary in one hop.
 pub use linux::LinuxHardwareProvider;
 pub use mock::{MockHardware, MockScenario};
 pub use provider::{HardwareCapabilities, HardwareProvider, TelemetrySnapshot};
+pub use registry::SensorRegistry;

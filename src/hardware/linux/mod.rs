@@ -2,6 +2,7 @@
 
 pub mod cpu;
 pub mod gpu;
+pub mod hwmon;
 pub mod memory;
 pub mod provider;
 
