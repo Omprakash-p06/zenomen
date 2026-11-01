@@ -70,6 +70,13 @@ fn test_single_instance_application_service_dispatch() {
     // Call quit via D-Bus interface simulation
     assert!(service.quit().is_ok());
     assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::Quit);
+
+    // Call activate via D-Bus interface simulation
+    assert!(service.activate().is_ok());
+    assert_eq!(
+        action_rx.try_recv().unwrap(),
+        DesktopAction::PresentWindow
+    );
 }
 
 #[test]
@@ -120,6 +127,9 @@ fn test_tray_dbusmenu_layout_and_events() {
     // Click Quit (id 2)
     assert!(menu.event(2, "clicked".to_string(), Value::from(0), 0).is_ok());
     assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::Quit);
+
+    // Pre-show hook check (AboutToShow)
+    assert!(!menu.about_to_show(0).unwrap());
 }
 
 #[test]

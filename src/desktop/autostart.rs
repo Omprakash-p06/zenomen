@@ -44,10 +44,17 @@ pub fn is_autostart_enabled_at(path: &Path) -> bool {
         Ok(content) => {
             for line in content.lines() {
                 let trimmed = line.trim();
-                if trimmed.eq_ignore_ascii_case("Hidden=true")
-                    || trimmed.eq_ignore_ascii_case("X-GNOME-Autostart-enabled=false")
-                {
-                    return false;
+                if let Some((key, val)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let val = val.trim();
+                    if key.eq_ignore_ascii_case("Hidden") && val.eq_ignore_ascii_case("true") {
+                        return false;
+                    }
+                    if key.eq_ignore_ascii_case("X-GNOME-Autostart-enabled")
+                        && val.eq_ignore_ascii_case("false")
+                    {
+                        return false;
+                    }
                 }
             }
             true

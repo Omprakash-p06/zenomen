@@ -38,6 +38,13 @@ impl ApplicationService {
         Ok(())
     }
 
+    /// Desktop application activation hook (GNOME / freedesktop convention).
+    pub fn activate(&self) -> zbus::fdo::Result<()> {
+        tracing::info!("received Activate RPC from desktop environment");
+        let _ = self.action_sender.send(DesktopAction::PresentWindow);
+        Ok(())
+    }
+
     /// Cleanly quit the running application.
     pub fn quit(&self) -> zbus::fdo::Result<()> {
         tracing::info!("received Quit RPC from desktop environment");

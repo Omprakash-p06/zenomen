@@ -224,14 +224,23 @@ pub fn migrate_openomen_profiles(source_dir: &Path, target_dir: &Path) -> Migrat
             Ok(profile) => {
                 let target_path = target_dir.join(format!("{}.json", profile.id));
                 // Only write if target does not already exist, to preserve user modifications
-                if !target_path.exists()
-                    && let Ok(json_str) = serde_json::to_string_pretty(&profile)
-                    && let Err(e) = fs::write(&target_path, json_str)
-                {
-                    report
-                        .skipped
-                        .push((file_stem.to_string(), format!("Write error: {e}")));
-                    continue;
+                if !target_path.exists() {
+                    match serde_json::to_string_pretty(&profile) {
+                        Ok(json_str) => {
+                            if let Err(e) = fs::write(&target_path, json_str) {
+                                report
+                                    .skipped
+                                    .push((file_stem.to_string(), format!("Write error: {e}")));
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            report
+                                .skipped
+                                .push((file_stem.to_string(), format!("Serialization error: {e}")));
+                            continue;
+                        }
+                    }
                 }
                 report.imported.push(profile.id);
             }

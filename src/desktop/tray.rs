@@ -175,6 +175,11 @@ impl TrayDbusMenu {
         }
         Ok(())
     }
+
+    /// Pre-display hook queried by Ayatana/KDE/XFCE panel applets before opening menu.
+    pub fn about_to_show(&self, _id: i32) -> zbus::fdo::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Register the StatusNotifierItem and DBusMenu on the session bus.

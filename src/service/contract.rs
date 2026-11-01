@@ -197,9 +197,9 @@ impl HardwareService {
     ) -> zbus::fdo::Result<String> {
         self.authorize(&hdr).await?;
         if enabled {
-            let white = crate::rgb::builtin_presets().swap_remove(0);
+            let white_zones = [crate::rgb::RgbColor::new(255, 255, 255); 4];
             self.backend
-                .apply_rgb_hardware(&white.zones)
+                .apply_rgb_hardware(&white_zones)
                 .map_err(zbus::fdo::Error::from)?;
         } else {
             let black = [crate::rgb::RgbColor::new(0, 0, 0); 4];
