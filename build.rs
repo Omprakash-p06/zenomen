@@ -8,4 +8,13 @@ fn main() {
     let config = slint_build::CompilerConfiguration::new().with_style("fluent".into());
     slint_build::compile_with_config("ui/app.slint", config)
         .expect("failed to compile ui/app.slint");
+
+    #[cfg(windows)]
+    {
+        let mut res = winres::WindowsResource::new();
+        res.set_icon("data/icons/zenomen.ico");
+        if let Err(e) = res.compile() {
+            println!("cargo:warning=Failed to compile Windows resources: {}", e);
+        }
+    }
 }

@@ -31,6 +31,9 @@ zbus = { version = "5", features = ["blocking"] }
 [build-dependencies]
 slint-build = "1.17"
 
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
 [profile.release]
 # Size and memory oriented: this profile exists to uphold the <=40 MB peak RSS
 # budget, not to win microbenchmarks.
