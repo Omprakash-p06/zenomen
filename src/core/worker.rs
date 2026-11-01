@@ -124,7 +124,9 @@ fn sample_and_dispatch(
             .is_ok(),
         Err(err) => {
             tracing::warn!(%err, "telemetry sampling failed");
-            true
+            event_sender
+                .send(AppEvent::TelemetrySamplingFailed(err))
+                .is_ok()
         }
     }
 }

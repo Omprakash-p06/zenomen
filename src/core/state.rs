@@ -44,6 +44,8 @@ pub struct AppState {
     pub history: TelemetryHistory,
     /// Most recent SVG path strings for the chart and sparklines.
     pub paths: TelemetryPaths,
+    /// Last error encountered while sampling telemetry from the provider.
+    pub last_sampling_error: Option<String>,
 }
 
 impl Default for AppState {
@@ -55,6 +57,7 @@ impl Default for AppState {
             history_window: HISTORY_WINDOW,
             history: TelemetryHistory::new(),
             paths: TelemetryPaths::default(),
+            last_sampling_error: None,
         }
     }
 }
@@ -66,6 +69,7 @@ impl AppState {
             AppEvent::ScreenChanged(screen) => self.active_screen = *screen,
             AppEvent::CapabilitiesLoaded(capabilities) => self.capabilities = *capabilities,
             AppEvent::TelemetryUpdated(snapshot) => {
+                self.last_sampling_error = None;
                 self.latest_snapshot = Some(snapshot.clone());
                 let point = TelemetryPoint::from_snapshot(snapshot);
                 self.history.push(point);
@@ -82,6 +86,9 @@ impl AppState {
                     ram_sparkline,
                 };
             }
+            AppEvent::TelemetrySamplingFailed(error) => {
+                self.last_sampling_error = Some(error.clone());
+            }
         }
     }
 
@@ -90,6 +97,10 @@ impl AppState {
     /// Before the first sample it says so rather than claiming a count: the
     /// project's core value forbids a number the app has not measured.
     pub fn status_text(&self) -> String {
+        if let Some(error) = &self.last_sampling_error {
+            return format!("Mock provider · sampling error: {error}");
+        }
+
         match &self.latest_snapshot {
             Some(snapshot) if snapshot.has_any_reading() => format!(
                 "Mock provider · {} of {} sensors reported",
@@ -108,6 +119,10 @@ impl AppState {
     /// A machine that has not been sampled yet is not degraded — it is simply
     /// early. Marking it degraded would put a gold warning on every cold start.
     pub fn is_degraded(&self) -> bool {
+        if self.last_sampling_error.is_some() {
+            return true;
+        }
+
         if self.capabilities.reported_sensor_count() < SUBSYSTEM_COUNT {
             return true;
         }
@@ -210,6 +225,19 @@ mod tests {
         state.apply(&AppEvent::ScreenChanged(ScreenId::Diagnostics));
 
         assert_eq!(state.active_screen, ScreenId::Diagnostics);
+    }
+
+    #[test]
+    fn sampling_failure_marks_degraded_and_shows_error() {
+        let mut state = AppState::default();
+        state.apply(&AppEvent::CapabilitiesLoaded(fully_capable()));
+        state.apply(&AppEvent::TelemetrySamplingFailed("hwmon timeout".into()));
+
+        assert!(state.is_degraded());
+        assert_eq!(
+            state.status_text(),
+            "Mock provider · sampling error: hwmon timeout"
+        );
     }
 
     fn full_snapshot() -> TelemetrySnapshot {

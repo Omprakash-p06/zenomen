@@ -94,8 +94,7 @@ pub enum AppEvent {
     /// The provider reported which interfaces this machine exposes.
     CapabilitiesLoaded(HardwareCapabilities),
     /// One telemetry sample.
-    // `dead_code`: sent by the monitoring worker that plan 01-03 adds; the
-    // variant is declared now so the bridge is complete.
-    #[allow(dead_code, reason = "sampling worker arrives in plan 01-03")]
     TelemetryUpdated(TelemetrySnapshot),
+    /// Telemetry sampling failed with an error message from the provider.
+    TelemetrySamplingFailed(String),
 }
