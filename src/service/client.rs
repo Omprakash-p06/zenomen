@@ -206,4 +206,53 @@ impl HardwareServiceClient {
 
         Ok(result)
     }
+
+    /// Check polkit authorization readiness without user prompting (DIAG-04).
+    pub fn check_polkit_status(&self) -> Result<String, String> {
+        let conn = self.connect()?;
+        let unique_name = conn
+            .unique_name()
+            .map(|n| n.as_str().to_string())
+            .unwrap_or_default();
+
+        let mut subject_details = std::collections::HashMap::new();
+        subject_details.insert("name", zbus::zvariant::Value::from(unique_name.as_str()));
+        let subject = ("system-bus-name", subject_details);
+        let action_details: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        let flags: u32 = 0; // Don't trigger interactive prompt
+        let cancellation_id = "";
+
+        let reply = conn
+            .call_method(
+                Some("org.freedesktop.PolicyKit1"),
+                "/org/freedesktop/PolicyKit1/Authority",
+                Some("org.freedesktop.PolicyKit1.Authority"),
+                "CheckAuthorization",
+                &(
+                    subject,
+                    crate::service::polkit::POLKIT_ACTION_CONTROL,
+                    action_details,
+                    flags,
+                    cancellation_id,
+                ),
+            )
+            .map_err(|e| format!("PolicyKit check failed: {e}"))?;
+
+        let (is_authorized, is_challenge, _): (
+            bool,
+            bool,
+            std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+        ) = reply
+            .body()
+            .deserialize()
+            .map_err(|e| format!("Failed to parse PolicyKit response: {e}"))?;
+
+        if is_authorized {
+            Ok("Authorized (Active console / Admin retained)".to_string())
+        } else if is_challenge {
+            Ok("Authentication challenge required (polkit prompt)".to_string())
+        } else {
+            Ok("Authorization not granted".to_string())
+        }
+    }
 }

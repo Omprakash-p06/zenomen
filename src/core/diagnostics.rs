@@ -13,6 +13,17 @@ use crate::core::state::AppState;
 use crate::hardware::registry::SensorRegistry;
 use crate::hardware::{HardwareCapabilities, TelemetrySnapshot};
 
+/// Hardware service connection and authorization status (DIAG-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareServiceDiagnostic {
+    /// D-Bus service bus name (e.g. `com.zenomen.Hardware1`).
+    pub service_name: String,
+    /// Connection state (`Connected`, `Disconnected`, or `Unavailable`).
+    pub status: String,
+    /// Polkit authorization state for caller.
+    pub polkit_authorization: String,
+}
+
 /// Full diagnostic detection and status report.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticsReport {
@@ -34,6 +45,8 @@ pub struct DiagnosticsReport {
     pub fan_sensors: Vec<String>,
     /// Discovered GPU cards and drivers.
     pub gpu_sensors: Vec<String>,
+    /// Hardware service connection and polkit diagnostics (DIAG-04).
+    pub hardware_service: Option<HardwareServiceDiagnostic>,
     /// Latest snapshot readings from the hardware provider.
     pub latest_telemetry: Option<TelemetrySnapshot>,
     /// Most recent telemetry sampling error, if any.
@@ -105,6 +118,23 @@ pub fn collect_diagnostics_from_roots(
         gpu_sensors.push(gpu_name.clone());
     }
 
+    let hardware_service = Some(HardwareServiceDiagnostic {
+        service_name: "com.zenomen.Hardware1".to_string(),
+        status: state.service_status.description().to_string(),
+        polkit_authorization: match &state.service_status {
+            crate::service::client::ServiceConnectionStatus::Connected => {
+                let client = crate::service::client::HardwareServiceClient::new();
+                client.check_polkit_status().unwrap_or_else(|e| format!("Check failed: {e}"))
+            }
+            crate::service::client::ServiceConnectionStatus::Disconnected => {
+                "Service disconnected".to_string()
+            }
+            crate::service::client::ServiceConnectionStatus::Unavailable(err) => {
+                format!("Unavailable: {err}")
+            }
+        },
+    });
+
     DiagnosticsReport {
         app_version,
         os_name,
@@ -115,6 +145,7 @@ pub fn collect_diagnostics_from_roots(
         cpu_sensor,
         fan_sensors,
         gpu_sensors,
+        hardware_service,
         latest_telemetry: state.latest_snapshot.clone(),
         recent_error: state.last_sampling_error.clone(),
         timestamp: format_iso8601_utc(SystemTime::now()),

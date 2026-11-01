@@ -100,6 +100,12 @@ export component AppWindow inherits Window {
 
     in-out property <bool> service-connected: false;
     in-out property <string> pending-fan-mode: "";
+    in-out property <string> pending-power-profile: "";
+    in-out property <string> preset-result-message: "";
+    in-out property <bool> preset-result-partial: false;
+    in-out property <bool> preset-result-success: false;
+    in-out property <string> service-status-text: "Disconnected";
+    in-out property <string> polkit-status-text: "Unknown";
     in-out property <string> control-error-message: "";
 
     /// Emitted when history window duration is changed in Settings (MON-11).
@@ -108,6 +114,10 @@ export component AppWindow inherits Window {
     callback export-diagnostics();
     /// Emitted when user selects a fan mode ("auto", "max").
     callback set-fan-mode(string);
+    /// Emitted when user selects a power profile.
+    callback set-power-profile(string);
+    /// Emitted when user applies a combined preset ("quiet", "balanced", "gaming").
+    callback apply-preset(string);
     /// Emitted when user dismisses the control error notification banner.
     callback dismiss-control-error();
 
@@ -278,8 +288,23 @@ export component AppWindow inherits Window {
 
                             if root.current-screen == 2 : Performance {
                                 has-power-profiles: root.has-power-profiles;
+                                service-connected: root.service-connected;
                                 power-profile: root.power-profile;
                                 power-profile-choices: root.power-profile-choices;
+                                pending-power-profile: root.pending-power-profile;
+                                preset-result-message: root.preset-result-message;
+                                preset-result-partial: root.preset-result-partial;
+                                preset-result-success: root.preset-result-success;
+                                control-error-message: root.control-error-message;
+                                set-power-profile(p) => {
+                                    root.set-power-profile(p);
+                                }
+                                apply-preset(p) => {
+                                    root.apply-preset(p);
+                                }
+                                dismiss-error => {
+                                    root.dismiss-control-error();
+                                }
                                 open-diagnostics => {
                                     root.active-screen = 5;
                                     root.navigate(5);
@@ -314,6 +339,8 @@ export component AppWindow inherits Window {
                                 cpu-sensor: root.cpu-sensor;
                                 fan-count: root.fan-count;
                                 export-status: root.export-status;
+                                service-status: root.service-status-text;
+                                polkit-status: root.polkit-status-text;
                                 capability-names: root.capability-names;
                                 capability-flags: root.capability-flags;
                                 capability-reasons: root.capability-reasons;

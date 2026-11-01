@@ -118,6 +118,22 @@ impl ZenOmenApp {
         let ui = self.ui.clone();
         let commands = self.commands.clone();
         if let Some(ui) = ui.upgrade() {
+            ui.on_set_power_profile(move |profile| {
+                send_command(&commands, AppCommand::SetPowerProfile(profile.to_string()));
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_apply_preset(move |preset| {
+                send_command(&commands, AppCommand::ApplyPreset(preset.to_string()));
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
             ui.on_dismiss_control_error(move || {
                 send_command(&commands, AppCommand::DismissControlError);
             });
@@ -325,9 +341,40 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
 
     ui.set_fan_1_value(fan_speed(snapshot, 0));
     ui.set_fan_2_value(fan_speed(snapshot, 1));
-    ui.set_fan_mode(snapshot.fan_mode.as_str().into());
-    ui.set_power_profile(snapshot.power_profile.as_str().into());
-    ui.set_power_profile_choices(string_model(&snapshot.power_profiles));
+
+    let active_mode = if !state.fan_mode.is_empty() {
+        state.fan_mode.as_str()
+    } else {
+        snapshot.fan_mode.as_str()
+    };
+    ui.set_fan_mode(active_mode.into());
+
+    let active_profile = if !state.active_power_profile.is_empty() {
+        state.active_power_profile.as_str()
+    } else {
+        snapshot.power_profile.as_str()
+    };
+    ui.set_power_profile(active_profile.into());
+
+    let profile_choices = if !state.power_profile_choices.is_empty() {
+        &state.power_profile_choices
+    } else {
+        &snapshot.power_profiles
+    };
+    ui.set_power_profile_choices(string_model(profile_choices));
+
+    if let Some(res) = &state.last_preset_result {
+        ui.set_preset_result_message(res.message.as_str().into());
+        ui.set_preset_result_partial(res.partial_success);
+        ui.set_preset_result_success(res.is_full_success());
+    } else {
+        ui.set_preset_result_message("".into());
+        ui.set_preset_result_partial(false);
+        ui.set_preset_result_success(false);
+    }
+
+    ui.set_service_status_text(state.service_status.description().into());
+
     ui.set_rgb_profile(snapshot.rgb_profile.as_deref().unwrap_or_default().into());
 }
 

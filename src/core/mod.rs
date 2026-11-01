@@ -13,7 +13,10 @@ pub mod telemetry;
 pub mod worker;
 
 pub use benchmark::{BenchmarkTimer, MemoryMetrics, log_benchmark, read_memory_metrics};
-pub use diagnostics::{DiagnosticsReport, collect_diagnostics, export_diagnostics_to_file};
+pub use diagnostics::{
+    DiagnosticsReport, HardwareServiceDiagnostic, collect_diagnostics,
+    collect_diagnostics_from_roots, export_diagnostics_to_file,
+};
 pub use events::{AppCommand, AppEvent, ScreenId};
 pub use state::AppState;
 pub use telemetry::{TelemetryHistory, TelemetryPaths, TelemetryPoint};

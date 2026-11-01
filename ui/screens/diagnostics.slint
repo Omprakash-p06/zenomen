@@ -1,8 +1,9 @@
 // ZenOmen Diagnostics screen.
 //
-// Complies with DIAG-01 and DIAG-02:
+// Complies with DIAG-01, DIAG-02, and DIAG-04:
 // - Hardware & OS detection summary (OS, Kernel, Model, CPU Sensor, Fan count).
 // - Subsystem capability table with availability status and missing reasons.
+// - Hardware control service status and polkit authorization readiness (DIAG-04).
 // - Export Diagnostics button triggering export to structured JSON.
 import { ThemeColors } from "../theme/colors.slint";
 import { ThemeTypography } from "../theme/typography.slint";
@@ -19,6 +20,8 @@ export component Diagnostics inherits Rectangle {
     in property <string> cpu-sensor: "Unavailable";
     in property <string> fan-count: "0";
     in property <string> export-status: "";
+    in property <string> service-status: "Disconnected";
+    in property <string> polkit-status: "Unknown";
     in property <[string]> capability-names: [];
     in property <[bool]> capability-flags: [];
     in property <[string]> capability-reasons: [];
@@ -116,11 +119,77 @@ export component Diagnostics inherits Rectangle {
             }
         }
 
+        // Hardware Service & Polkit Diagnostics (DIAG-04)
+        SectionCard {
+            title: "Hardware Control Service (com.zenomen.Hardware1)";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "Service Status:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    StatusPill {
+                        status: root.service-status == "Connected" ? "ok" : "unavailable";
+                        label: root.service-status;
+                        glyph: root.service-status == "Connected" ? "" : "unavailable";
+                        vertical-stretch: 0;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "Polkit Permissions:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: root.polkit-status;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "Sandboxing:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: "ProtectSystem=strict, ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
+
         SectionCard {
             title: "Capability summary";
 
-            // Table header. Label-size uppercase treatment comes from
-            // letter-spacing, not from capitalised strings.
             HorizontalLayout {
                 spacing: ThemeMetrics.md;
                 alignment: start;
@@ -229,15 +298,13 @@ export component Diagnostics inherits Rectangle {
 
             if root.export-status != "" : Text {
                 text: root.export-status;
-                color: ThemeColors.gold;
+                color: ThemeColors.text-secondary;
                 font-family: ThemeTypography.font-prose;
                 font-size: ThemeTypography.label;
                 vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
             }
-        }
-
-        CapabilityNotice {
-            text: "Diagnostics reports are exported locally in JSON format to ~/.config/zenomen/diagnostics/.";
         }
     }
 }
