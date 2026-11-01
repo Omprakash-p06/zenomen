@@ -1,20 +1,20 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 03
-current_phase_name: Verified Hardware Control
-current_plan: 3
-status: phase_complete
-stopped_at: Completed Phase 03 (Verified Hardware Control)
-last_updated: "2026-11-02T00:19:00.000Z"
+current_phase: 04
+current_phase_name: Desktop Integration, Config & Basic RGB
+current_plan: 1
+status: planning_complete
+stopped_at: Planned Phase 04 (Desktop Integration, Config & Basic RGB)
+last_updated: "2026-11-02T00:43:00.000Z"
 last_activity: 2026-11-02
-last_activity_desc: Phase 03 executed — all 3 plans complete, verified with 66 tests
-state_head: 86fc01d
+last_activity_desc: Phase 04 planned — 3 plans created with research
+state_head: 6dc4a4b
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 9
+  total_plans: 12
   completed_plans: 9
-  percent: 60
+  percent: 75
 ---
 
 # Project State
@@ -24,29 +24,23 @@ progress:
 See: `.planning/PROJECT.md`
 
 **Core value:** Hardware control you can trust — every write verified by read-back, and a missing sensor reads "Unavailable" rather than a fabricated number.  
-**Current focus:** Phase 03 — Verified Hardware Control (Complete)
+**Current focus:** Phase 04 — Desktop Integration, Config & Basic RGB (Planned)
 
 ## Current Position
 
-Current Phase: 03 (Verified Hardware Control)
+Current Phase: 04 (Desktop Integration, Config & Basic RGB)
+Phase 04 Status: PLANNED (Ready for execution)
 Phase 03 Status: COMPLETE
 Phase 02 Status: COMPLETE
 Phase 01 Status: COMPLETE
-All Phase 3 Plans Executed:
-- `03-01`: Privileged `zenomen-hw` service — formalized D-Bus contract (`com.zenomen.Hardware1`), mandatory polkit authorization, systemd sandboxing, verified sysfs writes (`faec04c`)
-- `03-02`: Verified fan control — mode read/write (Auto/Max), read-back with retry/backoff, capability gating, Cooling screen (`f7f6072`)
-- `03-03`: ACPI power profiles, combined presets with `PresetResult` partial-apply reporting, Performance screen, diagnostics (`86fc01d`)
 
-**Phase 3 Artifacts:**
-- Research: [`.planning/phases/03-verified-hardware-control/03-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-RESEARCH.md)
-- Plan 03-01: [`.planning/phases/03-verified-hardware-control/03-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-01-PLAN.md)
-- Summary 03-01: [`.planning/phases/03-verified-hardware-control/03-01-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-01-SUMMARY.md)
-- Plan 03-02: [`.planning/phases/03-verified-hardware-control/03-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-02-PLAN.md)
-- Summary 03-02: [`.planning/phases/03-verified-hardware-control/03-02-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-02-SUMMARY.md)
-- Plan 03-03: [`.planning/phases/03-verified-hardware-control/03-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-03-PLAN.md)
-- Summary 03-03: [`.planning/phases/03-verified-hardware-control/03-03-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/03-verified-hardware-control/03-03-SUMMARY.md)
+**Phase 4 Artifacts:**
+- Research: [`.planning/phases/04-desktop-integration-config-basic-rgb/04-RESEARCH.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/04-desktop-integration-config-basic-rgb/04-RESEARCH.md)
+- Plan 04-01: [`.planning/phases/04-desktop-integration-config-basic-rgb/04-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/04-desktop-integration-config-basic-rgb/04-01-PLAN.md)
+- Plan 04-02: [`.planning/phases/04-desktop-integration-config-basic-rgb/04-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/04-desktop-integration-config-basic-rgb/04-02-PLAN.md)
+- Plan 04-03: [`.planning/phases/04-desktop-integration-config-basic-rgb/04-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/04-desktop-integration-config-basic-rgb/04-03-PLAN.md)
 
-Progress: [██████░░░░] 60%
+Progress: [███████░░░] 75%
 
 ## Accumulated Context
 
