@@ -11,7 +11,7 @@ Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
 
 - [x] **FOUND-01**: User can launch ZenOmen and see the Overview page rendered in the ZenOmen dark theme
 - [x] **FOUND-02**: Every screen (Overview, Cooling, Performance, Lighting, Settings, Diagnostics) is reachable from the sidebar and by keyboard navigation
-- [ ] **FOUND-03**: The application runs end-to-end against a mock hardware provider, so the full UI is usable and testable without the target laptop
+- [x] **FOUND-03**: The application runs end-to-end against a mock hardware provider, so the full UI is usable and testable without the target laptop
 - [x] **FOUND-04**: On a machine where no hardware capability is detected, the app still launches and explains what is unsupported instead of erroring or showing blank panels
 - [x] **FOUND-05**: UI state changes only in response to typed core events (`AppEvent`); no hardware file or external command is ever read from the UI layer
 
@@ -25,7 +25,7 @@ Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
 - [ ] **MON-06**: User can see GPU VRAM usage and power draw when the provider exposes them
 - [ ] **MON-07**: User can see total, available and used system RAM, computed from `/proc/meminfo` via `MemAvailable` math (a first-time implementation, absent in the legacy CLI)
 - [ ] **MON-08**: Any absent sensor or control displays an explicit "Unavailable" state with a reason — never a substituted `0`
-- [ ] **MON-09**: User can see rolling telemetry charts fed from the bounded history buffer (120 samples)
+- [x] **MON-09**: User can see rolling telemetry charts fed from the bounded history buffer (120 samples)
 - [ ] **MON-10**: User can manually refresh telemetry on demand
 - [ ] **MON-11**: User can configure the telemetry history window length
 - [ ] **MON-12**: The dashboard and diagnostics agree on which sensor represents which component through a single shared `SensorRegistry` (no duplicated or diverging heuristics)
@@ -103,7 +103,7 @@ Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
 
 - [ ] **PERF-01**: Peak RSS of the desktop UI process stays at or below 40 MB over a two-hour tray session (distinguishing cold start <30 MB, warm dashboard <38 MB, minimized tray <25 MB, and peak load ≤40 MB)
 - [ ] **PERF-02**: Idle CPU stays at or below 0.1% of one core while the dashboard is open, and ≤0.02% when minimized to tray
-- [ ] **PERF-03**: Hardware sampling never blocks the UI thread; window frame time stays stable while telemetry refreshes
+- [x] **PERF-03**: Hardware sampling never blocks the UI thread; window frame time stays stable while telemetry refreshes
 - [ ] **PERF-04**: Telemetry memory is bounded and RSS stays flat across long sessions rather than growing
 - [ ] **PERF-05**: No combination of missing sensors, missing external tools or missing service causes a crash — every absence degrades gracefully
 - [ ] **PERF-06**: The hardware service process has its own measured budget (≤15 MB RSS), reported separately from the UI process and never summed into the 40 MB figure
