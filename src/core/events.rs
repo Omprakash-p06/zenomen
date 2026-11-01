@@ -74,7 +74,6 @@ pub enum AppCommand {
     /// The user asked for a sample now instead of waiting for the next tick.
     RefreshTelemetry,
     /// The user changed how many samples the charts keep (MON-11).
-    #[allow(dead_code)] // declared contract; the settings control arrives in a later phase
     SetHistoryWindow(usize),
 }
 
@@ -97,4 +96,6 @@ pub enum AppEvent {
     TelemetryUpdated(TelemetrySnapshot),
     /// Telemetry sampling failed with an error message from the provider.
     TelemetrySamplingFailed(String),
+    /// Telemetry history window size was changed (MON-11).
+    HistoryWindowChanged(usize),
 }

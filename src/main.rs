@@ -29,11 +29,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.install_callbacks();
 
     // Select hardware provider: configurable via ZENOMEN_MOCK_SCENARIO env var
-    let provider = Arc::new(MockHardware::from_env());
-    tracing::info!(
-        scenario = provider.scenario().name(),
-        "mock hardware provider initialized"
-    );
+    let (provider, scenario_name, registry_opt): (
+        Arc<dyn HardwareProvider>,
+        Option<&'static str>,
+        Option<Arc<zenomen::hardware::SensorRegistry>>,
+    ) = if std::env::var("ZENOMEN_MOCK_SCENARIO").is_ok() {
+        let mock = Arc::new(MockHardware::from_env());
+        let scenario = mock.scenario().name();
+        (mock, Some(scenario), None)
+    } else {
+        let linux = Arc::new(zenomen::hardware::LinuxHardwareProvider::new());
+        let reg = Arc::clone(linux.registry());
+        (linux, None, Some(reg))
+    };
+
+    if let Some(scenario) = scenario_name {
+        tracing::info!(scenario, "mock hardware provider initialized");
+        ui.set_provider_mode("mock".into());
+    } else {
+        tracing::info!("linux hardware provider initialized");
+        ui.set_provider_mode("linux".into());
+    }
+
+    if let Some(reg) = registry_opt {
+        app.set_sensor_registry(reg);
+    }
 
     // Initialize capabilities on the UI thread before window opens (honest first frame)
     app.initialize(provider.capabilities());

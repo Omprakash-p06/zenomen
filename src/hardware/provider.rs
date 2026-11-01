@@ -16,13 +16,15 @@
 //!   than as one aggregate boolean, because each screen has to name the exact
 //!   interface that is missing.
 
+use serde::{Deserialize, Serialize};
+
 /// One boolean per hardware interface ZenOmen can use.
 ///
 /// `Default` is "nothing is supported": a machine where no capability was
 /// detected must still launch and explain itself (FOUND-04), so the safe
 /// default is the one that produces `Unavailable` panels rather than blank
 /// panels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HardwareCapabilities {
     /// CPU model, utilization, frequency and temperature can be read.
     pub cpu_metrics: bool,
@@ -142,7 +144,7 @@ impl HardwareCapabilities {
 ///
 /// Optional fields are `None` when the provider could not read that sensor this
 /// tick. The UI must render `Unavailable` for those — never a zero.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TelemetrySnapshot {
     /// CPU model string, e.g. `AMD Ryzen 7 5800H`.
     pub cpu_name: String,

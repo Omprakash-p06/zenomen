@@ -90,6 +90,19 @@ export component AppWindow inherits Window {
     in-out property <string> gpu-path: "";
     in-out property <string> ram-path: "";
 
+    in-out property <int> history-window: 120;
+    in-out property <string> os-name: "Linux";
+    in-out property <string> kernel-version: "Unknown";
+    in-out property <string> model-name: "Unknown";
+    in-out property <string> cpu-sensor: "Unavailable";
+    in-out property <string> fan-count: "0";
+    in-out property <string> export-status: "";
+
+    /// Emitted when history window duration is changed in Settings (MON-11).
+    callback history-window-changed(int);
+    /// Emitted by the Export Diagnostics action in Diagnostics screen (DIAG-02).
+    callback export-diagnostics();
+
     // ---- Diagnostics table ------------------------------------------------
     private property <[string]> capability-names: [
         "CPU metrics",
@@ -270,12 +283,26 @@ export component AppWindow inherits Window {
                                 app-version: root.app-version;
                                 provider-mode: root.provider-mode;
                                 theme-name: root.theme-name;
+                                history-window: root.history-window;
+                                history-window-changed(val) => {
+                                    root.history-window = val;
+                                    root.history-window-changed(val);
+                                }
                             }
 
                             if root.current-screen == 5 : Diagnostics {
+                                os-name: root.os-name;
+                                kernel-version: root.kernel-version;
+                                model-name: root.model-name;
+                                cpu-sensor: root.cpu-sensor;
+                                fan-count: root.fan-count;
+                                export-status: root.export-status;
                                 capability-names: root.capability-names;
                                 capability-flags: root.capability-flags;
                                 capability-reasons: root.capability-reasons;
+                                export-diagnostics-clicked => {
+                                    root.export-diagnostics();
+                                }
                             }
                         }
                     }

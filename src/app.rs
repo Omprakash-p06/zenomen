@@ -20,6 +20,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
 
 use crate::AppWindow;
 use crate::core::{AppCommand, AppEvent, AppState, ScreenId};
+use crate::hardware::registry::SensorRegistry;
 use crate::hardware::{HardwareCapabilities, TelemetrySnapshot};
 
 /// Commands the core may have queued before the UI's request is dropped.
@@ -30,13 +31,14 @@ const COMMAND_QUEUE_DEPTH: usize = 8;
 
 /// The Slint-side half of the application.
 ///
-/// Cheap to clone (a `Weak` and two `Arc`s), which is what lets a worker thread
+/// Cheap to clone (a `Weak` and `Arc`s), which is what lets a worker thread
 /// publish events without owning the window.
 #[derive(Clone)]
 pub struct ZenOmenApp {
     ui: Weak<AppWindow>,
     commands: SyncSender<AppCommand>,
     state: Arc<Mutex<AppState>>,
+    registry: Arc<Mutex<Option<Arc<SensorRegistry>>>>,
 }
 
 impl ZenOmenApp {
@@ -50,9 +52,23 @@ impl ZenOmenApp {
             ui: ui.as_weak(),
             commands,
             state: Arc::new(Mutex::new(AppState::default())),
+            registry: Arc::new(Mutex::new(None)),
         };
 
         (app, command_receiver)
+    }
+
+    /// Store the canonical sensor registry and populate initial diagnostics properties.
+    pub fn set_sensor_registry(&self, registry: Arc<SensorRegistry>) {
+        if let Some(ui) = self.ui.upgrade() {
+            if let Some(cpu) = &registry.cpu_temp {
+                ui.set_cpu_sensor(format!("{} [{}]", cpu.driver, cpu.label).into());
+            } else {
+                ui.set_cpu_sensor("None detected".into());
+            }
+            ui.set_fan_count(registry.fan_tachometers.len().to_string().into());
+        }
+        *self.registry.lock().unwrap_or_else(|p| p.into_inner()) = Some(registry);
     }
 
     /// Turn the window's callbacks into queued commands.
@@ -80,6 +96,54 @@ impl ZenOmenApp {
                 send_command(&commands, AppCommand::RefreshTelemetry);
             });
         }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_history_window_changed(move |seconds| {
+                if seconds >= 2 {
+                    send_command(&commands, AppCommand::SetHistoryWindow(seconds as usize));
+                }
+            });
+        }
+
+        let ui = self.ui.clone();
+        let state = Arc::clone(&self.state);
+        let registry_slot = Arc::clone(&self.registry);
+        if let Some(ui) = ui.upgrade() {
+            let ui_weak = self.ui.clone();
+            ui.on_export_diagnostics(move || {
+                let current_state = lock_state(&state).clone();
+                let reg_guard = registry_slot.lock().unwrap_or_else(|p| p.into_inner());
+                let reg = reg_guard.as_ref().map(|r| r.as_ref());
+                let report = crate::core::collect_diagnostics(&current_state, reg);
+
+                let export_dir = directories::ProjectDirs::from("com", "zenomen", "zenomen")
+                    .map(|dirs| dirs.config_dir().join("diagnostics"))
+                    .unwrap_or_else(|| std::path::PathBuf::from("diagnostics"));
+
+                let filename = format!(
+                    "zenomen-diagnostics-{}.json",
+                    report.timestamp.replace(':', "-")
+                );
+                let export_path = export_dir.join(filename);
+
+                let status_msg = match crate::core::export_diagnostics_to_file(&report, &export_path) {
+                    Ok(()) => {
+                        tracing::info!(path = %export_path.display(), "diagnostics report exported successfully");
+                        format!("Exported to {}", export_path.display())
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to export diagnostics report");
+                        format!("Export failed: {err}")
+                    }
+                };
+
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_export_status(status_msg.into());
+                }
+            });
+        }
     }
 
     /// Publish the provider's capability set before the event loop starts.
@@ -98,6 +162,14 @@ impl ZenOmenApp {
         }
 
         if let Some(ui) = self.ui.upgrade() {
+            let report = crate::core::collect_diagnostics(&lock_state(&self.state), None);
+            ui.set_os_name(report.os_name.into());
+            ui.set_kernel_version(report.kernel_version.into());
+            if let Some(prod) = report.product_name {
+                ui.set_model_name(prod.into());
+            } else if let Some(vendor) = report.sys_vendor {
+                ui.set_model_name(vendor.into());
+            }
             apply_to_ui(&ui, &lock_state(&self.state), &event);
         }
     }
@@ -167,6 +239,9 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
     if let AppEvent::ScreenChanged(screen) = event {
         ui.set_active_screen(screen.index() as i32);
     }
+    if let AppEvent::HistoryWindowChanged(window_size) = event {
+        ui.set_history_window(*window_size as i32);
+    }
 
     let capabilities = state.capabilities;
     ui.set_has_cpu_metrics(capabilities.has_cpu_metrics());
@@ -180,6 +255,13 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
 
     ui.set_status_text(state.status_text().into());
     ui.set_status_degraded(state.is_degraded());
+
+    ui.set_cpu_path(state.paths.cpu_path.as_str().into());
+    ui.set_gpu_path(state.paths.gpu_path.as_str().into());
+    ui.set_ram_path(state.paths.ram_path.as_str().into());
+    ui.set_cpu_sparkline(state.paths.cpu_sparkline.as_str().into());
+    ui.set_gpu_sparkline(state.paths.gpu_sparkline.as_str().into());
+    ui.set_ram_sparkline(state.paths.ram_sparkline.as_str().into());
 
     // Before the first sample the properties keep their empty values, which the
     // screens render as "Waiting for first reading" — never as a zero.
@@ -205,13 +287,6 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
     ui.set_power_profile(snapshot.power_profile.as_str().into());
     ui.set_power_profile_choices(string_model(&snapshot.power_profiles));
     ui.set_rgb_profile(snapshot.rgb_profile.as_deref().unwrap_or_default().into());
-
-    ui.set_cpu_path(state.paths.cpu_path.as_str().into());
-    ui.set_gpu_path(state.paths.gpu_path.as_str().into());
-    ui.set_ram_path(state.paths.ram_path.as_str().into());
-    ui.set_cpu_sparkline(state.paths.cpu_sparkline.as_str().into());
-    ui.set_gpu_sparkline(state.paths.gpu_sparkline.as_str().into());
-    ui.set_ram_sparkline(state.paths.ram_sparkline.as_str().into());
 }
 
 /// A percentage without its sign — the screens append `%` themselves.

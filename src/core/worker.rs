@@ -85,6 +85,13 @@ pub fn spawn_monitoring_worker(
                         }
                         AppCommand::SetHistoryWindow(samples) => {
                             tracing::debug!(samples, "history window updated");
+                            if event_sender
+                                .send(AppEvent::HistoryWindowChanged(samples))
+                                .is_err()
+                            {
+                                tracing::debug!("event receiver disconnected; exiting worker");
+                                break;
+                            }
                         }
                     },
                     Err(RecvTimeoutError::Timeout) => {

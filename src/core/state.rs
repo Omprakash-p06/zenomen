@@ -89,6 +89,22 @@ impl AppState {
             AppEvent::TelemetrySamplingFailed(error) => {
                 self.last_sampling_error = Some(error.clone());
             }
+            AppEvent::HistoryWindowChanged(window_size) => {
+                self.history_window = *window_size;
+                self.history.set_capacity(*window_size);
+                let (cpu_path, gpu_path, ram_path) =
+                    self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
+                let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
+                    self.history.generate_sparkline_paths();
+                self.paths = TelemetryPaths {
+                    cpu_path,
+                    gpu_path,
+                    ram_path,
+                    cpu_sparkline,
+                    gpu_sparkline,
+                    ram_sparkline,
+                };
+            }
         }
     }
 
@@ -238,6 +254,14 @@ mod tests {
             state.status_text(),
             "Mock provider · sampling error: hwmon timeout"
         );
+    }
+
+    #[test]
+    fn history_window_changed_resizes_history_and_updates_paths() {
+        let mut state = AppState::default();
+        state.apply(&AppEvent::HistoryWindowChanged(60));
+        assert_eq!(state.history_window, 60);
+        assert_eq!(state.history.capacity(), 60);
     }
 
     fn full_snapshot() -> TelemetrySnapshot {

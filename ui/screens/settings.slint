@@ -1,8 +1,6 @@
 // ZenOmen Settings screen.
 //
-// Phase 1 has no persisted preferences: this screen is the About block (version,
-// provider mode, theme) plus a notice naming the phase that adds settings. Every
-// value is a property so the core, not the UI, owns it.
+// Configurable telemetry history window (MON-11) and About block.
 import { ThemeColors } from "../theme/colors.slint";
 import { ThemeTypography } from "../theme/typography.slint";
 import { ThemeMetrics } from "../theme/metrics.slint";
@@ -12,15 +10,148 @@ import { CapabilityNotice } from "../components/capability-notice.slint";
 
 export component Settings inherits Rectangle {
     in property <string> app-version: "0.1.0";
-    /// `mock` in Phase 1; `linux` once the real provider lands in Phase 2.
-    in property <string> provider-mode: "mock";
+    /// `mock` in testing; `linux` when running with real Linux provider.
+    in property <string> provider-mode: "linux";
     in property <string> theme-name: "Dark";
+    in-out property <int> history-window: 120;
+
+    callback history-window-changed(int);
 
     background: transparent;
 
     VerticalLayout {
         spacing: ThemeMetrics.lg;
         alignment: start;
+
+        SectionCard {
+            title: "Telemetry";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.md;
+                alignment: start;
+
+                Text {
+                    text: "Chart History Window";
+                    color: ThemeColors.text-secondary;
+                    font-family: ThemeTypography.font-prose;
+                    font-size: ThemeTypography.label;
+                    letter-spacing: 0.5px;
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    // Option 1: 30s
+                    Rectangle {
+                        width: 90px;
+                        height: 32px;
+                        background: root.history-window == 30 ? ThemeColors.slate : transparent;
+                        border-width: root.history-window == 30 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.history-window == 30 ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "30s";
+                            color: root.history-window == 30 ? ThemeColors.gold : ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.history-window = 30;
+                                root.history-window-changed(30);
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+
+                    // Option 2: 60s
+                    Rectangle {
+                        width: 90px;
+                        height: 32px;
+                        background: root.history-window == 60 ? ThemeColors.slate : transparent;
+                        border-width: root.history-window == 60 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.history-window == 60 ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "60s (1m)";
+                            color: root.history-window == 60 ? ThemeColors.gold : ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.history-window = 60;
+                                root.history-window-changed(60);
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+
+                    // Option 3: 120s (Default)
+                    Rectangle {
+                        width: 120px;
+                        height: 32px;
+                        background: root.history-window == 120 ? ThemeColors.slate : transparent;
+                        border-width: root.history-window == 120 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.history-window == 120 ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "120s (Default)";
+                            color: root.history-window == 120 ? ThemeColors.gold : ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.history-window = 120;
+                                root.history-window-changed(120);
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+
+                    // Option 4: 300s (5m)
+                    Rectangle {
+                        width: 100px;
+                        height: 32px;
+                        background: root.history-window == 300 ? ThemeColors.slate : transparent;
+                        border-width: root.history-window == 300 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.history-window == 300 ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "300s (5m)";
+                            color: root.history-window == 300 ? ThemeColors.gold : ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.history-window = 300;
+                                root.history-window-changed(300);
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+                }
+            }
+        }
 
         SectionCard {
             title: "About";
@@ -101,7 +232,7 @@ export component Settings inherits Rectangle {
         }
 
         CapabilityNotice {
-            text: "Preferences are saved from Phase 4. Nothing on this screen persists yet.";
+            text: "Preferences persist in Phase 4. History window setting applies to current session immediately.";
         }
     }
 }

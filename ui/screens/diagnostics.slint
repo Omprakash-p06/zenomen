@@ -1,26 +1,120 @@
 // ZenOmen Diagnostics screen.
 //
-// Phase 1 reports on-screen only: one row per subsystem interface with its
-// availability and, when missing, the interface that could not be found. The
-// report is the screen's anchor, so it is the first thing under the header.
-// Export arrives in Phase 2 (DIAG-03) and is named in the notice.
+// Complies with DIAG-01 and DIAG-02:
+// - Hardware & OS detection summary (OS, Kernel, Model, CPU Sensor, Fan count).
+// - Subsystem capability table with availability status and missing reasons.
+// - Export Diagnostics button triggering export to structured JSON.
 import { ThemeColors } from "../theme/colors.slint";
 import { ThemeTypography } from "../theme/typography.slint";
 import { ThemeMetrics } from "../theme/metrics.slint";
 import { StatusPill } from "../components/status-pill.slint";
 import { SectionCard } from "../components/section-card.slint";
 import { CapabilityNotice } from "../components/capability-notice.slint";
+import { PrimaryButton } from "../components/action-button.slint";
 
 export component Diagnostics inherits Rectangle {
+    in property <string> os-name: "Linux";
+    in property <string> kernel-version: "Unknown";
+    in property <string> model-name: "Unknown";
+    in property <string> cpu-sensor: "Unavailable";
+    in property <string> fan-count: "0";
+    in property <string> export-status: "";
     in property <[string]> capability-names: [];
     in property <[bool]> capability-flags: [];
     in property <[string]> capability-reasons: [];
+
+    callback export-diagnostics-clicked();
 
     background: transparent;
 
     VerticalLayout {
         spacing: ThemeMetrics.lg;
         alignment: start;
+
+        SectionCard {
+            title: "System & Sensor Bindings";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "OS / Kernel:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: root.os-name + " (" + root.kernel-version + ")";
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "Model / Vendor:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: root.model-name;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "CPU Sensor:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: root.cpu-sensor;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-mono;
+                        font-size: ThemeTypography.label;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    Text {
+                        text: "Tachometers:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: root.fan-count + " fan tachometer(s) detected";
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
 
         SectionCard {
             title: "Capability summary";
@@ -122,8 +216,28 @@ export component Diagnostics inherits Rectangle {
             }
         }
 
+        HorizontalLayout {
+            spacing: ThemeMetrics.md;
+            alignment: start;
+
+            PrimaryButton {
+                label: "Export Diagnostics";
+                clicked => {
+                    root.export-diagnostics-clicked();
+                }
+            }
+
+            if root.export-status != "" : Text {
+                text: root.export-status;
+                color: ThemeColors.gold;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.label;
+                vertical-alignment: center;
+            }
+        }
+
         CapabilityNotice {
-            text: "Export arrives in Phase 2. This report is on-screen only.";
+            text: "Diagnostics reports are exported locally in JSON format to ~/.config/zenomen/diagnostics/.";
         }
     }
 }

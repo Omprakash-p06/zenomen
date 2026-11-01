@@ -89,30 +89,59 @@ pub struct TelemetryPaths {
 }
 
 /// The bounded ring buffer behind the charts.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TelemetryHistory {
     points: VecDeque<TelemetryPoint>,
+    capacity: usize,
+}
+
+impl Default for TelemetryHistory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TelemetryHistory {
-    /// The capacity, exposed next to the buffer so callers do not reach for the
-    /// module constant and a future configurable window has one place to change.
+    /// The default capacity (120 samples).
     pub const MAX_SAMPLES: usize = MAX_SAMPLES;
 
     /// An empty history pre-sized to the bound, so the 120th push is not the
     /// first allocation.
     pub fn new() -> Self {
+        Self::with_capacity(MAX_SAMPLES)
+    }
+
+    /// An empty history pre-sized to a specific capacity (minimum 2).
+    pub fn with_capacity(capacity: usize) -> Self {
+        let cap = capacity.max(2);
         Self {
-            points: VecDeque::with_capacity(MAX_SAMPLES),
+            points: VecDeque::with_capacity(cap),
+            capacity: cap,
         }
+    }
+
+    /// Configured capacity.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Resize capacity dynamically (MON-11).
+    ///
+    /// If the new capacity is smaller, evicts oldest samples with `pop_front()`.
+    pub fn set_capacity(&mut self, new_capacity: usize) {
+        let cap = new_capacity.max(2);
+        while self.points.len() > cap {
+            self.points.pop_front();
+        }
+        self.capacity = cap;
     }
 
     /// Append one sample, evicting the oldest when the buffer is full.
     ///
     /// `pop_front()` runs *before* `push_back()`, so the deque never holds more
-    /// than [`MAX_SAMPLES`] points even for an instant (T-01-05).
+    /// than `capacity` points even for an instant (T-01-05).
     pub fn push(&mut self, point: TelemetryPoint) {
-        if self.points.len() >= Self::MAX_SAMPLES {
+        while self.points.len() >= self.capacity {
             self.points.pop_front();
         }
         self.points.push_back(point);
@@ -150,7 +179,7 @@ impl TelemetryHistory {
     /// reading that was never taken (UI-SPEC "Data & Text States").
     fn path(&self, pick: fn(&TelemetryPoint) -> Option<f32>, width: f32, height: f32) -> String {
         let series: Vec<Option<f32>> = self.points.iter().map(pick).collect();
-        generate_svg_path_windowed(&series, width, height, MAX_SAMPLES)
+        generate_svg_path_windowed(&series, width, height, self.capacity)
     }
 }
 
@@ -292,5 +321,34 @@ mod tests {
             m_count, 3,
             "Expected 3 M segments due to NaN and Inf gaps, got: {path}"
         );
+    }
+
+    #[test]
+    fn history_dynamically_resizes_capacity_and_evicts_oldest() {
+        let mut history = TelemetryHistory::with_capacity(60);
+        assert_eq!(history.capacity(), 60);
+
+        for i in 0..50 {
+            history.push(TelemetryPoint {
+                timestamp: Instant::now(),
+                cpu: Some(i as f32),
+                gpu: None,
+                ram: None,
+                fan: None,
+            });
+        }
+        assert_eq!(history.sample_count(), 50);
+
+        // Downsizing to 30 should evict the oldest 20 samples
+        history.set_capacity(30);
+        assert_eq!(history.capacity(), 30);
+        assert_eq!(history.sample_count(), 30);
+        assert_eq!(history.points().front().unwrap().cpu, Some(20.0));
+        assert_eq!(history.points().back().unwrap().cpu, Some(49.0));
+
+        // Upsizing to 100 should keep existing 30
+        history.set_capacity(100);
+        assert_eq!(history.capacity(), 100);
+        assert_eq!(history.sample_count(), 30);
     }
 }
