@@ -8,6 +8,7 @@ pub mod config;
 pub mod core;
 pub mod desktop;
 pub mod hardware;
+pub mod rgb;
 pub mod service;
 
 slint::include_modules!();

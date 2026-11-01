@@ -67,6 +67,7 @@ fn collect_diagnostics_with_mock_roots() {
             fan_control: true,
             power_profiles: true,
             rgb_lighting: false,
+            rgb_variant: None,
             battery_metrics: true,
         },
         latest_snapshot: Some(TelemetrySnapshot {

@@ -181,6 +181,28 @@ impl ZenOmenApp {
         }
 
         let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_apply_rgb_preset(move |preset| {
+                let presets = crate::rgb::builtin_presets();
+                if let Some(found) = presets
+                    .into_iter()
+                    .find(|p| p.id.eq_ignore_ascii_case(preset.as_str()))
+                {
+                    send_command(&commands, AppCommand::ApplyRgbProfile(found));
+                }
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_set_rgb_power(move |enabled| {
+                send_command(&commands, AppCommand::SetRgbPower(enabled));
+            });
+        }
+
+        let ui = self.ui.clone();
         let state = Arc::clone(&self.state);
         let registry_slot = Arc::clone(&self.registry);
         if let Some(ui) = ui.upgrade() {
@@ -440,7 +462,20 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
     ui.set_service_status_text(state.service_status.description().into());
     ui.set_polkit_status_text(state.polkit_status.as_str().into());
 
-    ui.set_rgb_profile(snapshot.rgb_profile.as_deref().unwrap_or_default().into());
+    ui.set_rgb_variant(state.rgb_variant.map(|v| v.name()).unwrap_or("None").into());
+    if let Some(profile) = &state.active_rgb_profile {
+        ui.set_rgb_profile(profile.name.as_str().into());
+        ui.set_rgb_profile_name(profile.name.as_str().into());
+        ui.set_rgb_profile_desc(profile.description.as_str().into());
+        ui.set_rgb_unsupported_fields(profile.unsupported_fields.join(", ").into());
+        ui.set_zone_colors(ModelRc::new(VecModel::from(
+            profile.zones.iter().map(|c| c.to_slint_color()).collect::<Vec<_>>(),
+        )));
+        ui.set_zone_hexes(ModelRc::new(VecModel::from(
+            profile.zones.iter().map(|c| SharedString::from(c.to_hex())).collect::<Vec<_>>(),
+        )));
+    }
+    ui.set_rgb_power_enabled(state.rgb_power_enabled);
 }
 
 /// A percentage without its sign — the screens append `%` themselves.

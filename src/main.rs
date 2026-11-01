@@ -22,6 +22,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| std::path::PathBuf::from("config.toml"));
     let (config, corrupt_notice) = zenomen::config::load_or_default(&config_path);
 
+    // Migrate legacy OpenOMEN RGB profiles non-destructively if present (RGB-05)
+    if let (Some(source_dir), Some(target_dir)) = (
+        zenomen::rgb::default_openomen_rgb_dir(),
+        zenomen::rgb::default_zenomen_rgb_dir(),
+    ) {
+        let report = zenomen::rgb::migrate_openomen_profiles(&source_dir, &target_dir);
+        if report.total_scanned > 0 {
+            tracing::info!(
+                scanned = report.total_scanned,
+                imported = report.imported.len(),
+                skipped = report.skipped.len(),
+                "OpenOMEN RGB profiles migration report"
+            );
+        }
+    }
+
     // 1. Check CLI args or config for start-minimized flag (SYS-03)
     let start_minimized = std::env::args().any(|arg| arg == "--minimized" || arg == "-m")
         || config.general.start_minimized;

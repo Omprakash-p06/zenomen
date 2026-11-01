@@ -84,10 +84,15 @@ impl HardwareService {
     async fn get_capabilities(&self) -> zbus::fdo::Result<String> {
         let has_fan_control = self.backend.find_fan_control_path().is_ok();
         let has_power_profiles = self.backend.get_power_profile_choices().is_ok();
+        let rgb_info = self.backend.find_rgb_interface().ok();
+        let has_rgb_lighting = rgb_info.is_some();
+        let rgb_variant = rgb_info.map(|(v, _)| v.name());
 
         let caps = serde_json::json!({
             "has_fan_control": has_fan_control,
             "has_power_profiles": has_power_profiles,
+            "has_rgb_lighting": has_rgb_lighting,
+            "rgb_variant": rgb_variant,
             "service_version": env!("CARGO_PKG_VERSION"),
         });
 
@@ -173,20 +178,17 @@ impl HardwareService {
     ) -> zbus::fdo::Result<String> {
         self.authorize(&hdr).await?;
 
-        // Formal validation: must be valid JSON object
-        let parsed: serde_json::Value = serde_json::from_str(&profile_json)
+        let profile: crate::rgb::RgbProfile = serde_json::from_str(&profile_json)
             .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("Invalid RGB profile JSON: {e}")))?;
 
-        if !parsed.is_object() {
-            return Err(zbus::fdo::Error::InvalidArgs(
-                "RGB profile must be a JSON object".to_string(),
-            ));
-        }
+        self.backend
+            .apply_rgb_hardware(&profile.zones)
+            .map_err(zbus::fdo::Error::from)?;
 
-        Ok("RGB profile accepted".to_string())
+        Ok(format!("RGB profile '{}' applied", profile.name))
     }
 
-    /// Toggle RGB lighting state.
+    /// Toggle RGB lighting state (RGB-04).
     /// Mutating method: checks polkit `com.zenomen.hardware.control`.
     async fn set_rgb_enabled(
         &self,
@@ -194,6 +196,17 @@ impl HardwareService {
         enabled: bool,
     ) -> zbus::fdo::Result<String> {
         self.authorize(&hdr).await?;
+        if enabled {
+            let white = crate::rgb::builtin_presets().swap_remove(0);
+            self.backend
+                .apply_rgb_hardware(&white.zones)
+                .map_err(zbus::fdo::Error::from)?;
+        } else {
+            let black = [crate::rgb::RgbColor::new(0, 0, 0); 4];
+            self.backend
+                .apply_rgb_hardware(&black)
+                .map_err(zbus::fdo::Error::from)?;
+        }
         Ok(format!("RGB enabled set to {enabled}"))
     }
 }

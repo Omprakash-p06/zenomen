@@ -40,6 +40,8 @@ pub struct HardwareCapabilities {
     pub power_profiles: bool,
     /// A supported keyboard RGB interface was detected.
     pub rgb_lighting: bool,
+    /// Active keyboard RGB interface variant, if detected.
+    pub rgb_variant: Option<crate::hardware::rgb::RgbInterfaceVariant>,
     /// Battery charge/power can be read.
     pub battery_metrics: bool,
 }
@@ -58,6 +60,7 @@ impl HardwareCapabilities {
             fan_control: true,
             power_profiles: true,
             rgb_lighting: true,
+            rgb_variant: Some(crate::hardware::rgb::RgbInterfaceVariant::FourZone),
             battery_metrics: true,
         }
     }
@@ -75,6 +78,7 @@ impl HardwareCapabilities {
             fan_control: false,
             power_profiles: false,
             rgb_lighting: false,
+            rgb_variant: None,
             battery_metrics: false,
         }
     }

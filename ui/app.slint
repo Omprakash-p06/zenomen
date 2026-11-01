@@ -82,7 +82,13 @@ export component AppWindow inherits Window {
     in-out property <string> power-profile: "";
     in-out property <[string]> power-profile-choices: [];
     in-out property <string> rgb-profile: "";
-    in-out property <[color]> zone-colors: [];
+    in-out property <string> rgb-variant: "Four-Zone";
+    in-out property <string> rgb-profile-name: "White";
+    in-out property <string> rgb-profile-desc: "Clean static white illumination on all 4 zones";
+    in-out property <bool> rgb-power-enabled: true;
+    in-out property <[color]> zone-colors: [#FFFFFF, #FFFFFF, #FFFFFF, #FFFFFF];
+    in-out property <[string]> zone-hexes: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"];
+    in-out property <string> rgb-unsupported-fields: "";
 
     in-out property <string> cpu-sparkline: "";
     in-out property <string> gpu-sparkline: "";
@@ -133,6 +139,10 @@ export component AppWindow inherits Window {
     callback set-power-profile(string);
     /// Emitted when user applies a combined preset ("quiet", "balanced", "gaming").
     callback apply-preset(string);
+    /// Emitted when user selects an RGB lighting preset ("white", "gaming", "rainbow", "off").
+    callback apply-rgb-preset(string);
+    /// Emitted when user toggles RGB lighting power state (RGB-04).
+    callback set-rgb-power(bool);
     /// Emitted when user dismisses the control error notification banner.
     callback dismiss-control-error();
 
@@ -328,8 +338,23 @@ export component AppWindow inherits Window {
 
                             if root.current-screen == 3 : Lighting {
                                 has-rgb-lighting: root.has-rgb-lighting;
-                                rgb-profile: root.rgb-profile;
+                                rgb-variant: root.rgb-variant;
+                                active-profile-name: root.rgb-profile-name;
+                                active-profile-desc: root.rgb-profile-desc;
+                                rgb-power-enabled: root.rgb-power-enabled;
                                 zone-colors: root.zone-colors;
+                                zone-hexes: root.zone-hexes;
+                                control-error-message: root.control-error-message;
+                                unsupported-fields: root.rgb-unsupported-fields;
+                                apply-preset(preset) => {
+                                    root.apply-rgb-preset(preset);
+                                }
+                                set-rgb-power(enabled) => {
+                                    root.set-rgb-power(enabled);
+                                }
+                                dismiss-error => {
+                                    root.dismiss-control-error();
+                                }
                                 open-diagnostics => {
                                     root.active-screen = 5;
                                     root.navigate(5);

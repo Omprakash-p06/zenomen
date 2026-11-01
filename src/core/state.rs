@@ -66,6 +66,12 @@ pub struct AppState {
     pub config: crate::config::AppConfig,
     /// Notification if loaded config was corrupt and safe defaults were used (SYS-07).
     pub config_corrupt_notice: Option<String>,
+    /// Currently active RGB keyboard lighting profile (RGB-02).
+    pub active_rgb_profile: Option<crate::rgb::RgbProfile>,
+    /// RGB keyboard lighting power state (RGB-04).
+    pub rgb_power_enabled: bool,
+    /// Detected RGB keyboard interface variant (RGB-01).
+    pub rgb_variant: Option<crate::hardware::rgb::RgbInterfaceVariant>,
 }
 
 impl Default for AppState {
@@ -88,6 +94,9 @@ impl Default for AppState {
             last_control_error: None,
             config: crate::config::AppConfig::default(),
             config_corrupt_notice: None,
+            active_rgb_profile: Some(crate::rgb::builtin_presets().swap_remove(0)),
+            rgb_power_enabled: true,
+            rgb_variant: None,
         }
     }
 }
@@ -97,7 +106,10 @@ impl AppState {
     pub fn apply(&mut self, event: &AppEvent) {
         match event {
             AppEvent::ScreenChanged(screen) => self.active_screen = *screen,
-            AppEvent::CapabilitiesLoaded(capabilities) => self.capabilities = *capabilities,
+            AppEvent::CapabilitiesLoaded(capabilities) => {
+                self.capabilities = *capabilities;
+                self.rgb_variant = capabilities.rgb_variant;
+            }
             AppEvent::TelemetryUpdated(snapshot) => {
                 self.last_sampling_error = None;
                 self.latest_snapshot = Some(snapshot.clone());
@@ -188,6 +200,29 @@ impl AppState {
             }
             AppEvent::PolkitStatusChanged(status_desc) => {
                 self.polkit_status = status_desc.clone();
+            }
+            AppEvent::RgbProfileApplied(res) => {
+                match res {
+                    Ok(profile) => {
+                        self.active_rgb_profile = Some(profile.clone());
+                        self.rgb_power_enabled = !profile.is_off();
+                        self.last_control_error = None;
+                    }
+                    Err(e) => {
+                        self.last_control_error = Some(e.clone());
+                    }
+                }
+            }
+            AppEvent::RgbPowerChanged(res) => {
+                match res {
+                    Ok(enabled) => {
+                        self.rgb_power_enabled = *enabled;
+                        self.last_control_error = None;
+                    }
+                    Err(e) => {
+                        self.last_control_error = Some(e.clone());
+                    }
+                }
             }
             AppEvent::ControlErrorDismissed => {
                 self.last_control_error = None;

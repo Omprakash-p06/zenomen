@@ -276,4 +276,48 @@ impl HardwareServiceClient {
             Ok("Authorization not granted".to_string())
         }
     }
+
+    /// Apply an RGB profile to hardware via com.zenomen.Hardware1.
+    pub fn apply_rgb_profile(&self, profile: &crate::rgb::RgbProfile) -> Result<String, String> {
+        let conn = self.connect()?;
+        let json_str = serde_json::to_string(profile)
+            .map_err(|e| format!("Failed to serialize profile: {e}"))?;
+        let reply = conn
+            .call_method(
+                Some(self.destination.as_str()),
+                self.path.as_str(),
+                Some(self.interface.as_str()),
+                "ApplyRgbProfile",
+                &(json_str,),
+            )
+            .map_err(|e| format!("ApplyRgbProfile failed: {e}"))?;
+
+        let msg: String = reply
+            .body()
+            .deserialize()
+            .map_err(|e| format!("Failed to parse ApplyRgbProfile response: {e}"))?;
+
+        Ok(msg)
+    }
+
+    /// Set RGB keyboard power state via com.zenomen.Hardware1 (RGB-04).
+    pub fn set_rgb_enabled(&self, enabled: bool) -> Result<String, String> {
+        let conn = self.connect()?;
+        let reply = conn
+            .call_method(
+                Some(self.destination.as_str()),
+                self.path.as_str(),
+                Some(self.interface.as_str()),
+                "SetRgbEnabled",
+                &(enabled,),
+            )
+            .map_err(|e| format!("SetRgbEnabled failed: {e}"))?;
+
+        let msg: String = reply
+            .body()
+            .deserialize()
+            .map_err(|e| format!("Failed to parse SetRgbEnabled response: {e}"))?;
+
+        Ok(msg)
+    }
 }

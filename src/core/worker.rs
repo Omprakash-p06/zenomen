@@ -197,6 +197,22 @@ pub fn spawn_monitoring_worker(
                                 break;
                             }
                         }
+                        AppCommand::ApplyRgbProfile(profile) => {
+                            tracing::info!(profile = profile.name.as_str(), "applying RGB profile via service");
+                            let res = client.apply_rgb_profile(&profile);
+                            let event_res = res.map(|_| profile);
+                            if event_sender.send(AppEvent::RgbProfileApplied(event_res)).is_err() {
+                                break;
+                            }
+                        }
+                        AppCommand::SetRgbPower(enabled) => {
+                            tracing::info!(enabled, "setting RGB power via service");
+                            let res = client.set_rgb_enabled(enabled);
+                            let event_res = res.map(|_| enabled);
+                            if event_sender.send(AppEvent::RgbPowerChanged(event_res)).is_err() {
+                                break;
+                            }
+                        }
                         AppCommand::DismissControlError => {
                             let _ = event_sender.send(AppEvent::ControlErrorDismissed);
                         }

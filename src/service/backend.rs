@@ -29,7 +29,7 @@ pub fn write_and_verify(
             HardwareControlError::IoError(format!("Read-back from {} failed: {e}", path.display()))
         })?;
 
-        if read_back.trim() == target_trimmed {
+        if read_back.trim().eq_ignore_ascii_case(target_trimmed) {
             return Ok(());
         }
 
@@ -308,5 +308,144 @@ impl HardwareBackend {
             partial_success,
             message,
         })
+    }
+
+    /// Discover the active RGB lighting interface variant and path (RGB-01).
+    pub fn find_rgb_interface(
+        &self,
+    ) -> Result<(crate::hardware::rgb::RgbInterfaceVariant, PathBuf), HardwareControlError> {
+        // 1. FourZone: /sys/devices/platform/hp-wmi/rgb_zones/zone00
+        let four_zone_dir = self.resolve_path("sys/devices/platform/hp-wmi/rgb_zones");
+        if four_zone_dir.join("zone00").exists() {
+            return Ok((crate::hardware::rgb::RgbInterfaceVariant::FourZone, four_zone_dir));
+        }
+
+        // 2. Legacy: /sys/devices/platform/hp-wmi/keyboardleds
+        let legacy = self.resolve_path("sys/devices/platform/hp-wmi/keyboardleds");
+        if legacy.exists() {
+            return Ok((crate::hardware::rgb::RgbInterfaceVariant::Legacy, legacy));
+        }
+
+        // 3. KernelPatch: /sys/class/leds/hp_omen::kbd_backlight/zone_colors
+        let kernel_patch = self.resolve_path("sys/class/leds/hp_omen::kbd_backlight/zone_colors");
+        if kernel_patch.exists() {
+            return Ok((crate::hardware::rgb::RgbInterfaceVariant::KernelPatch, kernel_patch));
+        }
+
+        Err(HardwareControlError::InterfaceMissing(
+            "No supported HP keyboard RGB interface detected".to_string(),
+        ))
+    }
+
+    /// Read active 4-zone colors from sysfs (if supported by active interface variant).
+    pub fn get_rgb_colors(&self) -> Result<[crate::rgb::RgbColor; 4], HardwareControlError> {
+        let (variant, path) = self.find_rgb_interface()?;
+        match variant {
+            crate::hardware::rgb::RgbInterfaceVariant::FourZone => {
+                let mut colors = [crate::rgb::RgbColor::default(); 4];
+                for (i, slot) in colors.iter_mut().enumerate() {
+                    let zone_path = path.join(format!("zone0{i}"));
+                    let content = fs::read_to_string(&zone_path).map_err(|e| {
+                        HardwareControlError::IoError(format!(
+                            "Failed to read {}: {e}",
+                            zone_path.display()
+                        ))
+                    })?;
+                    *slot = crate::rgb::RgbColor::from_hex(&content)
+                        .map_err(|e| HardwareControlError::InvalidParameter(e.to_string()))?;
+                }
+                Ok(colors)
+            }
+            crate::hardware::rgb::RgbInterfaceVariant::Legacy => {
+                let content = fs::read_to_string(&path).map_err(|e| {
+                    HardwareControlError::IoError(format!("Failed to read {}: {e}", path.display()))
+                })?;
+                let trimmed = content.trim();
+                if trimmed.len() != 24 {
+                    return Err(HardwareControlError::InvalidParameter(format!(
+                        "Legacy keyboardleds returned invalid length (expected 24, got {})",
+                        trimmed.len()
+                    )));
+                }
+                let mut colors = [crate::rgb::RgbColor::default(); 4];
+                for i in 0..4 {
+                    let hex_slice = &trimmed[i * 6..(i + 1) * 6];
+                    colors[i] = crate::rgb::RgbColor::from_hex(hex_slice)
+                        .map_err(|e| HardwareControlError::InvalidParameter(e.to_string()))?;
+                }
+                Ok(colors)
+            }
+            crate::hardware::rgb::RgbInterfaceVariant::KernelPatch => {
+                let bytes = fs::read(&path).map_err(|e| {
+                    HardwareControlError::IoError(format!("Failed to read {}: {e}", path.display()))
+                })?;
+                if bytes.len() != 12 {
+                    return Err(HardwareControlError::InvalidParameter(format!(
+                        "KernelPatch zone_colors returned invalid length (expected 12 bytes, got {})",
+                        bytes.len()
+                    )));
+                }
+                let mut colors = [crate::rgb::RgbColor::default(); 4];
+                for i in 0..4 {
+                    colors[i] = crate::rgb::RgbColor::new(
+                        bytes[i * 3],
+                        bytes[i * 3 + 1],
+                        bytes[i * 3 + 2],
+                    );
+                }
+                Ok(colors)
+            }
+        }
+    }
+
+    /// Apply 4-zone colors to hardware using the discovered variant with verification (RGB-08).
+    pub fn apply_rgb_hardware(
+        &self,
+        colors: &[crate::rgb::RgbColor; 4],
+    ) -> Result<(), HardwareControlError> {
+        let (variant, path) = self.find_rgb_interface()?;
+        match variant {
+            crate::hardware::rgb::RgbInterfaceVariant::FourZone => {
+                for (i, color) in colors.iter().enumerate() {
+                    let zone_path = path.join(format!("zone0{i}"));
+                    let hex = color.to_hex_raw();
+                    write_and_verify(&zone_path, &hex, 3, Duration::from_millis(10))?;
+                }
+                Ok(())
+            }
+            crate::hardware::rgb::RgbInterfaceVariant::Legacy => {
+                let payload = format!(
+                    "{}{}{}{}",
+                    colors[0].to_hex_raw(),
+                    colors[1].to_hex_raw(),
+                    colors[2].to_hex_raw(),
+                    colors[3].to_hex_raw()
+                );
+                write_and_verify(&path, &payload, 3, Duration::from_millis(10))?;
+                Ok(())
+            }
+            crate::hardware::rgb::RgbInterfaceVariant::KernelPatch => {
+                let bytes: [u8; 12] = [
+                    colors[0].r, colors[0].g, colors[0].b,
+                    colors[1].r, colors[1].g, colors[1].b,
+                    colors[2].r, colors[2].g, colors[2].b,
+                    colors[3].r, colors[3].g, colors[3].b,
+                ];
+                fs::write(&path, bytes).map_err(|e| {
+                    HardwareControlError::IoError(format!("Write to {} failed: {e}", path.display()))
+                })?;
+                let read_back = fs::read(&path).map_err(|e| {
+                    HardwareControlError::IoError(format!("Read-back from {} failed: {e}", path.display()))
+                })?;
+                if read_back != bytes {
+                    return Err(HardwareControlError::VerificationFailed {
+                        target: format!("{bytes:?}"),
+                        actual: format!("{read_back:?}"),
+                        retries: 1,
+                    });
+                }
+                Ok(())
+            }
+        }
     }
 }

@@ -93,6 +93,10 @@ pub enum AppCommand {
     SetStartMinimized(bool),
     /// Toggle closing window to system tray (SYS-04).
     SetCloseToTray(bool),
+    /// Apply an RGB lighting profile (RGB-02, RGB-08).
+    ApplyRgbProfile(crate::rgb::RgbProfile),
+    /// Set RGB lighting power state on/off (RGB-04).
+    SetRgbPower(bool),
 }
 
 /// Something the core wants the UI to show.
@@ -126,6 +130,10 @@ pub enum AppEvent {
     PowerProfileChanged(Result<String, String>),
     /// Combined preset applied with granular PresetResult or error.
     PresetApplied(Result<crate::service::types::PresetResult, String>),
+    /// RGB lighting profile applied with confirmed profile or error (RGB-02).
+    RgbProfileApplied(Result<crate::rgb::RgbProfile, String>),
+    /// RGB lighting power state changed with confirmed state or error (RGB-04).
+    RgbPowerChanged(Result<bool, String>),
     /// Hardware D-Bus service connection status changed.
     ServiceStatusChanged(crate::service::client::ServiceConnectionStatus),
     /// Polkit authorization readiness status changed.

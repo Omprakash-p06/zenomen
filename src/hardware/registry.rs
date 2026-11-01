@@ -99,6 +99,7 @@ impl SensorRegistry {
         has_gpu_metrics: bool,
         has_ram_metrics: bool,
     ) -> HardwareCapabilities {
+        let rgb_variant = crate::hardware::rgb::detect_rgb_interface(std::path::Path::new("/"));
         HardwareCapabilities {
             cpu_metrics: has_cpu_metrics,
             gpu_metrics: has_gpu_metrics,
@@ -106,7 +107,8 @@ impl SensorRegistry {
             fan_rpm: !self.fan_tachometers.is_empty(),
             fan_control: self.has_fan_control,
             power_profiles: self.has_platform_profiles,
-            rgb_lighting: false,
+            rgb_lighting: rgb_variant.is_some(),
+            rgb_variant,
             battery_metrics: false,
         }
     }
