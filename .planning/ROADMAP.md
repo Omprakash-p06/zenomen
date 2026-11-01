@@ -101,9 +101,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: Tray, autostart, close-to-tray and single-instance handling with D-Bus activation GNOME fallback
-- [ ] 04-02: Configuration persistence — TOML schema, validation, atomic writes, theme and interval settings
-- [ ] 04-03: Basic RGB — capability detection, presets, on/off, strict `#RRGGBB` validation, safe legacy JSON profile migration
+- [x] 04-01: Tray, autostart, close-to-tray and single-instance handling with D-Bus activation GNOME fallback
+- [x] 04-02: Configuration persistence — TOML schema, validation, atomic writes, theme and interval settings
+- [x] 04-03: Basic RGB — capability detection, presets, on/off, strict `#RRGGBB` validation, safe legacy JSON profile migration
 
 ### Phase 5: Distribution, Resource Budget & Rebrand
 
@@ -135,5 +135,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Foundation | 3/3 | Complete | 2026-11-01 |
 | 2. Linux Telemetry | 3/3 | Complete | 2026-11-01 |
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
-| 4. Desktop Integration | 0/3 | Planned | - |
+| 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 0/3 | Not started | - |
