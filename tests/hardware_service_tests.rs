@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
-use zenomen::service::backend::{write_and_verify, HardwareBackend};
+use zenomen::service::backend::{HardwareBackend, write_and_verify};
 use zenomen::service::types::{FanMode, HardwareControlError};
 
 struct MockSysfs {
@@ -12,7 +12,10 @@ struct MockSysfs {
 
 impl MockSysfs {
     fn new(test_name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("zenomen_test_hw_{test_name}_{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "zenomen_test_hw_{test_name}_{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&root);
 
         // Build mock hp-wmi hwmon directory
@@ -28,7 +31,11 @@ impl MockSysfs {
         let acpi_dir = root.join("sys/firmware/acpi");
         fs::create_dir_all(&acpi_dir).expect("failed to create mock acpi dir");
 
-        fs::write(acpi_dir.join("platform_profile_choices"), "cool quiet balanced performance\n").unwrap();
+        fs::write(
+            acpi_dir.join("platform_profile_choices"),
+            "cool quiet balanced performance\n",
+        )
+        .unwrap();
         fs::write(acpi_dir.join("platform_profile"), "balanced\n").unwrap();
 
         Self { root }
@@ -63,19 +70,28 @@ fn test_fan_mode_parsing_and_conversion() {
 
     // Manual mode is unsupported in v1 without curves
     let manual_err = FanMode::parse_requested("manual").unwrap_err();
-    assert!(matches!(manual_err, HardwareControlError::UnsupportedMode(_)));
+    assert!(matches!(
+        manual_err,
+        HardwareControlError::UnsupportedMode(_)
+    ));
 
     // Arbitrary / invalid modes rejected
     let bad_err = FanMode::parse_requested("turbo").unwrap_err();
     assert!(matches!(bad_err, HardwareControlError::InvalidParameter(_)));
 
     let attack_err = FanMode::parse_requested("../bad").unwrap_err();
-    assert!(matches!(attack_err, HardwareControlError::InvalidParameter(_)));
+    assert!(matches!(
+        attack_err,
+        HardwareControlError::InvalidParameter(_)
+    ));
 }
 
 #[test]
 fn test_write_and_verify_success() {
-    let temp_file = std::env::temp_dir().join(format!("zenomen_test_verify_success_{}", std::process::id()));
+    let temp_file = std::env::temp_dir().join(format!(
+        "zenomen_test_verify_success_{}",
+        std::process::id()
+    ));
     fs::write(&temp_file, "initial").unwrap();
 
     let res = write_and_verify(&temp_file, "updated", 3, Duration::from_millis(5));
@@ -89,7 +105,10 @@ fn test_write_and_verify_success() {
 
 #[test]
 fn test_write_and_verify_mismatch_failure() {
-    let temp_file = std::env::temp_dir().join(format!("zenomen_test_verify_mismatch_{}", std::process::id()));
+    let temp_file = std::env::temp_dir().join(format!(
+        "zenomen_test_verify_mismatch_{}",
+        std::process::id()
+    ));
     fs::write(&temp_file, "sticky_value").unwrap();
 
     // Simulate sticky hardware register that reverts writes
@@ -108,7 +127,11 @@ fn test_write_and_verify_mismatch_failure() {
     let _ = handle.join();
 
     match res {
-        Err(HardwareControlError::VerificationFailed { target, actual, retries }) => {
+        Err(HardwareControlError::VerificationFailed {
+            target,
+            actual,
+            retries,
+        }) => {
             assert_eq!(target, "wanted_value");
             assert_ne!(actual, target);
             assert_eq!(retries, 3);
@@ -157,14 +180,20 @@ fn test_mock_backend_power_profiles() {
     let mock = MockSysfs::new("pwr_profiles");
     let backend = mock.backend();
 
-    let choices = backend.get_power_profile_choices().expect("choices should be readable");
+    let choices = backend
+        .get_power_profile_choices()
+        .expect("choices should be readable");
     assert_eq!(choices, vec!["cool", "quiet", "balanced", "performance"]);
 
-    let active = backend.get_power_profile().expect("active profile readable");
+    let active = backend
+        .get_power_profile()
+        .expect("active profile readable");
     assert_eq!(active, "balanced");
 
     // Switch to performance
-    let res = backend.set_power_profile("performance").expect("should switch to performance");
+    let res = backend
+        .set_power_profile("performance")
+        .expect("should switch to performance");
     assert_eq!(res, "performance");
     assert_eq!(backend.get_power_profile().unwrap(), "performance");
 
@@ -213,7 +242,9 @@ fn test_mock_backend_combined_preset_partial_success() {
     let backend = mock.backend();
 
     // Remove fan pwm control to simulate machine with power profiles but unwritable fan control
-    let pwm_path = mock.root.join("sys/devices/platform/hp-wmi/hwmon/hwmon5/pwm1_enable");
+    let pwm_path = mock
+        .root
+        .join("sys/devices/platform/hp-wmi/hwmon/hwmon5/pwm1_enable");
     fs::remove_file(pwm_path).unwrap();
 
     let result = backend.apply_preset("gaming").expect("apply preset");
@@ -231,13 +262,17 @@ fn test_configuration_and_policy_assets_exist() {
     assert!(dbus_conf.contains("com.zenomen.Hardware1"));
     assert!(dbus_conf.contains("<policy user=\"root\">"));
 
-    let polkit_policy = fs::read_to_string("data/polkit/com.zenomen.hardware.policy").expect("polkit policy");
+    let polkit_policy =
+        fs::read_to_string("data/polkit/com.zenomen.hardware.policy").expect("polkit policy");
     assert!(polkit_policy.contains("com.zenomen.hardware.control"));
     assert!(polkit_policy.contains("auth_admin_keep"));
 
-    let systemd_service = fs::read_to_string("data/systemd/zenomen-hw.service").expect("systemd unit");
+    let systemd_service =
+        fs::read_to_string("data/systemd/zenomen-hw.service").expect("systemd unit");
     assert!(systemd_service.contains("Type=dbus"));
     assert!(systemd_service.contains("BusName=com.zenomen.Hardware1"));
     assert!(systemd_service.contains("ProtectSystem=strict"));
-    assert!(systemd_service.contains("ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi"));
+    assert!(
+        systemd_service.contains("ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi")
+    );
 }

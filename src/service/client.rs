@@ -61,8 +61,8 @@ impl HardwareServiceClient {
         if let Some(conn) = &*guard {
             return Ok(conn.clone());
         }
-        let conn = Connection::system()
-            .map_err(|e| format!("Failed to connect to system D-Bus: {e}"))?;
+        let conn =
+            Connection::system().map_err(|e| format!("Failed to connect to system D-Bus: {e}"))?;
         *guard = Some(conn.clone());
         Ok(conn)
     }
@@ -239,7 +239,8 @@ impl HardwareServiceClient {
         let mut subject_details = std::collections::HashMap::new();
         subject_details.insert("name", zbus::zvariant::Value::from(unique_name.as_str()));
         let subject = ("system-bus-name", subject_details);
-        let action_details: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        let action_details: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
         let flags: u32 = 0; // Don't trigger interactive prompt
         let cancellation_id = "";
 

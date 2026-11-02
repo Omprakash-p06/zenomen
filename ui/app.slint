@@ -145,6 +145,8 @@ export component AppWindow inherits Window {
     callback set-rgb-power(bool);
     /// Emitted when user dismisses the control error notification banner.
     callback dismiss-control-error();
+    /// Emitted when user clicks Check for updates in Settings (REL-06).
+    callback open-releases-page();
 
     // ---- Diagnostics table ------------------------------------------------
     private property <[string]> capability-names: [
@@ -390,6 +392,9 @@ export component AppWindow inherits Window {
                                 autostart-toggled(val) => {
                                     root.autostart = val;
                                     root.autostart-toggled(val);
+                                }
+                                open-releases-page => {
+                                    root.open-releases-page();
                                 }
                             }
 

@@ -60,6 +60,7 @@ export component Settings inherits Rectangle {
     callback start-minimized-toggled(bool);
     callback close-to-tray-toggled(bool);
     callback autostart-toggled(bool);
+    callback open-releases-page();
 
     background: transparent;
 
@@ -541,6 +542,37 @@ export component Settings inherits Rectangle {
                         font-size: ThemeTypography.body;
                         vertical-alignment: center;
                         overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-top: ThemeMetrics.sm;
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 160px;
+                        height: 32px;
+                        background: ThemeColors.slate;
+                        border-width: ThemeMetrics.stroke-hairline;
+                        border-color: ThemeColors.gold;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "Check for updates";
+                            color: ThemeColors.gold;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.open-releases-page();
+                            }
+                        }
                     }
                 }
             }

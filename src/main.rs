@@ -3,18 +3,18 @@
 //! Main entry point: manages single-instance enforcement on session D-Bus,
 //! system tray integration, close-to-tray lifecycle, and monitoring worker orchestration.
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
-use std::sync::Arc;
 
 use slint::ComponentHandle;
+use zenomen::AppWindow;
 use zenomen::app::ZenOmenApp;
 use zenomen::core::{log_benchmark, spawn_monitoring_worker};
 use zenomen::desktop::{
-    ensure_single_instance, register_tray, DesktopAction, SingleInstanceResult,
+    DesktopAction, SingleInstanceResult, ensure_single_instance, register_tray,
 };
 use zenomen::hardware::{HardwareProvider, MockHardware};
-use zenomen::AppWindow;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check for root-only system integration commands before launching GUI (REL-03)

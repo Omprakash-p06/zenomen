@@ -10,8 +10,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zenomen::config::{
-    load_or_default, save_atomic, AppConfig, GeneralConfig, TelemetryConfig,
-    MAX_POLLING_INTERVAL_MS, MIN_POLLING_INTERVAL_MS,
+    AppConfig, GeneralConfig, MAX_POLLING_INTERVAL_MS, MIN_POLLING_INTERVAL_MS, TelemetryConfig,
+    load_or_default, save_atomic,
 };
 
 fn temp_test_dir(name: &str) -> PathBuf {
@@ -152,8 +152,7 @@ fn config_corrupt_file_recovery_and_backup() {
         .find(|e| e.file_name().to_string_lossy().contains("bak"))
         .expect("backup file with .bak.<timestamp> must exist in directory");
 
-    let backup_content =
-        fs::read_to_string(backup_entry.path()).expect("read backup file content");
+    let backup_content = fs::read_to_string(backup_entry.path()).expect("read backup file content");
     assert_eq!(
         backup_content, corrupt_content,
         "backup file must contain the exact original corrupt content"

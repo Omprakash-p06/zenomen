@@ -19,12 +19,19 @@ fn test_fan_mode_state_transitions() {
 
     // 2. Failure event (e.g. VerificationFailed) preserves active mode and sets error
     state.apply(&AppEvent::FanModeChanged(Err(
-        "Hardware write verification failed for target '0': read-back was '2' after 3 retries".to_string(),
+        "Hardware write verification failed for target '0': read-back was '2' after 3 retries"
+            .to_string(),
     )));
     assert_eq!(state.fan_mode, "max"); // preserved
     assert_eq!(state.pending_fan_mode, None);
     assert!(state.last_control_error.is_some());
-    assert!(state.last_control_error.as_ref().unwrap().contains("verification failed"));
+    assert!(
+        state
+            .last_control_error
+            .as_ref()
+            .unwrap()
+            .contains("verification failed")
+    );
 
     // 3. Dismiss error clears error banner
     state.apply(&AppEvent::ControlErrorDismissed);
@@ -42,12 +49,16 @@ fn test_service_status_state_transitions() {
     assert_eq!(state.service_status, ServiceConnectionStatus::Disconnected);
 
     // Connected event
-    state.apply(&AppEvent::ServiceStatusChanged(ServiceConnectionStatus::Connected));
+    state.apply(&AppEvent::ServiceStatusChanged(
+        ServiceConnectionStatus::Connected,
+    ));
     assert_eq!(state.service_status, ServiceConnectionStatus::Connected);
     assert!(state.service_status.is_connected());
 
     // Disconnected event
-    state.apply(&AppEvent::ServiceStatusChanged(ServiceConnectionStatus::Disconnected));
+    state.apply(&AppEvent::ServiceStatusChanged(
+        ServiceConnectionStatus::Disconnected,
+    ));
     assert_eq!(state.service_status, ServiceConnectionStatus::Disconnected);
     assert!(!state.service_status.is_connected());
 }

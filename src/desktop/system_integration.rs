@@ -128,10 +128,9 @@ pub fn uninstall_from_prefix(prefix: &Path) -> Result<(), std::io::Error> {
 }
 
 fn run_systemctl(args: &[&str]) -> Result<(), SystemIntegrationError> {
-    let output = Command::new("systemctl")
-        .args(args)
-        .output()
-        .map_err(|e| SystemIntegrationError::Command(format!("failed to execute systemctl: {e}")))?;
+    let output = Command::new("systemctl").args(args).output().map_err(|e| {
+        SystemIntegrationError::Command(format!("failed to execute systemctl: {e}"))
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

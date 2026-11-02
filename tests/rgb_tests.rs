@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use zenomen::hardware::rgb::{detect_rgb_interface, RgbInterfaceVariant};
+use zenomen::hardware::rgb::{RgbInterfaceVariant, detect_rgb_interface};
 use zenomen::rgb::migration::{builtin_presets, migrate_openomen_profiles, parse_openomen_profile};
 use zenomen::rgb::schema::{RgbColor, RgbError};
 use zenomen::service::backend::HardwareBackend;
@@ -126,9 +126,17 @@ fn animation_fields_tracked_as_unsupported_without_failure() {
     assert_eq!(profile.zones[3], RgbColor::new(0, 0, 255));
 
     // RGB-07: animation fields detected and tracked
-    assert!(profile.unsupported_fields.contains(&"brightness".to_string()));
+    assert!(
+        profile
+            .unsupported_fields
+            .contains(&"brightness".to_string())
+    );
     assert!(profile.unsupported_fields.contains(&"speed".to_string()));
-    assert!(profile.unsupported_fields.contains(&"length_ms".to_string()));
+    assert!(
+        profile
+            .unsupported_fields
+            .contains(&"length_ms".to_string())
+    );
     assert!(profile.unsupported_fields.contains(&"loop".to_string()));
 }
 
@@ -139,7 +147,8 @@ fn openomen_migration_is_strictly_non_destructive() {
     let target_dir = base_dir.join("zenomen_rgb");
     fs::create_dir_all(&source_dir).unwrap();
 
-    let profile_1_content = r##"{"name": "Profile One", "zones": ["#112233", "#445566", "#778899", "#AABBCC"]}"##;
+    let profile_1_content =
+        r##"{"name": "Profile One", "zones": ["#112233", "#445566", "#778899", "#AABBCC"]}"##;
     let profile_2_content = r##"{"name": "Profile Two", "zones": {"0": "#FFFFFF", "1": "#000000", "2": "#FFFFFF", "3": "#000000"}}"##;
     let corrupted_content = r##"{"name": "Bad", "zones": ["#INVALID", "#FFFFFF"]}"##;
 
@@ -249,9 +258,9 @@ fn backend_hardware_writes_and_verification_four_zone() {
     assert_eq!(path, zone_dir);
 
     let colors = [
-        RgbColor::new(255, 0, 0),   // Zone 0: FF0000
-        RgbColor::new(0, 255, 0),   // Zone 1: 00FF00
-        RgbColor::new(0, 0, 255),   // Zone 2: 0000FF
+        RgbColor::new(255, 0, 0),     // Zone 0: FF0000
+        RgbColor::new(0, 255, 0),     // Zone 1: 00FF00
+        RgbColor::new(0, 0, 255),     // Zone 2: 0000FF
         RgbColor::new(255, 255, 255), // Zone 3: FFFFFF
     ];
 
@@ -291,7 +300,9 @@ fn backend_hardware_writes_and_verification_legacy() {
     fs::write(&kbd_path, "000000000000000000000000\n").unwrap();
 
     let backend = HardwareBackend::new(&root);
-    let (variant, _) = backend.find_rgb_interface().expect("legacy interface found");
+    let (variant, _) = backend
+        .find_rgb_interface()
+        .expect("legacy interface found");
     assert_eq!(variant, RgbInterfaceVariant::Legacy);
 
     let colors = [

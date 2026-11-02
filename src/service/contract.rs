@@ -1,11 +1,11 @@
 //! D-Bus interface contract for com.zenomen.Hardware1.
 
+use zbus::Connection;
 use zbus::interface;
 use zbus::message::Header;
-use zbus::Connection;
 
 use crate::service::backend::HardwareBackend;
-use crate::service::polkit::{PolkitVerifier, POLKIT_ACTION_CONTROL};
+use crate::service::polkit::{POLKIT_ACTION_CONTROL, PolkitVerifier};
 
 use std::sync::{Arc, RwLock};
 
@@ -57,17 +57,18 @@ impl HardwareService {
             return Ok(());
         }
 
-        let sender = hdr
-            .sender()
-            .ok_or_else(|| zbus::fdo::Error::AccessDenied("Caller sender missing in D-Bus message".to_string()))?;
+        let sender = hdr.sender().ok_or_else(|| {
+            zbus::fdo::Error::AccessDenied("Caller sender missing in D-Bus message".to_string())
+        })?;
 
         let conn = {
-            let lock = self.conn.read().map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Lock poisoned: {e}"))
-            })?;
-            lock.as_ref()
-                .cloned()
-                .ok_or_else(|| zbus::fdo::Error::Failed("D-Bus connection not initialized on service".to_string()))?
+            let lock = self
+                .conn
+                .read()
+                .map_err(|e| zbus::fdo::Error::Failed(format!("Lock poisoned: {e}")))?;
+            lock.as_ref().cloned().ok_or_else(|| {
+                zbus::fdo::Error::Failed("D-Bus connection not initialized on service".to_string())
+            })?
         };
 
         PolkitVerifier::check_authorization(&conn, sender.as_str(), POLKIT_ACTION_CONTROL, true)

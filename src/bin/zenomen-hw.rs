@@ -15,7 +15,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .init();
 
-    info!("Starting zenomen-hw privileged hardware control service v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting zenomen-hw privileged hardware control service v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     zbus::block_on(async {
         let backend = HardwareBackend::default();

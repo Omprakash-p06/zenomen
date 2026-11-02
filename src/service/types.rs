@@ -104,7 +104,9 @@ pub enum HardwareControlError {
     #[error("I/O error: {0}")]
     IoError(String),
 
-    #[error("Hardware write verification failed for target '{target}': read-back was '{actual}' after {retries} retries")]
+    #[error(
+        "Hardware write verification failed for target '{target}': read-back was '{actual}' after {retries} retries"
+    )]
     VerificationFailed {
         target: String,
         actual: String,

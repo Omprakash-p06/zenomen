@@ -36,7 +36,10 @@ pub fn write_and_verify(
         delay = delay.saturating_mul(2);
     }
 
-    let actual = fs::read_to_string(path).unwrap_or_default().trim().to_string();
+    let actual = fs::read_to_string(path)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     Err(HardwareControlError::VerificationFailed {
         target: target_trimmed.to_string(),
         actual,
@@ -158,9 +161,11 @@ impl HardwareBackend {
     /// Strictly supports "auto" and "max" in v1.
     pub fn set_fan_mode(&self, mode_str: &str) -> Result<String, HardwareControlError> {
         let target_mode = FanMode::parse_requested(mode_str)?;
-        let sysfs_val = target_mode
-            .as_sysfs_value()
-            .ok_or_else(|| HardwareControlError::UnsupportedMode(format!("Mode '{mode_str}' has no valid sysfs mapping")))?;
+        let sysfs_val = target_mode.as_sysfs_value().ok_or_else(|| {
+            HardwareControlError::UnsupportedMode(format!(
+                "Mode '{mode_str}' has no valid sysfs mapping"
+            ))
+        })?;
 
         let path = self.find_fan_control_path()?;
         write_and_verify(&path, sysfs_val, 3, Duration::from_millis(50))?;
@@ -288,7 +293,9 @@ impl HardwareBackend {
 
         let partial_success = (power_applied != fan_applied) && (power_applied || fan_applied);
         let message = if power_applied && fan_applied {
-            format!("Preset '{normalized}' successfully applied (profile: {target_power}, fan: {target_fan})")
+            format!(
+                "Preset '{normalized}' successfully applied (profile: {target_power}, fan: {target_fan})"
+            )
         } else if partial_success {
             format!(
                 "Preset '{normalized}' partially applied. {}",
@@ -317,7 +324,10 @@ impl HardwareBackend {
         // 1. FourZone: /sys/devices/platform/hp-wmi/rgb_zones/zone00
         let four_zone_dir = self.resolve_path("sys/devices/platform/hp-wmi/rgb_zones");
         if four_zone_dir.join("zone00").exists() {
-            return Ok((crate::hardware::rgb::RgbInterfaceVariant::FourZone, four_zone_dir));
+            return Ok((
+                crate::hardware::rgb::RgbInterfaceVariant::FourZone,
+                four_zone_dir,
+            ));
         }
 
         // 2. Legacy: /sys/devices/platform/hp-wmi/keyboardleds
@@ -329,7 +339,10 @@ impl HardwareBackend {
         // 3. KernelPatch: /sys/class/leds/hp_omen::kbd_backlight/zone_colors
         let kernel_patch = self.resolve_path("sys/class/leds/hp_omen::kbd_backlight/zone_colors");
         if kernel_patch.exists() {
-            return Ok((crate::hardware::rgb::RgbInterfaceVariant::KernelPatch, kernel_patch));
+            return Ok((
+                crate::hardware::rgb::RgbInterfaceVariant::KernelPatch,
+                kernel_patch,
+            ));
         }
 
         Err(HardwareControlError::InterfaceMissing(
@@ -387,11 +400,8 @@ impl HardwareBackend {
                 }
                 let mut colors = [crate::rgb::RgbColor::default(); 4];
                 for i in 0..4 {
-                    colors[i] = crate::rgb::RgbColor::new(
-                        bytes[i * 3],
-                        bytes[i * 3 + 1],
-                        bytes[i * 3 + 2],
-                    );
+                    colors[i] =
+                        crate::rgb::RgbColor::new(bytes[i * 3], bytes[i * 3 + 1], bytes[i * 3 + 2]);
                 }
                 Ok(colors)
             }
@@ -426,16 +436,30 @@ impl HardwareBackend {
             }
             crate::hardware::rgb::RgbInterfaceVariant::KernelPatch => {
                 let bytes: [u8; 12] = [
-                    colors[0].r, colors[0].g, colors[0].b,
-                    colors[1].r, colors[1].g, colors[1].b,
-                    colors[2].r, colors[2].g, colors[2].b,
-                    colors[3].r, colors[3].g, colors[3].b,
+                    colors[0].r,
+                    colors[0].g,
+                    colors[0].b,
+                    colors[1].r,
+                    colors[1].g,
+                    colors[1].b,
+                    colors[2].r,
+                    colors[2].g,
+                    colors[2].b,
+                    colors[3].r,
+                    colors[3].g,
+                    colors[3].b,
                 ];
                 fs::write(&path, bytes).map_err(|e| {
-                    HardwareControlError::IoError(format!("Write to {} failed: {e}", path.display()))
+                    HardwareControlError::IoError(format!(
+                        "Write to {} failed: {e}",
+                        path.display()
+                    ))
                 })?;
                 let read_back = fs::read(&path).map_err(|e| {
-                    HardwareControlError::IoError(format!("Read-back from {} failed: {e}", path.display()))
+                    HardwareControlError::IoError(format!(
+                        "Read-back from {} failed: {e}",
+                        path.display()
+                    ))
                 })?;
                 if read_back != bytes {
                     return Err(HardwareControlError::VerificationFailed {

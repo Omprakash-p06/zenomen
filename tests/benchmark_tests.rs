@@ -114,7 +114,7 @@ fn worker_thread_samples_and_dispatches_headlessly() {
 #[test]
 fn test_read_cpu_sample_and_calculation() {
     use zenomen::core::benchmark::{
-        cpu_percent_between, measure_stage, read_cpu_sample, CpuSample, USER_HZ,
+        CpuSample, USER_HZ, cpu_percent_between, measure_stage, read_cpu_sample,
     };
 
     let sample1 = read_cpu_sample().expect("read_cpu_sample must succeed on Linux");
@@ -130,7 +130,7 @@ fn test_read_cpu_sample_and_calculation() {
         at: t0,
     };
     let s_end = CpuSample {
-        jiffies: 1100, // +100 jiffies = 1.0 second of CPU time at USER_HZ=100
+        jiffies: 1100,                   // +100 jiffies = 1.0 second of CPU time at USER_HZ=100
         at: t0 + Duration::from_secs(2), // over 2 seconds = 50% CPU
     };
     let pct = cpu_percent_between(&s_start, &s_end, USER_HZ);
@@ -141,8 +141,8 @@ fn test_read_cpu_sample_and_calculation() {
     assert_eq!(zero_elapsed, 0.0);
 
     // Test measure_stage
-    let report = measure_stage("test-stage", Duration::from_millis(50))
-        .expect("measure_stage must succeed");
+    let report =
+        measure_stage("test-stage", Duration::from_millis(50)).expect("measure_stage must succeed");
     assert_eq!(report.stage, "test-stage");
     assert!(report.rss_mb > 0.0);
     assert!(report.cpu_percent >= 0.0);
@@ -166,7 +166,10 @@ fn test_visibility_gated_sampling_pauses_and_resumes() {
         .expect("Sending SetUiVisible(false) must succeed");
 
     // Clear any pending events (e.g. initial service status)
-    while event_receiver.recv_timeout(Duration::from_millis(100)).is_ok() {}
+    while event_receiver
+        .recv_timeout(Duration::from_millis(100))
+        .is_ok()
+    {}
 
     // Wait 1.5 seconds (interval is 1000ms). While hidden, no periodic sample must arrive!
     let hidden_res = event_receiver.recv_timeout(Duration::from_millis(1500));
@@ -190,7 +193,10 @@ fn test_visibility_gated_sampling_pauses_and_resumes() {
         AppEvent::TelemetryUpdated(snapshot) => {
             assert!(!snapshot.cpu_name.is_empty());
         }
-        other => panic!("Expected TelemetryUpdated immediately on restore, got: {:?}", other),
+        other => panic!(
+            "Expected TelemetryUpdated immediately on restore, got: {:?}",
+            other
+        ),
     }
 
     drop(command_sender);

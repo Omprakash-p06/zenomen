@@ -3,10 +3,10 @@
 use std::fs;
 use std::path::PathBuf;
 use zenomen::desktop::system_integration::{
-    atomic_write_file, install, install_to_prefix, is_root, uninstall, uninstall_from_prefix,
-    SystemIntegrationError, DBUS_CONF_TARGET, DESKTOP_ENTRY_TARGET, EMBEDDED_DBUS_CONF,
-    EMBEDDED_DESKTOP_ENTRY, EMBEDDED_POLKIT_POLICY, EMBEDDED_SYSTEMD_UNIT, POLKIT_POLICY_TARGET,
-    SYSTEMD_UNIT_TARGET,
+    DBUS_CONF_TARGET, DESKTOP_ENTRY_TARGET, EMBEDDED_DBUS_CONF, EMBEDDED_DESKTOP_ENTRY,
+    EMBEDDED_POLKIT_POLICY, EMBEDDED_SYSTEMD_UNIT, POLKIT_POLICY_TARGET, SYSTEMD_UNIT_TARGET,
+    SystemIntegrationError, atomic_write_file, install, install_to_prefix, is_root, uninstall,
+    uninstall_from_prefix,
 };
 
 #[test]
@@ -32,8 +32,8 @@ fn test_embedded_assets_match_disk_files() {
         "Embedded D-Bus conf must match data/dbus/com.zenomen.Hardware1.conf"
     );
 
-    let polkit_disk =
-        fs::read_to_string("data/polkit/com.zenomen.hardware.policy").expect("polkit policy exists");
+    let polkit_disk = fs::read_to_string("data/polkit/com.zenomen.hardware.policy")
+        .expect("polkit policy exists");
     assert_eq!(
         EMBEDDED_POLKIT_POLICY, polkit_disk,
         "Embedded polkit policy must match data/polkit/com.zenomen.hardware.policy"
@@ -70,7 +70,10 @@ fn test_install_and_uninstall_to_prefix_mock() {
     let dbus_file = temp_dir.join(DBUS_CONF_TARGET.trim_start_matches('/'));
     let polkit_file = temp_dir.join(POLKIT_POLICY_TARGET.trim_start_matches('/'));
 
-    assert!(desktop_file.is_file(), "desktop file should exist in prefix");
+    assert!(
+        desktop_file.is_file(),
+        "desktop file should exist in prefix"
+    );
     assert!(unit_file.is_file(), "unit file should exist in prefix");
     assert!(dbus_file.is_file(), "dbus file should exist in prefix");
     assert!(polkit_file.is_file(), "polkit file should exist in prefix");
@@ -79,7 +82,10 @@ fn test_install_and_uninstall_to_prefix_mock() {
         fs::read_to_string(&desktop_file).unwrap(),
         EMBEDDED_DESKTOP_ENTRY
     );
-    assert_eq!(fs::read_to_string(&unit_file).unwrap(), EMBEDDED_SYSTEMD_UNIT);
+    assert_eq!(
+        fs::read_to_string(&unit_file).unwrap(),
+        EMBEDDED_SYSTEMD_UNIT
+    );
     assert_eq!(fs::read_to_string(&dbus_file).unwrap(), EMBEDDED_DBUS_CONF);
     assert_eq!(
         fs::read_to_string(&polkit_file).unwrap(),
@@ -99,8 +105,7 @@ fn test_install_and_uninstall_to_prefix_mock() {
 
 #[test]
 fn test_atomic_write_file_creates_content_cleanly() {
-    let temp_dir =
-        std::env::temp_dir().join(format!("zenomen_test_atomic_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("zenomen_test_atomic_{}", std::process::id()));
     let target = temp_dir.join("sub/dir/test.txt");
 
     let content = "Hello ZenOmen Packaging Test";

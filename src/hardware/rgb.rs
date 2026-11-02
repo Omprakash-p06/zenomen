@@ -5,8 +5,8 @@
 //! 2. `Legacy`: `/sys/devices/platform/hp-wmi/keyboardleds`
 //! 3. `KernelPatch`: `/sys/class/leds/hp_omen::kbd_backlight/zone_colors`
 
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// The three sysfs interface variants supported across OMEN/Victus kernels (RGB-01).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

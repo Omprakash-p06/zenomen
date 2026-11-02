@@ -8,7 +8,7 @@ pub mod migration;
 pub mod schema;
 
 pub use migration::{
-    builtin_presets, default_openomen_rgb_dir, default_zenomen_rgb_dir, migrate_openomen_profiles,
-    parse_openomen_profile, MigrationReport,
+    MigrationReport, builtin_presets, default_openomen_rgb_dir, default_zenomen_rgb_dir,
+    migrate_openomen_profiles, parse_openomen_profile,
 };
 pub use schema::{RgbColor, RgbError, RgbProfile};

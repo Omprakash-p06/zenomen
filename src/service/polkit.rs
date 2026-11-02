@@ -1,8 +1,8 @@
 //! Polkit authorization verification over system D-Bus.
 
 use std::collections::HashMap;
-use zbus::zvariant::{OwnedValue, Value};
 use zbus::Connection;
+use zbus::zvariant::{OwnedValue, Value};
 
 use crate::service::types::HardwareControlError;
 

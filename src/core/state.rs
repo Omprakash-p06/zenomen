@@ -159,39 +159,35 @@ impl AppState {
                     }
                 }
             }
-            AppEvent::PowerProfileChanged(res) => {
-                match res {
-                    Ok(profile) => {
-                        self.active_power_profile = profile.clone();
-                        self.last_control_error = None;
-                    }
-                    Err(e) => {
-                        self.last_control_error = Some(e.clone());
-                    }
+            AppEvent::PowerProfileChanged(res) => match res {
+                Ok(profile) => {
+                    self.active_power_profile = profile.clone();
+                    self.last_control_error = None;
                 }
-            }
-            AppEvent::PresetApplied(res) => {
-                match res {
-                    Ok(preset_res) => {
-                        if preset_res.fan_applied {
-                            self.fan_mode = if preset_res.preset_name == "gaming" {
-                                "max".to_string()
-                            } else {
-                                "auto".to_string()
-                            };
-                        }
-                        self.last_preset_result = Some(preset_res.clone());
-                        if !preset_res.partial_success {
-                            self.last_control_error = None;
+                Err(e) => {
+                    self.last_control_error = Some(e.clone());
+                }
+            },
+            AppEvent::PresetApplied(res) => match res {
+                Ok(preset_res) => {
+                    if preset_res.fan_applied {
+                        self.fan_mode = if preset_res.preset_name == "gaming" {
+                            "max".to_string()
                         } else {
-                            self.last_control_error = Some(preset_res.message.clone());
-                        }
+                            "auto".to_string()
+                        };
                     }
-                    Err(e) => {
-                        self.last_control_error = Some(e.clone());
+                    self.last_preset_result = Some(preset_res.clone());
+                    if !preset_res.partial_success {
+                        self.last_control_error = None;
+                    } else {
+                        self.last_control_error = Some(preset_res.message.clone());
                     }
                 }
-            }
+                Err(e) => {
+                    self.last_control_error = Some(e.clone());
+                }
+            },
             AppEvent::ServiceStatusChanged(status) => {
                 self.service_status = status.clone();
                 if !status.is_connected() {
@@ -201,29 +197,25 @@ impl AppState {
             AppEvent::PolkitStatusChanged(status_desc) => {
                 self.polkit_status = status_desc.clone();
             }
-            AppEvent::RgbProfileApplied(res) => {
-                match res {
-                    Ok(profile) => {
-                        self.active_rgb_profile = Some(profile.clone());
-                        self.rgb_power_enabled = !profile.is_off();
-                        self.last_control_error = None;
-                    }
-                    Err(e) => {
-                        self.last_control_error = Some(e.clone());
-                    }
+            AppEvent::RgbProfileApplied(res) => match res {
+                Ok(profile) => {
+                    self.active_rgb_profile = Some(profile.clone());
+                    self.rgb_power_enabled = !profile.is_off();
+                    self.last_control_error = None;
                 }
-            }
-            AppEvent::RgbPowerChanged(res) => {
-                match res {
-                    Ok(enabled) => {
-                        self.rgb_power_enabled = *enabled;
-                        self.last_control_error = None;
-                    }
-                    Err(e) => {
-                        self.last_control_error = Some(e.clone());
-                    }
+                Err(e) => {
+                    self.last_control_error = Some(e.clone());
                 }
-            }
+            },
+            AppEvent::RgbPowerChanged(res) => match res {
+                Ok(enabled) => {
+                    self.rgb_power_enabled = *enabled;
+                    self.last_control_error = None;
+                }
+                Err(e) => {
+                    self.last_control_error = Some(e.clone());
+                }
+            },
             AppEvent::ControlErrorDismissed => {
                 self.last_control_error = None;
             }

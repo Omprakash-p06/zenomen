@@ -43,8 +43,7 @@ pub fn default_openomen_rgb_dir() -> Option<PathBuf> {
 
 /// Resolve the ZenOmen RGB profile storage directory (`~/.config/zenomen/rgb`).
 pub fn default_zenomen_rgb_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "zenomen")
-        .map(|dirs| dirs.config_dir().join("rgb"))
+    directories::ProjectDirs::from("", "", "zenomen").map(|dirs| dirs.config_dir().join("rgb"))
 }
 
 /// Return standard static built-in RGB presets (RGB-03).
@@ -66,10 +65,10 @@ pub fn builtin_presets() -> Vec<RgbProfile> {
             "Gaming",
             "Dual-tone red flanks with vibrant blue center cluster",
             [
-                RgbColor::new(255, 0, 0),   // Zone 0: Left flank
-                RgbColor::new(0, 0, 255),   // Zone 1: Center-left (WASD)
-                RgbColor::new(0, 0, 255),   // Zone 2: Center-right
-                RgbColor::new(255, 0, 0),   // Zone 3: Right flank
+                RgbColor::new(255, 0, 0), // Zone 0: Left flank
+                RgbColor::new(0, 0, 255), // Zone 1: Center-left (WASD)
+                RgbColor::new(0, 0, 255), // Zone 2: Center-right
+                RgbColor::new(255, 0, 0), // Zone 3: Right flank
             ],
         ),
         RgbProfile::new(

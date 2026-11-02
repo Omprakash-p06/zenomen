@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use schema::{
-    AppConfig, GeneralConfig, TelemetryConfig, DEFAULT_POLLING_INTERVAL_MS,
-    MAX_POLLING_INTERVAL_MS, MIN_POLLING_INTERVAL_MS,
+    AppConfig, DEFAULT_POLLING_INTERVAL_MS, GeneralConfig, MAX_POLLING_INTERVAL_MS,
+    MIN_POLLING_INTERVAL_MS, TelemetryConfig,
 };
 
 /// Get the default path for ZenOmen's configuration file.

@@ -99,16 +99,25 @@ fn degradation_04_nvidia_smi_missing_degrades_dgpu_cleanly() {
     // When nvidia-smi is not found or produces empty output, parse_nvidia_smi_output returns None
     let empty_output = "";
     let sample = parse_nvidia_smi_output(empty_output);
-    assert!(sample.is_none(), "Missing nvidia-smi must return None without panic");
+    assert!(
+        sample.is_none(),
+        "Missing nvidia-smi must return None without panic"
+    );
 
     let truncated_output = "not,enough,parts\n";
     let sample_trunc = parse_nvidia_smi_output(truncated_output);
-    assert!(sample_trunc.is_none(), "Truncated nvidia-smi must return None without panic");
+    assert!(
+        sample_trunc.is_none(),
+        "Truncated nvidia-smi must return None without panic"
+    );
 
     let malformed_numbers = "NVIDIA GPU,bad,bad,bad,bad\n";
     let sample_nan = parse_nvidia_smi_output(malformed_numbers);
     assert!(sample_nan.is_some(), "Header parsed without panic");
-    assert!(sample_nan.unwrap().utilization.is_none(), "Non-numeric utilization degrades cleanly to None");
+    assert!(
+        sample_nan.unwrap().utilization.is_none(),
+        "Non-numeric utilization degrades cleanly to None"
+    );
 }
 
 #[test]
@@ -135,7 +144,10 @@ fn degradation_06_hardware_service_absent_degrades_gracefully() {
 
     if !status.is_connected() {
         assert!(fan_res.is_err(), "Must return error when daemon is absent");
-        assert!(profile_res.is_err(), "Must return error when daemon is absent");
+        assert!(
+            profile_res.is_err(),
+            "Must return error when daemon is absent"
+        );
         let err_str = fan_res.unwrap_err();
         assert!(!err_str.is_empty());
     }
@@ -156,7 +168,10 @@ fn degradation_07_unauthorized_fan_write_preserves_hardware_state() {
 
     // Hardware file remains byte-identical
     let content = fs::read_to_string(&pwm_path).unwrap();
-    assert_eq!(content, "2\n", "File content must not be corrupted on error");
+    assert_eq!(
+        content, "2\n",
+        "File content must not be corrupted on error"
+    );
 
     let _ = fs::remove_dir_all(&root);
 }
@@ -173,7 +188,10 @@ fn degradation_08_corrupt_config_restores_defaults_and_preserves_backup() {
 
     // Default configuration must be restored
     assert_eq!(loaded, zenomen::config::AppConfig::default());
-    assert!(notice.is_some(), "Notice must be provided explaining the corruption");
+    assert!(
+        notice.is_some(),
+        "Notice must be provided explaining the corruption"
+    );
 
     // Backup file must exist
     let files: Vec<PathBuf> = fs::read_dir(&temp_dir)

@@ -6,14 +6,15 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use zbus::zvariant::Value;
 use zenomen::desktop::autostart::{
-    is_autostart_enabled_at, set_autostart_enabled_at, AUTOSTART_DESKTOP_ENTRY,
+    AUTOSTART_DESKTOP_ENTRY, is_autostart_enabled_at, set_autostart_enabled_at,
 };
 use zenomen::desktop::single_instance::{ApplicationService, DesktopAction};
 use zenomen::desktop::tray::{StatusNotifierItem, TrayDbusMenu};
 
 #[test]
 fn test_autostart_lifecycle_with_custom_path() {
-    let temp_dir = std::env::temp_dir().join(format!("zenomen_test_autostart_{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("zenomen_test_autostart_{}", std::process::id()));
     let desktop_path = temp_dir.join("zenomen.desktop");
 
     // Initially should be disabled
@@ -62,10 +63,7 @@ fn test_single_instance_application_service_dispatch() {
 
     // Call present_window via D-Bus interface simulation
     assert!(service.present_window().is_ok());
-    assert_eq!(
-        action_rx.try_recv().unwrap(),
-        DesktopAction::PresentWindow
-    );
+    assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::PresentWindow);
 
     // Call quit via D-Bus interface simulation
     assert!(service.quit().is_ok());
@@ -73,10 +71,7 @@ fn test_single_instance_application_service_dispatch() {
 
     // Call activate via D-Bus interface simulation
     assert!(service.activate().is_ok());
-    assert_eq!(
-        action_rx.try_recv().unwrap(),
-        DesktopAction::PresentWindow
-    );
+    assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::PresentWindow);
 }
 
 #[test]
@@ -121,11 +116,17 @@ fn test_tray_dbusmenu_layout_and_events() {
     assert_eq!(layout.2.len(), 2); // 2 children: Open and Quit
 
     // Click Open (id 1)
-    assert!(menu.event(1, "clicked".to_string(), Value::from(0), 0).is_ok());
+    assert!(
+        menu.event(1, "clicked".to_string(), Value::from(0), 0)
+            .is_ok()
+    );
     assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::PresentWindow);
 
     // Click Quit (id 2)
-    assert!(menu.event(2, "clicked".to_string(), Value::from(0), 0).is_ok());
+    assert!(
+        menu.event(2, "clicked".to_string(), Value::from(0), 0)
+            .is_ok()
+    );
     assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::Quit);
 
     // Pre-show hook check (AboutToShow)
@@ -156,4 +157,40 @@ fn test_icon_assets_exist_and_are_valid() {
     let ico_path = PathBuf::from("data/icons/zenomen.ico");
     assert!(ico_path.is_file(), "data/icons/zenomen.ico must exist");
     assert!(fs::metadata(&ico_path).unwrap().len() > 1000);
+}
+
+#[test]
+fn test_releases_url_format_and_safety() {
+    use zenomen::desktop::RELEASES_URL;
+    assert!(RELEASES_URL.starts_with("https://"));
+    assert!(RELEASES_URL.ends_with("/releases/latest"));
+    assert!(!RELEASES_URL.contains("/releases/download/"));
+}
+
+#[test]
+fn test_open_releases_page_failure_when_xdg_open_missing() {
+    use zenomen::desktop::releases::open_releases_page;
+
+    let temp_empty =
+        std::env::temp_dir().join(format!("zenomen_empty_path_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&temp_empty);
+
+    let old_path = std::env::var_os("PATH");
+    unsafe {
+        std::env::set_var("PATH", &temp_empty);
+    }
+    let res = open_releases_page();
+    unsafe {
+        if let Some(old) = old_path {
+            std::env::set_var("PATH", old);
+        } else {
+            std::env::remove_var("PATH");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&temp_empty);
+
+    assert!(
+        res.is_err(),
+        "open_releases_page must return Err when xdg-open cannot be found"
+    );
 }

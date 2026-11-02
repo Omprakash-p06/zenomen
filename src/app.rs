@@ -261,6 +261,15 @@ impl ZenOmenApp {
                     });
             });
         }
+
+        let ui = self.ui.clone();
+        if let Some(ui) = ui.upgrade() {
+            ui.on_open_releases_page(move || {
+                if let Err(e) = crate::desktop::releases::open_releases_page() {
+                    tracing::warn!(error = %e, "could not open the releases page");
+                }
+            });
+        }
     }
 
     /// Publish the provider's capability set before the event loop starts.
@@ -307,7 +316,10 @@ impl ZenOmenApp {
     /// queued onto the event loop.
     pub fn handle_event(&self, event: AppEvent) {
         if let AppEvent::ConfigLoaded(ref cfg) = event {
-            self.close_to_tray_flag.store(cfg.general.close_to_tray, std::sync::atomic::Ordering::Relaxed);
+            self.close_to_tray_flag.store(
+                cfg.general.close_to_tray,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         {
@@ -479,10 +491,18 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
         ui.set_rgb_profile_desc(profile.description.as_str().into());
         ui.set_rgb_unsupported_fields(profile.unsupported_fields.join(", ").into());
         ui.set_zone_colors(ModelRc::new(VecModel::from(
-            profile.zones.iter().map(|c| c.to_slint_color()).collect::<Vec<_>>(),
+            profile
+                .zones
+                .iter()
+                .map(|c| c.to_slint_color())
+                .collect::<Vec<_>>(),
         )));
         ui.set_zone_hexes(ModelRc::new(VecModel::from(
-            profile.zones.iter().map(|c| SharedString::from(c.to_hex())).collect::<Vec<_>>(),
+            profile
+                .zones
+                .iter()
+                .map(|c| SharedString::from(c.to_hex()))
+                .collect::<Vec<_>>(),
         )));
     }
     ui.set_rgb_power_enabled(state.rgb_power_enabled);

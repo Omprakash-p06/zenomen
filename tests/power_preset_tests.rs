@@ -14,7 +14,10 @@ struct MockSysfs {
 
 impl MockSysfs {
     fn new(test_name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("zenomen_test_pwr_{test_name}_{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "zenomen_test_pwr_{test_name}_{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&root);
 
         // Build mock hp-wmi hwmon directory
@@ -29,7 +32,11 @@ impl MockSysfs {
         let acpi_dir = root.join("sys/firmware/acpi");
         fs::create_dir_all(&acpi_dir).expect("failed to create mock acpi dir");
 
-        fs::write(acpi_dir.join("platform_profile_choices"), "cool quiet balanced performance\n").unwrap();
+        fs::write(
+            acpi_dir.join("platform_profile_choices"),
+            "cool quiet balanced performance\n",
+        )
+        .unwrap();
         fs::write(acpi_dir.join("platform_profile"), "balanced\n").unwrap();
 
         // Minimal DMI / DRM mock roots for diagnostics
@@ -61,19 +68,25 @@ fn test_power_profile_dynamic_enumeration_and_switch() {
     let backend = mock.backend();
 
     // 1. Choices are read dynamically (PWR-01)
-    let choices = backend.get_power_profile_choices().expect("choices must be readable");
+    let choices = backend
+        .get_power_profile_choices()
+        .expect("choices must be readable");
     assert_eq!(choices, vec!["cool", "quiet", "balanced", "performance"]);
 
     // 2. Active profile read (PWR-02)
     assert_eq!(backend.get_power_profile().unwrap(), "balanced");
 
     // 3. Switch to performance with verification (PWR-03, PWR-04)
-    let switched = backend.set_power_profile("performance").expect("switch must succeed");
+    let switched = backend
+        .set_power_profile("performance")
+        .expect("switch must succeed");
     assert_eq!(switched, "performance");
     assert_eq!(backend.get_power_profile().unwrap(), "performance");
 
     // 4. Case-insensitive choice handling
-    let switched = backend.set_power_profile("COOL").expect("case-insensitive switch");
+    let switched = backend
+        .set_power_profile("COOL")
+        .expect("case-insensitive switch");
     assert_eq!(switched, "cool");
     assert_eq!(backend.get_power_profile().unwrap(), "cool");
 
@@ -123,7 +136,9 @@ fn test_preset_result_partial_success_honest_reporting() {
     let backend = mock.backend();
 
     // Remove fan control file to simulate hardware failure on fan write
-    let pwm_path = mock.root.join("sys/devices/platform/hp-wmi/hwmon/hwmon5/pwm1_enable");
+    let pwm_path = mock
+        .root
+        .join("sys/devices/platform/hp-wmi/hwmon/hwmon5/pwm1_enable");
     fs::remove_file(pwm_path).unwrap();
 
     let res = backend.apply_preset("gaming").expect("apply preset");
@@ -141,7 +156,9 @@ fn test_state_handles_power_and_preset_events() {
     let mut state = AppState::default();
 
     // Power profile changed
-    state.apply(&AppEvent::PowerProfileChanged(Ok("performance".to_string())));
+    state.apply(&AppEvent::PowerProfileChanged(
+        Ok("performance".to_string()),
+    ));
     assert_eq!(state.active_power_profile, "performance");
     assert_eq!(state.last_control_error, None);
 
@@ -168,7 +185,10 @@ fn test_state_handles_power_and_preset_events() {
     };
     state.apply(&AppEvent::PresetApplied(Ok(partial_preset.clone())));
     assert_eq!(state.last_preset_result, Some(partial_preset));
-    assert_eq!(state.last_control_error, Some("Preset 'balanced' partially applied".to_string()));
+    assert_eq!(
+        state.last_control_error,
+        Some("Preset 'balanced' partially applied".to_string())
+    );
 }
 
 #[test]
@@ -187,14 +207,8 @@ fn test_diagnostics_report_includes_hardware_service() {
     let dmi_dir = mock.root.join("sys/class/dmi/id");
     let drm_dir = mock.root.join("sys/class/drm");
 
-    let report = collect_diagnostics_from_roots(
-        &state,
-        None,
-        &os_rel,
-        &kern_rel,
-        &dmi_dir,
-        &drm_dir,
-    );
+    let report =
+        collect_diagnostics_from_roots(&state, None, &os_rel, &kern_rel, &dmi_dir, &drm_dir);
 
     // DIAG-04: Diagnostics report includes hardware service information
     assert!(report.hardware_service.is_some());
