@@ -257,7 +257,7 @@ export component AppWindow inherits Window {
                 // Content viewport: 24px padding, one scrolling surface. The
                 // router keys on `current-screen`; every screen is instantiated
                 // here so the Slint compiler type-checks each of them.
-                Rectangle {
+                content-viewport := Rectangle {
                     background: ThemeColors.obsidian;
                     vertical-stretch: 1;
 
@@ -270,12 +270,11 @@ export component AppWindow inherits Window {
                             padding: ThemeMetrics.lg;
 
                             Rectangle {
-                                max-width: 1040px;
-                                horizontal-stretch: 1;
+                                width: min(content-viewport.width - 2 * ThemeMetrics.lg, 1040px);
 
                                 VerticalLayout {
                                     spacing: ThemeMetrics.lg;
-                                    alignment: start;
+                                    alignment: stretch;
 
                             if root.current-screen == 0 : Overview {
                                 has-cpu-metrics: root.has-cpu-metrics;

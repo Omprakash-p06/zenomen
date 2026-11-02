@@ -165,14 +165,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("spawning desktop action listener must succeed");
 
     // Select hardware provider: configurable via ZENOMEN_MOCK_SCENARIO env var
+    let mock_scenario = std::env::var("ZENOMEN_MOCK_SCENARIO").ok().and_then(|val| {
+        let trimmed = val.trim();
+        if trimmed.is_empty() {
+            None
+        } else if let Some(scenario) = zenomen::hardware::MockScenario::from_name(trimmed) {
+            Some(scenario)
+        } else {
+            tracing::warn!(
+                value = %trimmed,
+                "unrecognized ZENOMEN_MOCK_SCENARIO value; ignoring and using real Linux provider"
+            );
+            None
+        }
+    });
+
     let (provider, scenario_name, registry_opt): (
         Arc<dyn HardwareProvider>,
         Option<&'static str>,
         Option<Arc<zenomen::hardware::SensorRegistry>>,
-    ) = if std::env::var("ZENOMEN_MOCK_SCENARIO").is_ok() {
-        let mock = Arc::new(MockHardware::from_env());
-        let scenario = mock.scenario().name();
-        (mock, Some(scenario), None)
+    ) = if let Some(scenario) = mock_scenario {
+        let mock = Arc::new(MockHardware::new(scenario));
+        let scenario_str = mock.scenario().name();
+        (mock, Some(scenario_str), None)
     } else {
         let linux = Arc::new(zenomen::hardware::LinuxHardwareProvider::new());
         let reg = Arc::clone(linux.registry());

@@ -67,13 +67,20 @@ fn config_roundtrip_save_and_load() {
 fn config_atomic_write_leaves_no_lingering_temp_file() {
     let dir = temp_test_dir("atomic");
     let path = dir.join("config.toml");
-    let tmp_path = path.with_extension("tmp");
 
     let config = AppConfig::default();
     save_atomic(&path, &config).expect("atomic save");
 
     assert!(path.exists());
-    assert!(!tmp_path.exists(), "temporary file must be renamed away");
+    let lingering: Vec<_> = fs::read_dir(&dir)
+        .expect("read dir")
+        .flatten()
+        .filter(|e| e.path() != path)
+        .collect();
+    assert!(
+        lingering.is_empty(),
+        "no temporary files must remain in dir"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

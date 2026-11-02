@@ -121,11 +121,13 @@ export component Cooling inherits Rectangle {
                                 spacing: ThemeMetrics.xs;
                                 alignment: start;
 
-                                Icon {
-                                    name: "fan";
-                                    tint: ThemeColors.gold;
-                                    size: 16px;
-                                    vertical-stretch: 0;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        name: "fan";
+                                        tint: ThemeColors.gold;
+                                        size: 16px;
+                                    }
                                 }
 
                                 Text {
@@ -182,11 +184,13 @@ export component Cooling inherits Rectangle {
                     spacing: ThemeMetrics.md;
                     alignment: start;
 
-                    StatusPill {
-                        status: root.fan-mode == "" ? "unavailable" : "info";
-                        label: root.fan-mode-label;
-                        glyph: root.fan-mode == "" ? "unavailable" : "";
-                        vertical-stretch: 0;
+                    VerticalLayout {
+                        alignment: center;
+                        StatusPill {
+                            status: root.fan-mode == "" ? "unavailable" : "info";
+                            label: root.fan-mode-label;
+                            glyph: root.fan-mode == "" ? "unavailable" : "";
+                        }
                     }
 
                     Text {

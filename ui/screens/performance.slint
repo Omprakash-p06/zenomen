@@ -273,11 +273,13 @@ export component Performance inherits Rectangle {
                     spacing: ThemeMetrics.md;
                     alignment: start;
 
-                    StatusPill {
-                        status: root.power-profile == "" ? "unavailable" : "info";
-                        label: root.power-profile == "" ? "Unavailable" : root.power-profile;
-                        glyph: root.power-profile == "" ? "unavailable" : "";
-                        vertical-stretch: 0;
+                    VerticalLayout {
+                        alignment: center;
+                        StatusPill {
+                            status: root.power-profile == "" ? "unavailable" : "info";
+                            label: root.power-profile == "" ? "Unavailable" : root.power-profile;
+                            glyph: root.power-profile == "" ? "unavailable" : "";
+                        }
                     }
 
                     Text {

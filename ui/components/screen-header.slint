@@ -32,10 +32,13 @@ export component ScreenHeader inherits Rectangle {
             overflow: elide;
         }
 
-        if root.show-action : PrimaryButton {
-            label: root.action-label;
-            clicked => {
-                root.action();
+        if root.show-action : VerticalLayout {
+            alignment: center;
+            PrimaryButton {
+                label: root.action-label;
+                clicked => {
+                    root.action();
+                }
             }
         }
     }

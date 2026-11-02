@@ -37,10 +37,12 @@ export component UnavailablePanel inherits Rectangle {
             spacing: ThemeMetrics.sm;
             alignment: start;
 
-            Icon {
-                name: "unavailable";
-                tint: ThemeColors.text-secondary;
-                vertical-stretch: 0;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: "unavailable";
+                    tint: ThemeColors.text-secondary;
+                }
             }
             Text {
                 text: root.heading;

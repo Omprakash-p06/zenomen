@@ -123,10 +123,10 @@ impl HardwareBackend {
         Ok(FanMode::from_sysfs(&content))
     }
 
-    /// Read current fan RPMs from the fan hwmon device.
+    /// Read current fan RPMs from discovered fan tachometer interfaces.
     pub fn get_fan_rpms(&self) -> Vec<u32> {
-        let mut rpms = Vec::new();
-        // Check hp-wmi hwmon directory
+        let mut fan_entries: Vec<(usize, PathBuf)> = Vec::new();
+        // Check hp-wmi hwmon directory first, then fallback to sys/class/hwmon
         let search_dirs = [
             self.resolve_path("sys/devices/platform/hp-wmi/hwmon"),
             self.resolve_path("sys/class/hwmon"),
@@ -139,22 +139,39 @@ impl HardwareBackend {
             if let Ok(entries) = fs::read_dir(&base) {
                 for entry in entries.flatten() {
                     let dir = entry.path();
-                    for idx in 1..=4 {
-                        let fan_input = dir.join(format!("fan{idx}_input"));
-                        if fan_input.is_file()
-                            && let Ok(content) = fs::read_to_string(&fan_input)
-                            && let Ok(rpm) = content.trim().parse::<u32>()
-                        {
-                            rpms.push(rpm);
+                    if let Ok(files) = fs::read_dir(&dir) {
+                        for file in files.flatten() {
+                            let name = file.file_name().to_string_lossy().to_string();
+                            if let Some(idx) = name
+                                .strip_suffix("_input")
+                                .and_then(|p| p.strip_prefix("fan"))
+                                .and_then(|s| s.parse::<usize>().ok())
+                            {
+                                fan_entries.push((idx, file.path()));
+                            }
                         }
                     }
-                    if !rpms.is_empty() {
-                        return rpms;
+                    if !fan_entries.is_empty() {
+                        break;
                     }
                 }
             }
+            if !fan_entries.is_empty() {
+                break;
+            }
         }
-        rpms
+
+        fan_entries.sort_by_key(|(idx, _)| *idx);
+        fan_entries.dedup_by_key(|(idx, _)| *idx);
+
+        fan_entries
+            .into_iter()
+            .filter_map(|(_, path)| {
+                fs::read_to_string(path)
+                    .ok()
+                    .and_then(|c| c.trim().parse::<u32>().ok())
+            })
+            .collect()
     }
 
     /// Set fan mode with verification.
@@ -276,18 +293,26 @@ impl HardwareBackend {
         };
 
         let mut power_applied = false;
+        let mut confirmed_power_profile = None;
         let mut fan_applied = false;
+        let mut confirmed_fan_mode = None;
         let mut error_messages = Vec::new();
 
         // 1. Apply power profile
         match self.set_power_profile(target_power) {
-            Ok(_) => power_applied = true,
+            Ok(confirmed) => {
+                power_applied = true;
+                confirmed_power_profile = Some(confirmed);
+            }
             Err(e) => error_messages.push(format!("Power profile '{target_power}' failed: {e}")),
         }
 
         // 2. Apply fan mode
         match self.set_fan_mode(target_fan) {
-            Ok(_) => fan_applied = true,
+            Ok(confirmed) => {
+                fan_applied = true;
+                confirmed_fan_mode = Some(confirmed);
+            }
             Err(e) => error_messages.push(format!("Fan mode '{target_fan}' failed: {e}")),
         }
 
@@ -311,7 +336,9 @@ impl HardwareBackend {
         Ok(PresetResult {
             preset_name: normalized,
             power_applied,
+            confirmed_power_profile,
             fan_applied,
+            confirmed_fan_mode,
             partial_success,
             message,
         })

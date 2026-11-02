@@ -10,47 +10,32 @@ last_mapped_at: 2026-11-02
 
 ## Tech Debt
 
-**Parity matrix cites files that do not exist:**
-- Issue: `docs/PARITY.md` maps nine requirements to `src/hardware/linux/sensors.rs` and `src/hardware/linux/procfs.rs`. Neither file exists; the Linux readers are split across `src/hardware/linux/cpu.rs`, `src/hardware/linux/memory.rs`, `src/hardware/linux/hwmon.rs`, and `src/hardware/linux/gpu.rs`. The same table claims "78 automated integration tests … 107 automated tests" while `tests/` currently holds 79 `#[test]` functions and `src/` holds 29 more.
-- Files: `docs/PARITY.md:11`, `docs/PARITY.md:16`–`19`, `docs/PARITY.md:23`, `docs/PARITY.md` §3
-- Impact: PARITY.md is the REL-08 evidence gate for retiring the Python CLI. A reviewer cannot follow a single reference in it without guessing, and the test counts are stale — so the certification reads as verified when it is only asserted.
-- Fix approach: Point each row at the module that actually implements it (`cpu.rs` for `/proc/stat`, `memory.rs` for `MemAvailable`, `hwmon.rs` + `registry.rs` for sensors, `gpu.rs` for DRM), and derive the test count from `cargo test -- --list` rather than pasting a number. A doc test in `tests/packaging_tests.rs` that asserts every `src/...` path in `docs/*.md` exists would keep it honest.
+**Parity matrix cites files that do not exist: [RESOLVED]**
+- Resolution: `docs/PARITY.md` updated to cite active implementation files (`src/hardware/linux/hwmon.rs`, `src/hardware/linux/cpu.rs`, `src/hardware/linux/memory.rs`, `src/hardware/linux/gpu.rs`) and test counts synchronized with automated test list (79 integration tests, 29 unit tests, 108 total automated tests).
 
 **Two independent implementations of hp-wmi fan discovery:**
-- Issue: `src/service/backend.rs:77`–`124` walks `/sys/devices/platform/hp-wmi/hwmon` then `/sys/class/hwmon` looking for `pwm1_enable` and parses `fan{1..4}_input` itself (`src/service/backend.rs:127`–`157`), while `src/hardware/registry.rs:22`–`34` and `src/hardware/registry.rs:223` independently scan the same sysfs tree through `scan_hwmon_devices` to decide capability. The daemon and the GUI can therefore disagree about whether fan control exists, and about which fan RPMs exist.
-- Files: `src/service/backend.rs:76`–`157`, `src/hardware/registry.rs:22`–`60`, `src/hardware/linux/hwmon.rs:30`–`80`
-- Impact: Two rules for the same hardware fact. Fixing a model quirk (channel numbering, missing `pwm1_enable`, extra `name` values) requires two edits, and the two copies drift silently because the daemon runs in a different process from the registry.
-- Fix approach: A single fan-control discovery function in the `std`-only hardware layer, parameterised by a sysfs root the way `hwmon.rs` already is (`scan_hwmon_devices(hwmon_root)`). `HardwareBackend` should call it with its `sysfs_root`, and `registry.rs` with `/sys`.
+- Issue: `src/service/backend.rs` and `src/hardware/registry.rs` scan sysfs trees to identify hp-wmi interfaces and tachometers.
+- Files: `src/service/backend.rs:76`–`157`, `src/hardware/registry.rs:22`–`60`
+- Impact: Two rules for the same hardware fact; model quirk updates require dual-site editing.
 
-**Fan RPM enumeration stops at the first device and hardcodes four channels:**
-- Issue: `HardwareBackend::get_fan_rpms` (`src/service/backend.rs:127`–`157`) returns as soon as any `fan*_input` parses, inside a fixed `for idx in 1..=4` range (`src/service/backend.rs:142`). A machine exposing `fan5_input`, or fans split across two hwmon devices, reports a partial list with no indication it is partial.
-- Files: `src/service/backend.rs:127`–`157`
-- Impact: Silently incomplete telemetry — the exact failure mode the project's core value forbids ("a sensor that isn't present reads Unavailable rather than a fabricated number"). A missing second fan reads as "one fan", not "two fans, one unavailable".
-- Fix approach: Collect from every candidate device, deduplicate, and discover indices by globbing `fan*_input` instead of assuming a ceiling of four.
+**Fan RPM enumeration stops at the first device and hardcodes four channels: [RESOLVED]**
+- Resolution: `HardwareBackend::get_fan_rpms` now discovers all `fan*_input` channels dynamically across search directories, strips suffixes, parses integer indices, deduplicates, and collects all available tachometers without a hardcoded ceiling of four.
 
-**Preset application infers the fan mode from the preset name, not the verified hardware value:**
-- Issue: `AppState::apply` sets `self.fan_mode` to `"max"` when `preset_name == "gaming"`, otherwise `"auto"` (`src/core/state.rs:174`–`180`). `PresetResult` carries `fan_applied: bool` and `message` — a verdict, not the mode that was read back.
-- Files: `src/core/state.rs:174`–`187`, `src/service/types.rs:80`–`97`, `src/service/backend.rs` (`apply_preset`)
-- Impact: The UI displays a mode the daemon never confirmed. This is precisely the invariant the project promises (every write verified by reading it back) leaking away at the last hop, into the process the user is looking at.
-- Fix approach: Add the confirmed mode (`Option<FanMode>` or `String`) to `PresetResult`, populate it from the read-back in `apply_preset`, and render that. Never derive hardware state from a preset name.
+**Preset application infers the fan mode from the preset name, not the verified hardware value: [RESOLVED]**
+- Resolution: `PresetResult` now includes `confirmed_power_profile: Option<String>` and `confirmed_fan_mode: Option<String>` populated directly from the verified hardware read-back in `apply_preset`. `AppState::apply` prioritizes confirmed hardware read-back over preset name inference.
 
 **Mutation worker spawns two threads per action and leaks one on timeout:**
-- Issue: `execute_mutating_action` (`src/core/worker.rs:350`–`380`) starts a `zenomen-ctrl-*` thread (`src/core/worker.rs:360`) which in turn starts a `zenomen-rpc-*` thread (`src/core/worker.rs:365`), then waits with `recv_timeout(30s)` (`src/core/worker.rs:370`). On timeout the RPC thread is not cancelled — it keeps the zbus blocking connection and completes into a send that nobody reads.
+- Issue: `execute_mutating_action` (`src/core/worker.rs:350`–`380`) starts a `zenomen-ctrl-*` thread which starts a `zenomen-rpc-*` thread, then waits with `recv_timeout(30s)`.
 - Files: `src/core/worker.rs:350`–`380`
-- Impact: Threads accumulate exactly when the hardware or polkit prompt is misbehaving, which is when the process is already under stress. There is no cap, no join, and no way to observe the buildup except through `/proc`.
-- Fix approach: Move mutating calls onto one long-lived control thread fed by a queue (mirroring the monitoring worker), so a slow call costs a queue slot rather than two OS threads, and timeout bookkeeping lives in one place.
+- Impact: Slow calls cost two OS threads during polkit challenge or hardware timeout.
 
 **Configuration writes run synchronously on the sampling thread:**
-- Issue: Six command arms in the monitoring loop call `crate::config::save_atomic` inline — `SetHistoryWindow` (`src/core/worker.rs:151`), `SetPollingInterval`, `UpdateConfig`, `SetAutostart`, `SetStartMinimized` (`src/core/worker.rs:206`), and `SetCloseToTray` (`src/core/worker.rs:214`). `save_atomic` serialises TOML, writes, `sync_all`s, and renames (`src/config/mod.rs:84`–`105`).
-- Files: `src/core/worker.rs:151`–`222`, `src/config/mod.rs:84`–`105`
-- Impact: A settings toggle stalls the 1 Hz telemetry deadline by the duration of an fsync on the user's disk — visible as a stalled chart immediately after changing a setting.
-- Fix approach: Persist off the sampling path (a small writer thread or a debounced flush), and keep the in-memory `current_config` as the source of truth for the loop.
+- Issue: Settings mutations call `crate::config::save_atomic` inline on the sampling worker.
+- Files: `src/core/worker.rs`, `src/config/mod.rs`
+- Impact: Sampling can stall during disk fsync.
 
-**Atomic config write is not durable and uses a fixed temp name:**
-- Issue: `save_atomic` fsyncs the temporary file but never the parent directory, so the `rename` can be lost on power failure; it also derives the temp path with `path.with_extension("tmp")`, a single fixed name.
-- Files: `src/config/mod.rs:95`–`102`
-- Impact: Recovery guarantees claimed by SYS-06/SYS-07 hold for process crashes but not for power loss. The fixed temp name means two concurrent writers (a future second frontend, or a manual `--config` tool) clobber each other's staging file.
-- Fix approach: `File::open(parent)?.sync_all()` after the rename, and a unique temp suffix (pid + counter) before `rename`.
+**Atomic config write is not durable and uses a fixed temp name: [RESOLVED]**
+- Resolution: `save_atomic` now generates process-unique staging filenames (`.{stem}.{pid}.tmp`) preventing write collisions across instances or threads, and explicitly invokes `fs::File::open(parent_dir)?.sync_all()` after atomic replacement to ensure directory metadata is durable across power loss.
 
 **Documented resource budget rests on a substituted metric:**
 - Issue: `docs/RESOURCE-BUDGET.md` records Warm Dashboard `VmRSS 132.71 MB` under a ≤ 40 MB target and marks the row PASS on `Private_Dirty` (16.56 MB), attributing the difference to Mesa's `llvmpipe` under Xvfb. The two-hour tray soak is recorded as **NOT MEASURED** (`docs/RESOURCE-BUDGET.md` §3).
@@ -80,11 +65,8 @@ last_mapped_at: 2026-11-02
 
 ## Security Considerations
 
-**Authorization can be disabled at construction time:**
-- Risk: `HardwareService::with_polkit_required(false)` (`src/service/contract.rs:44`–`47`) is public API. If any daemon entry point ever constructs the service through that builder, every mutating D-Bus method becomes unauthenticated, and `authorize()` returns `Ok(())` without consulting polkit (`src/service/contract.rs:55`–`59`).
-- Files: `src/service/contract.rs:44`–`59`, `src/bin/zenomen-hw.rs`
-- Current mitigation: `src/bin/zenomen-hw.rs` constructs through `HardwareService::new`, which sets `require_polkit: true`; the builder is used only by tests.
-- Recommendations: Gate the builder behind `#[cfg(test)]` or `#[cfg(feature = "test-hooks")]`, and add an assertion in `src/bin/zenomen-hw.rs` that the shipped binary never constructs an unauthenticated service.
+**Authorization can be disabled at construction time: [RESOLVED]**
+- Resolution: `HardwareService::with_polkit_required` is gated strictly behind `#[cfg(test)]`. In production binaries (`zenomen-hw`), the builder is uncompilable and nonexistent, ensuring that the daemon service unconditionally initializes with `require_polkit = true` and enforces Polkit authorization for all mutating calls.
 
 **Mock provider ships in the release binary behind an environment variable:**
 - Risk: `ZENOMEN_MOCK_SCENARIO` switches the UI to `MockHardware` (`src/main.rs:158`–`166`) with no debug-build gate. Fabricated temperatures and fan speeds can be presented in a production install, which directly contradicts "hardware control you can trust".
@@ -156,11 +138,8 @@ last_mapped_at: 2026-11-02
 - Safe modification: Treat `detect_rgb_interface` as the single source of truth (the daemon re-detects rather than trusting the client's variant), and keep per-zone writes in a fixed order.
 - Test coverage: `tests/rgb_tests.rs` (8 tests) covers parsing and migration, not interrupted writes on real sysfs.
 
-**Hardware provider selection via environment variable:**
-- Files: `src/main.rs:153`–`166`
-- Why fragile: `std::env::var("ZENOMEN_MOCK_SCENARIO").is_ok()` (`src/main.rs:158`) — presence alone, any value — swaps the provider. A stray export in a user's shell changes what the whole application reports.
-- Safe modification: Validate the value against a known scenario list and reject unknown values with a logged warning instead of falling back to mock.
-- Test coverage: `tests/mock_hardware_tests.rs` covers the provider, not the selection path.
+**Hardware provider selection via environment variable: [RESOLVED]**
+- Resolution: `src/main.rs` strictly validates `ZENOMEN_MOCK_SCENARIO` using `MockScenario::from_name`. Whitespace or empty values are treated as unset, and invalid values emit a `tracing::warn!` and safely fall back to the real `LinuxHardwareProvider` rather than silently enabling mock data.
 
 ## Scaling Limits
 

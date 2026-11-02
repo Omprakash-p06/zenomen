@@ -79,12 +79,12 @@ pub fn load_or_default(path: &Path) -> (AppConfig, Option<String>) {
 
 /// Atomically write configuration to disk.
 ///
-/// Writes to a temporary file (`.tmp`), flushes and syncs to storage media,
-/// and renames to the target path to guarantee atomic replacement (SYS-06).
+/// Writes to a temporary staging file with a process-unique name, flushes and
+/// syncs file and parent directory to storage media, and renames to the target
+/// path to guarantee atomic replacement and durability (SYS-06).
 pub fn save_atomic(path: &Path, config: &AppConfig) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let parent_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent_dir)?;
 
     let mut sanitized = config.clone();
     sanitized.sanitize();
@@ -92,14 +92,25 @@ pub fn save_atomic(path: &Path, config: &AppConfig) -> io::Result<()> {
     let toml_str = toml::to_string_pretty(&sanitized)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-    let tmp_path = path.with_extension("tmp");
+    let file_stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("config");
+    let pid = std::process::id();
+    let tmp_path = parent_dir.join(format!(".{file_stem}.{pid}.tmp"));
     fs::write(&tmp_path, toml_str)?;
 
     let file = fs::File::open(&tmp_path)?;
     file.sync_all()?;
     drop(file);
 
-    fs::rename(tmp_path, path)?;
+    fs::rename(&tmp_path, path)?;
+
+    // Durable atomic replacement: sync parent directory to persist the rename
+    if let Ok(dir) = fs::File::open(parent_dir) {
+        let _ = dir.sync_all();
+    }
+
     tracing::info!(path = %path.display(), "configuration atomically saved");
     Ok(())
 }

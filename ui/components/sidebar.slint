@@ -97,12 +97,14 @@ export component Sidebar inherits Rectangle {
                 spacing: ThemeMetrics.sm;
                 alignment: start;
 
-                Image {
-                    source: @image-url("../../logo/zenomen-logo-v3-indigo-gold.svg");
-                    width: 28px;
-                    height: 28px;
-                    image-fit: contain;
-                    vertical-stretch: 0;
+                VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("../../logo/zenomen-logo-v3-indigo-gold.svg");
+                        width: 28px;
+                        height: 28px;
+                        image-fit: contain;
+                    }
                 }
                 Text {
                     text: "ZenOmen";
@@ -156,12 +158,14 @@ export component Sidebar inherits Rectangle {
                     spacing: ThemeMetrics.sm;
                     alignment: start;
 
-                    Icon {
-                        name: root.icons[index];
-                        tint: root.active-screen == index
-                            ? ThemeColors.text-primary
-                            : ThemeColors.text-secondary;
-                        vertical-stretch: 0;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: root.icons[index];
+                            tint: root.active-screen == index
+                                ? ThemeColors.text-primary
+                                : ThemeColors.text-secondary;
+                        }
                     }
                     Text {
                         text: root.labels[index];

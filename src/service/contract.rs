@@ -40,7 +40,8 @@ impl HardwareService {
         self
     }
 
-    /// Enable or disable polkit requirement (useful for testing or dev modes).
+    /// Enable or disable polkit requirement (test builds only).
+    #[cfg(test)]
     pub fn with_polkit_required(mut self, require_polkit: bool) -> Self {
         self.require_polkit = require_polkit;
         self

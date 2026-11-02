@@ -166,12 +166,15 @@ fn test_state_handles_power_and_preset_events() {
     let full_preset = PresetResult {
         preset_name: "gaming".to_string(),
         power_applied: true,
+        confirmed_power_profile: Some("performance".to_string()),
         fan_applied: true,
+        confirmed_fan_mode: Some("max".to_string()),
         partial_success: false,
         message: "Preset 'gaming' successfully applied".to_string(),
     };
     state.apply(&AppEvent::PresetApplied(Ok(full_preset.clone())));
     assert_eq!(state.fan_mode, "max");
+    assert_eq!(state.active_power_profile, "performance");
     assert_eq!(state.last_preset_result, Some(full_preset));
     assert_eq!(state.last_control_error, None);
 
@@ -179,7 +182,9 @@ fn test_state_handles_power_and_preset_events() {
     let partial_preset = PresetResult {
         preset_name: "balanced".to_string(),
         power_applied: true,
+        confirmed_power_profile: Some("balanced".to_string()),
         fan_applied: false,
+        confirmed_fan_mode: None,
         partial_success: true,
         message: "Preset 'balanced' partially applied".to_string(),
     };

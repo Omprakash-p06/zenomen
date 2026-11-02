@@ -83,8 +83,12 @@ pub struct PresetResult {
     pub preset_name: String,
     /// Whether the power profile was successfully written and verified.
     pub power_applied: bool,
+    /// Confirmed power profile read back from hardware, if applied.
+    pub confirmed_power_profile: Option<String>,
     /// Whether the fan mode was successfully written and verified.
     pub fan_applied: bool,
+    /// Confirmed fan mode read back from hardware, if applied.
+    pub confirmed_fan_mode: Option<String>,
     /// True if only one part of the preset succeeded while the other failed.
     pub partial_success: bool,
     /// Human-readable explanation of what was applied or what failed.

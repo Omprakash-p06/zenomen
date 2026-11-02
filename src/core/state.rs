@@ -182,12 +182,17 @@ impl AppState {
             },
             AppEvent::PresetApplied(res) => match res {
                 Ok(preset_res) => {
-                    if preset_res.fan_applied {
+                    if let Some(ref mode) = preset_res.confirmed_fan_mode {
+                        self.fan_mode = mode.clone();
+                    } else if preset_res.fan_applied {
                         self.fan_mode = if preset_res.preset_name == "gaming" {
                             "max".to_string()
                         } else {
                             "auto".to_string()
                         };
+                    }
+                    if let Some(ref profile) = preset_res.confirmed_power_profile {
+                        self.active_power_profile = profile.clone();
                     }
                     self.last_preset_result = Some(preset_res.clone());
                     if !preset_res.partial_success {

@@ -81,7 +81,10 @@ fn worker_thread_samples_and_dispatches_headlessly() {
 
     while matches!(
         event3,
-        AppEvent::ServiceStatusChanged(_) | AppEvent::PolkitStatusChanged(_)
+        AppEvent::ServiceStatusChanged(_)
+            | AppEvent::PolkitStatusChanged(_)
+            | AppEvent::FanModeChanged(_)
+            | AppEvent::PowerProfileChanged(_)
     ) {
         event3 = event_receiver
             .recv_timeout(Duration::from_millis(500))

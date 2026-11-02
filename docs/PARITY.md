@@ -8,19 +8,19 @@ This document tracks functional parity between the legacy Python CLI (`openomen`
 
 | Requirement | Python CLI Behaviour | Rust Implementation File | Verifying Test / Evidence | Status |
 |---|---|---|---|---|
-| **FAN-01 / COOL-01** | Reads fan RPM from hwmon sysfs | `src/hardware/linux/sensors.rs` | `tests/sensor_registry_tests.rs` | **PARITY (Automated)** |
+| **FAN-01 / COOL-01** | Reads fan RPM from hwmon sysfs | `src/hardware/linux/hwmon.rs` | `tests/sensor_registry_tests.rs` | **PARITY (Automated)** |
 | **FAN-02 / COOL-02** | Reports fan mode (auto, max, manual) | `src/service/backend.rs`, `src/hardware/provider.rs` | `tests/fan_control_tests.rs` | **PARITY (Automated)** |
 | **FAN-03 / COOL-03** | Switches fan modes via sysfs writes | `src/service/backend.rs`, `src/service/contract.rs` | `tests/hardware_service_tests.rs` | **PARITY (Automated)** |
 | **FAN-04 / COOL-04** | Writes mode and assumes success | `src/service/backend.rs` (verified write/backoff) | `tests/hardware_service_tests.rs` | **SUPERIOR (Automated)** |
 | **COOL-05** | Crashed or errored on unsupported model | `src/hardware/registry.rs`, `src/app.rs` | `tests/degradation_tests.rs` | **SUPERIOR (Automated)** |
-| **COOL-06** | Required root privilege for CLI reads | `src/hardware/linux/sensors.rs` (unprivileged reads) | `tests/sensor_registry_tests.rs` | **SUPERIOR (Automated)** |
-| **MON-01** | Read `/proc/stat` CPU utilization | `src/hardware/linux/procfs.rs` | `tests/linux_procfs_tests.rs` | **PARITY (Automated)** |
-| **MON-02** | Per-core CPU utilization | `src/hardware/linux/procfs.rs` | `tests/linux_procfs_tests.rs` | **PARITY (Automated)** |
-| **MON-03** | CPU clock frequency from sysfs | `src/hardware/linux/procfs.rs` | `tests/linux_procfs_tests.rs` | **PARITY (Automated)** |
+| **COOL-06** | Required root privilege for CLI reads | `src/hardware/linux/hwmon.rs` (unprivileged reads) | `tests/sensor_registry_tests.rs` | **SUPERIOR (Automated)** |
+| **MON-01** | Read `/proc/stat` CPU utilization | `src/hardware/linux/cpu.rs` | `tests/linux_procfs_tests.rs` | **PARITY (Automated)** |
+| **MON-02** | Per-core CPU utilization | `src/hardware/linux/cpu.rs` | `tests/linux_procfs_tests.rs` | **PARITY (Automated)** |
+| **MON-03** | CPU clock frequency from sysfs | `src/hardware/linux/cpu.rs` | `tests/linux_procfs_tests.rs` | **PARITY (Automated)** |
 | **MON-04** | Hardcoded channel index temp reads | `src/hardware/registry.rs` (priority matrix) | `tests/sensor_registry_tests.rs` | **SUPERIOR (Automated)** |
 | **MON-05** | NVIDIA via nvidia-smi / hardcoded card0 | `src/hardware/linux/gpu.rs` (dynamic DRM) | `tests/linux_gpu_tests.rs` | **SUPERIOR (Automated)** |
 | **MON-06** | GPU VRAM & power draw | `src/hardware/linux/gpu.rs` | `tests/linux_gpu_tests.rs` | **PARITY (Automated)** |
-| **MON-07** | Absent in Python CLI (no RAM metrics) | `src/hardware/linux/procfs.rs` (`MemAvailable`) | `tests/linux_procfs_tests.rs` | **NEW FEATURE (Automated)** |
+| **MON-07** | Absent in Python CLI (no RAM metrics) | `src/hardware/linux/memory.rs` (`MemAvailable`) | `tests/linux_procfs_tests.rs` | **NEW FEATURE (Automated)** |
 | **MON-08** | Emitted `0` or failed on missing sensors | `src/hardware/registry.rs` (`None` / Unavailable) | `tests/degradation_tests.rs` | **SUPERIOR (Automated)** |
 | **MON-09** | Absent in Python CLI (no history) | `src/core/telemetry.rs` (bounded buffer) | `tests/telemetry_history_tests.rs` | **NEW FEATURE (Automated)** |
 | **MON-10** | Continuous terminal output loop | `src/core/worker.rs` (on-demand refresh command) | `tests/benchmark_tests.rs` | **PARITY (Automated)** |
@@ -80,6 +80,6 @@ The following behaviors implemented in the Python `openomen` CLI are intentional
 ## 3. Summary & Parity Certification
 
 - **Total Functional Requirements Mapped**: 53 requirements across Cooling/Fans, Power Profiles, Monitoring, RGB Lighting, Hardware Service, System Integration, and Diagnostics.
-- **Automated Verification**: 48 requirements verified by 78 automated integration tests in `tests/` (107 automated tests across `tests/` and `src/`).
+- **Automated Verification**: 48 requirements verified by 79 automated integration tests in `tests/` (108 automated tests across `tests/` and `src/`).
 - **Manual Verification**: 5 desktop-interaction requirements verified manually on real Linux desktop environments.
 - **Parity Verdict**: The Rust implementation matches or strictly exceeds 100% of the functional hardware capabilities previously provided by the Python `openomen` CLI. The legacy Python script (`openomen`), PyInstaller specification (`openomen.spec`), and manual release notes (`how-to-release.txt`) have zero remaining unique functionality and are approved for deletion.

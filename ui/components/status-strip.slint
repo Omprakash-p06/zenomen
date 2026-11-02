@@ -41,11 +41,13 @@ export component StatusStrip inherits Rectangle {
         spacing: ThemeMetrics.sm;
         alignment: start;
 
-        if root.degraded : Icon {
-            name: "warning";
-            tint: ThemeColors.gold;
-            size: 14px;
-            vertical-stretch: 0;
+        if root.degraded : VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "warning";
+                tint: ThemeColors.gold;
+                size: 14px;
+            }
         }
 
         Text {
@@ -58,11 +60,13 @@ export component StatusStrip inherits Rectangle {
             horizontal-stretch: 1;
         }
 
-        if root.show-action : SecondaryButton {
-            label: root.action-label;
-            vertical-stretch: 0;
-            clicked => {
-                root.action();
+        if root.show-action : VerticalLayout {
+            alignment: center;
+            SecondaryButton {
+                label: root.action-label;
+                clicked => {
+                    root.action();
+                }
             }
         }
     }

@@ -20,11 +20,13 @@ export component CapabilityNotice inherits Rectangle {
         spacing: ThemeMetrics.sm;
         alignment: start;
 
-        Icon {
-            name: "warning";
-            tint: ThemeColors.gold;
-            size: 14px;
-            vertical-stretch: 0;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "warning";
+                tint: ThemeColors.gold;
+                size: 14px;
+            }
         }
         Text {
             text: root.text;
