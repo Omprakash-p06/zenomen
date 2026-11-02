@@ -122,6 +122,15 @@ impl AppState {
                     self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
                 let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
                     self.history.generate_sparkline_paths();
+                if self.fan_mode.is_empty() && !snapshot.fan_mode.is_empty() {
+                    self.fan_mode = snapshot.fan_mode.clone();
+                }
+                if self.active_power_profile.is_empty() && !snapshot.power_profile.is_empty() {
+                    self.active_power_profile = snapshot.power_profile.clone();
+                }
+                if self.power_profile_choices.is_empty() && !snapshot.power_profiles.is_empty() {
+                    self.power_profile_choices = snapshot.power_profiles.clone();
+                }
                 self.paths = TelemetryPaths {
                     cpu_path,
                     gpu_path,

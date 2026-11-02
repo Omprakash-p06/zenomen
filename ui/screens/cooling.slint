@@ -12,6 +12,7 @@ import { SectionCard } from "../components/section-card.slint";
 import { UnavailablePanel } from "../components/unavailable-panel.slint";
 import { CapabilityNotice } from "../components/capability-notice.slint";
 import { SecondaryButton } from "../components/action-button.slint";
+import { Icon } from "../components/icons.slint";
 
 export component Cooling inherits Rectangle {
     in property <bool> has-fan-rpm: true;
@@ -87,49 +88,74 @@ export component Cooling inherits Rectangle {
             }
         }
 
+        // Fan Speeds Section
         SectionCard {
             title: "Fan speed";
 
-            if root.has-fan-rpm : VerticalLayout {
-                spacing: ThemeMetrics.sm;
+            if root.has-fan-rpm : HorizontalLayout {
+                spacing: ThemeMetrics.md;
                 alignment: start;
 
                 for entry[index] in root.fan-values : Rectangle {
-                    height: 48px;
-                    background: transparent;
+                    min-width: 220px;
+                    horizontal-stretch: 1;
+                    height: 84px;
+                    background: ThemeColors.charcoal;
+                    border-width: ThemeMetrics.stroke-hairline;
+                    border-color: ThemeColors.outline;
+                    border-radius: 8px;
 
                     HorizontalLayout {
-                        padding-left: ThemeMetrics.xs;
-                        padding-right: ThemeMetrics.xs;
+                        padding-left: ThemeMetrics.md;
+                        padding-right: ThemeMetrics.md;
+                        padding-top: ThemeMetrics.sm;
+                        padding-bottom: ThemeMetrics.sm;
                         spacing: ThemeMetrics.md;
-                        alignment: start;
+                        alignment: space-between;
 
-                        Text {
-                            text: index < root.fan-labels.length
-                                ? root.fan-labels[index]
-                                : "Fan";
-                            color: ThemeColors.text-secondary;
-                            font-family: ThemeTypography.font-prose;
-                            font-size: ThemeTypography.label;
-                            letter-spacing: 0.5px;
-                            vertical-alignment: center;
-                            width: 88px;
-                            overflow: elide;
-                        }
-                        Rectangle {
-                            width: 320px;
-                            height: 100%;
-                            background: transparent;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: ThemeMetrics.xs;
+                            horizontal-stretch: 1;
 
-                            VerticalLayout {
-                                alignment: center;
+                            HorizontalLayout {
+                                spacing: ThemeMetrics.xs;
+                                alignment: start;
 
-                                ValueReadout {
-                                    value: entry == "" ? "Waiting for first reading" : entry;
-                                    unit: entry == "" ? "" : "RPM";
-                                    value-size: ThemeTypography.heading;
+                                Icon {
+                                    name: "fan";
+                                    tint: ThemeColors.gold;
+                                    size: 16px;
                                     vertical-stretch: 0;
                                 }
+
+                                Text {
+                                    text: index < root.fan-labels.length
+                                        ? root.fan-labels[index]
+                                        : ("Fan " + (index + 1));
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                    letter-spacing: 0.5px;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            ValueReadout {
+                                value: entry == "" ? "Waiting for first reading" : entry;
+                                unit: entry == "" ? "" : "RPM";
+                                value-size: ThemeTypography.heading;
+                                vertical-stretch: 0;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            StatusPill {
+                                status: entry == "" || entry == "0" ? "info" : "nominal";
+                                label: entry == "" ? "Reading..." : entry == "0" ? "Stopped" : "Active";
+                                vertical-stretch: 0;
                             }
                         }
                     }
@@ -145,6 +171,7 @@ export component Cooling inherits Rectangle {
             }
         }
 
+        // Fan Control Mode Section
         SectionCard {
             title: "Fan control mode";
 
@@ -176,31 +203,54 @@ export component Cooling inherits Rectangle {
                     }
                 }
 
-                // Interactive control buttons
-                if root.has-fan-control && root.service-connected : HorizontalLayout {
+                // Interactive control mode cards (Always visible when supported by hardware)
+                if root.has-fan-control : HorizontalLayout {
                     spacing: ThemeMetrics.md;
                     alignment: start;
 
-                    // Auto Mode Button
+                    // Auto Mode Card
                     Rectangle {
-                        width: 140px;
-                        height: 42px;
+                        min-width: 220px;
+                        horizontal-stretch: 1;
+                        height: 68px;
                         background: root.fan-mode == "auto" ? ThemeColors.slate : ThemeColors.charcoal;
                         border-width: root.fan-mode == "auto" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
                         border-color: root.fan-mode == "auto" ? ThemeColors.gold : ThemeColors.outline;
-                        border-radius: 6px;
+                        border-radius: 8px;
 
                         HorizontalLayout {
-                            alignment: center;
-                            spacing: ThemeMetrics.xs;
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: ThemeMetrics.md;
+                            alignment: space-between;
 
-                            Text {
-                                text: "Auto";
-                                color: root.fan-mode == "auto" ? ThemeColors.gold : ThemeColors.text-primary;
-                                font-family: ThemeTypography.font-prose;
-                                font-size: ThemeTypography.body;
-                                font-weight: root.fan-mode == "auto" ? ThemeTypography.weight-semibold : ThemeTypography.weight-regular;
-                                vertical-alignment: center;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: "Auto";
+                                    color: root.fan-mode == "auto" ? ThemeColors.gold : ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.body;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                }
+                                Text {
+                                    text: "Dynamic BIOS curve · Balanced acoustics";
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                }
+                            }
+
+                            if root.fan-mode == "auto" : VerticalLayout {
+                                alignment: center;
+                                StatusPill {
+                                    status: "nominal";
+                                    label: "Active";
+                                    vertical-stretch: 0;
+                                }
                             }
                         }
 
@@ -214,26 +264,49 @@ export component Cooling inherits Rectangle {
                         }
                     }
 
-                    // Max Mode Button
+                    // Max Mode Card
                     Rectangle {
-                        width: 140px;
-                        height: 42px;
+                        min-width: 220px;
+                        horizontal-stretch: 1;
+                        height: 68px;
                         background: root.fan-mode == "max" ? ThemeColors.slate : ThemeColors.charcoal;
                         border-width: root.fan-mode == "max" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
                         border-color: root.fan-mode == "max" ? ThemeColors.gold : ThemeColors.outline;
-                        border-radius: 6px;
+                        border-radius: 8px;
 
                         HorizontalLayout {
-                            alignment: center;
-                            spacing: ThemeMetrics.xs;
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: ThemeMetrics.md;
+                            alignment: space-between;
 
-                            Text {
-                                text: "Max (100%)";
-                                color: root.fan-mode == "max" ? ThemeColors.gold : ThemeColors.text-primary;
-                                font-family: ThemeTypography.font-prose;
-                                font-size: ThemeTypography.body;
-                                font-weight: root.fan-mode == "max" ? ThemeTypography.weight-semibold : ThemeTypography.weight-regular;
-                                vertical-alignment: center;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: "Max (100%)";
+                                    color: root.fan-mode == "max" ? ThemeColors.gold : ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.body;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                }
+                                Text {
+                                    text: "Full fan speed · Maximum thermal headroom";
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                }
+                            }
+
+                            if root.fan-mode == "max" : VerticalLayout {
+                                alignment: center;
+                                StatusPill {
+                                    status: "nominal";
+                                    label: "Active";
+                                    vertical-stretch: 0;
+                                }
                             }
                         }
 
@@ -249,7 +322,7 @@ export component Cooling inherits Rectangle {
                 }
 
                 if root.has-fan-control && !root.service-connected : CapabilityNotice {
-                    text: "Hardware service (com.zenomen.Hardware1) is disconnected. Fan controls are disabled while telemetry continues updating.";
+                    text: "Hardware service (com.zenomen.Hardware1) is disconnected. Controls will request daemon connection when toggled.";
                 }
 
                 if !root.has-fan-control : CapabilityNotice {

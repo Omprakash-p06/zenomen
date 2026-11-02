@@ -146,8 +146,11 @@ impl HardwareProvider for LinuxHardwareProvider {
             snapshot.ram_used_mb = mem.used_mb;
         }
 
-        // 3. Fan Tachometers & Power Profiles
+        // 3. Fan Tachometers, Fan Mode & Power Profiles
         snapshot.fan_rpms = self.registry.read_fan_rpms();
+        if let Some(mode) = self.registry.read_fan_mode() {
+            snapshot.fan_mode = mode;
+        }
         if let Some(profile) = self.registry.read_active_power_profile(&self.acpi_root) {
             snapshot.power_profile = profile;
         }

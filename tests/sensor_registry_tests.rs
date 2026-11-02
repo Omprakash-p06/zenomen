@@ -186,6 +186,7 @@ fn discovers_fans_and_pwm_control_on_hp_wmi() {
 
     let rpms = registry.read_fan_rpms();
     assert_eq!(rpms, vec![2400, 2300]);
+    assert_eq!(registry.read_fan_mode(), Some("auto".to_string()));
 }
 
 #[test]

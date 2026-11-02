@@ -97,10 +97,11 @@ export component Sidebar inherits Rectangle {
                 spacing: ThemeMetrics.sm;
                 alignment: start;
 
-                Icon {
-                    name: "enso";
-                    tint: ThemeColors.gold;
-                    size: 24px;
+                Image {
+                    source: @image-url("../../logo/zenomen-logo-v3-indigo-gold.svg");
+                    width: 28px;
+                    height: 28px;
+                    image-fit: contain;
                     vertical-stretch: 0;
                 }
                 Text {

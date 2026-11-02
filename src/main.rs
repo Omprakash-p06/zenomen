@@ -17,6 +17,20 @@ use zenomen::desktop::{
 use zenomen::hardware::{HardwareProvider, MockHardware};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure UTF-8 locale for xkbcommon Compose parsing when host locale lacks charset suffix
+    #[cfg(target_os = "linux")]
+    if std::env::var("LC_CTYPE").is_err()
+        && std::env::var("LC_ALL").is_err()
+        && let Ok(lang) = std::env::var("LANG")
+        && !lang.to_lowercase().contains("utf-8")
+        && !lang.to_lowercase().contains("utf8")
+    {
+        // SAFETY: setting LC_CTYPE before starting any worker threads or window creation
+        unsafe {
+            std::env::set_var("LC_CTYPE", "C.UTF-8");
+        }
+    }
+
     // Check for root-only system integration commands before launching GUI (REL-03)
     if std::env::args().any(|a| a == "--install-system-integration") {
         match zenomen::desktop::install_system_integration() {

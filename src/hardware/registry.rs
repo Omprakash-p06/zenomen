@@ -4,7 +4,7 @@
 //! diagnostics (MON-12), resolving CPU temperature via strict driver and label
 //! priority (MON-04) and enumerating fan tachometers.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::hardware::HardwareCapabilities;
 use crate::hardware::linux::hwmon::{
@@ -21,6 +21,8 @@ pub struct SensorRegistry {
     pub fan_tachometers: Vec<FanSensorDescriptor>,
     /// Writable fan mode interface (`pwm1_enable`) exists.
     pub has_fan_control: bool,
+    /// Discovered sysfs path to `pwm1_enable` fan control interface, if present.
+    pub fan_control_path: Option<PathBuf>,
     /// ACPI `platform_profile` is exposed.
     pub has_platform_profiles: bool,
     /// All discovered hwmon device names.
@@ -47,8 +49,8 @@ impl SensorRegistry {
         // Level 3: acpitz (ACPI thermal zone) -> temp1_input
         let cpu_temp = resolve_cpu_temp(&devices);
 
-        // 2. Discover Fan Tachometers
-        let (fan_tachometers, has_fan_control) = resolve_fans(&devices);
+        // 2. Discover Fan Tachometers and control interface
+        let (fan_tachometers, has_fan_control, fan_control_path) = resolve_fans(&devices);
 
         // 3. Check ACPI platform profiles
         let has_platform_profiles = acpi_root.join("platform_profile").exists();
@@ -57,6 +59,7 @@ impl SensorRegistry {
             cpu_temp,
             fan_tachometers,
             has_fan_control,
+            fan_control_path,
             has_platform_profiles,
             discovered_devices,
         }
@@ -74,6 +77,24 @@ impl SensorRegistry {
             .iter()
             .filter_map(|fan| read_fan_rpm(&fan.input_path))
             .collect()
+    }
+
+    /// Read active fan mode from sysfs if `fan_control_path` exists.
+    pub fn read_fan_mode(&self) -> Option<String> {
+        let path = self.fan_control_path.as_ref()?;
+        let content = std::fs::read_to_string(path).ok()?;
+        let trimmed = content.trim();
+        // In hp-wmi sysfs:
+        // "0" => max
+        // "1" => manual
+        // "2" => auto
+        match trimmed {
+            "0" => Some("max".to_string()),
+            "1" => Some("manual".to_string()),
+            "2" => Some("auto".to_string()),
+            other if !other.is_empty() => Some(other.to_string()),
+            _ => None,
+        }
     }
 
     /// Read active ACPI platform profile if available.
@@ -203,9 +224,10 @@ fn find_temperature_input(
 /// Discover fans and PWM control on HP / platform devices.
 fn resolve_fans(
     devices: &[crate::hardware::linux::hwmon::HwmonDevice],
-) -> (Vec<FanSensorDescriptor>, bool) {
+) -> (Vec<FanSensorDescriptor>, bool, Option<PathBuf>) {
     let mut tachometers = Vec::new();
     let mut has_pwm = false;
+    let mut fan_control_path = None;
 
     // Prioritize hp / hp-wmi platform devices
     let target_devices: Vec<_> = devices
@@ -220,8 +242,12 @@ fn resolve_fans(
     };
 
     for dev in search_pool {
-        if dev.path.join("pwm1_enable").exists() {
+        let pwm = dev.path.join("pwm1_enable");
+        if pwm.exists() {
             has_pwm = true;
+            if fan_control_path.is_none() {
+                fan_control_path = Some(pwm);
+            }
         }
 
         let Ok(entries) = std::fs::read_dir(&dev.path) else {
@@ -246,7 +272,18 @@ fn resolve_fans(
         }
     }
 
+    if fan_control_path.is_none() {
+        for dev in devices {
+            let pwm = dev.path.join("pwm1_enable");
+            if pwm.exists() {
+                has_pwm = true;
+                fan_control_path = Some(pwm);
+                break;
+            }
+        }
+    }
+
     tachometers.sort_by_key(|f| f.index);
     tachometers.dedup_by(|a, b| a.index == b.index && a.input_path == b.input_path);
-    (tachometers, has_pwm)
+    (tachometers, has_pwm, fan_control_path)
 }
