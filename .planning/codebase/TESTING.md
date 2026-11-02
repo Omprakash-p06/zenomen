@@ -1,211 +1,325 @@
 ---
-last_mapped_commit: ecfd66bdc4fe2a588e06acb885b8c17802804ae4
-last_mapped_at: 2026-10-30
+last_mapped_commit: e50af8f9ea61300a1c10d36dc6954e319da7b6e2
+last_mapped_at: 2026-11-02
 ---
 # Testing Patterns
 
-**Analysis Date:** 2026-10-30
+**Analysis Date:** 2026-11-02
 
 ## Test Framework
 
 **Runner:**
-- **None.** There is no test framework, no test runner, no test configuration, and no test files anywhere in the repository.
+- `cargo test` (built-in Rust test harness, stable toolchain, edition 2024).
+- No test-runner config file and **no dev-dependencies** in `Cargo.toml` — no `mockall`, no `rstest`, no `proptest`, no `tokio`, no `serial_test`.
+- Integration tests are native `tests/*.rs` targets; unit tests are `#[cfg(test)] mod tests` blocks inside `src/**/*.rs`.
 
 **Assertion Library:**
-- Not applicable.
+- Standard library `assert!`, `assert_eq!`, `assert_ne!`, and `matches!` — no external assertion crate.
+- `expect("...")` is used for fixture setup and for values the test asserts must exist; plain `unwrap()` appears mostly in older fixture code.
+- Float comparisons use a tolerance: `assert!((util - 75.0).abs() < 0.01, "Expected 75.0%, got {util}")` (`src/hardware/linux/cpu.rs:227`).
 
 **Run Commands:**
 
 ```bash
-
-# There is no test command. Nothing to run.
-
-# The only executable verification that exists today is manual:
-
-openomen doctor        # hardware compatibility checklist (requires sudo)
-openomen info          # diagnostic dump intended for bug reports
-openomen --version     # smoke test that the binary runs
+cargo test                                      # all tests
+cargo test --all                                # all workspace targets (CI form)
+xvfb-run --auto-servernum cargo test --all      # headless CI form (required in CI)
+cargo test --lib                                # unit tests only (src/**)
+cargo test --test hardware_service_tests        # one integration suite
+cargo test fan_mode                             # filter by name substring
+cargo test --locked --all                       # release workflow form (Cargo.lock enforced)
 ```
+
+There is no watch, coverage, or benchmark harness wired up (no `cargo-watch`, `llvm-cov`, `tarpaulin`, or `criterion`).
+
+## Test Suite Inventory
+
+**Totals:** 15 integration test files, 6 in-source unit-test modules, **108 `#[test]` functions** (79 integration + 29 unit).
+
+| File | Tests | Covers |
+|------|------:|--------|
+| `tests/benchmark_tests.rs` | 5 | RSS instrumentation, worker tick latency, headless worker dispatch (PERF-01, MON-10) |
+| `tests/config_tests.rs` | 6 | TOML roundtrip, atomic save, corrupt-file backup, polling clamp (SYS-06/07/09) |
+| `tests/degradation_tests.rs` | 8 | Degradation matrix: fan/pwm/temp/nvidia-smi/RGB/service absence, unauthorized write, corrupt config (PERF-05) |
+| `tests/desktop_integration_tests.rs` | 8 | Autostart XDG entry, single-instance D-Bus dispatch, StatusNotifierItem, desktop/icon assets |
+| `tests/diagnostics_tests.rs` | 2 | `DiagnosticsReport` from injected roots + live-system smoke test |
+| `tests/fan_control_tests.rs` | 3 | Fan-mode state transitions, verification-error preservation, service status mapping |
+| `tests/hardware_service_tests.rs` | 9 | `zenomen-hw` backend, `write_and_verify`, fan parsing, presets, RGB writes, polkit contract |
+| `tests/linux_gpu_tests.rs` | 3 | DRM card enumeration, nvidia-smi CSV parsing |
+| `tests/linux_procfs_tests.rs` | 4 | `/proc/stat` CPU deltas, `/proc/cpuinfo` model/freq, `/proc/meminfo` |
+| `tests/mock_hardware_tests.rs` | 3 | `Nominal`, `ZeroCapabilities`, `SensorDataGap` scenarios and the no-fabricated-zero rule |
+| `tests/packaging_tests.rs` | 5 | Embedded assets vs `data/`, install/uninstall to a mock prefix, root enforcement, Cargo.toml packaging metadata |
+| `tests/power_preset_tests.rs` | 5 | ACPI profile selection, combined presets, partial success, mock backend |
+| `tests/rgb_tests.rs` | 8 | Hex validation, builtin presets, three interface variants, OpenOMEN migration, sysfs writes |
+| `tests/sensor_registry_tests.rs` | 6 | Shared registry and CPU-temp priority matrix (k10temp > coretemp > acpitz) |
+| `tests/telemetry_history_tests.rs` | 4 | 120-sample bound, SVG path generation, `None` gap breaks |
+
+| Unit module | Tests | Covers |
+|-------------|------:|--------|
+| `src/core/state.rs:293` | 10 | `AppState::apply` transitions, status text, degradation, history resizing |
+| `src/core/telemetry.rs:247` | 6 | `TelemetryHistory` capacity/eviction, SVG path rendering |
+| `src/hardware/linux/cpu.rs:188` | 5 | `CpuJiffies::parse_stat_line`, delta utilization, cpuinfo parsing |
+| `src/hardware/linux/gpu.rs:249` | 3 | nvidia-smi parsing edge cases |
+| `src/hardware/linux/memory.rs:75` | 2 | `/proc/meminfo` arithmetic |
+| `src/hardware/linux/hwmon.rs:88` | 3 | Temperature/fan/label sysfs readers |
+
+**Split rule:** parsers and pure state machines get in-source unit tests; anything that needs a fake filesystem root, a fake provider, or a channel gets an integration test in `tests/`.
 
 ## Test File Organization
 
-**Location:**
-- No `tests/` directory, no co-located test files. The tracked tree is: `openomen`, `openomen.spec`, `how-to-release.txt`, `README.md`, `LICENSE` (plus `.planning/`).
+**Integration tests:**
+- Flat directory, no subfolders: `tests/<domain>_tests.rs`.
+- Naming `<subsystem>_<kind>_tests.rs` or `<domain>_tests.rs`: `sensor_registry_tests.rs`, `desktop_integration_tests.rs`, `hardware_service_tests.rs`.
+- Each file is its own crate, so it may only use the **public** API via `use zenomen::...`. If a test needs a private helper, either make it `pub` on the module boundary or add the test to the in-source `#[cfg(test)]` module.
 
-**Naming:**
-- Not established. If tests are added, use `tests/test_<subsystem>.py` (pytest discovery default) since the flat root already contains the app file with no extension, which would otherwise confuse collectors.
+**Unit tests:**
 
-**Structure:**
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-```text
-(no test structure exists)
+    #[test]
+    fn parse_stat_line_correctly_extracts_jiffies() { ... }
+}
 ```
+
+Always at the bottom of the file; `use super::*;` plus explicit `std` imports when needed (e.g. `use std::fs;` inside `src/hardware/linux/hwmon.rs:90`).
 
 ## Test Structure
 
-**Suite Organization:**
+**File header:** every integration file starts with a `//!` block naming the requirement IDs it verifies:
 
-```python
-
-# None present. The closest thing to a test is the manual checklist in run_doctor():
-
-#   openomen:999   ─── Kernel & Drivers ───
-
-#   openomen:1051  ─── Fan Control ───
-
-#   openomen:1100  ─── Thermal Sensors ───
-
-#   openomen:1175  ─── Power Profiles ───
-
-#   openomen:1205  ─── GPU Stats ───
-
-#   openomen:1240  ─── Battery ───
-
-#   openomen:1267  ─── RGB Keyboard ───
-
-#   openomen:1276  Doctor complete: {passed} passed, {failed} failed.
-
+```rust
+//! Integration tests for fan mode control, read-back verification state, and UI state mapping.
 ```
 
+```rust
+//! Degradation matrix integration tests (PERF-05).
+//!
+//! Asserts that removing any sensor, interface, external tool, or daemon
+//! causes zero crashes and cleanly degrades to an explained unavailable state.
+```
+
+**Test body:** arrange → act → assert, with numbered comments for multi-step state transitions:
+
+```rust
+#[test]
+fn test_fan_mode_state_transitions() {
+    let mut state = AppState::default();
+    assert_eq!(state.fan_mode, "");
+
+    // 1. Success event updates fan mode and clears errors
+    state.apply(&AppEvent::FanModeChanged(Ok("max".to_string())));
+    assert_eq!(state.fan_mode, "max");
+
+    // 2. Failure event preserves active mode and sets error
+    state.apply(&AppEvent::FanModeChanged(Err("...".to_string())));
+    assert_eq!(state.fan_mode, "max"); // preserved
+    assert!(state.last_control_error.is_some());
+}
+```
+
+(`tests/fan_control_tests.rs:8`)
+
 **Patterns:**
-- `run_doctor()` (`openomen:991`–`1276`) is a manual, environment-dependent acceptance test: it probes hp-wmi, fan write permission, fan RPM readability, CPU thermal sensors, ACPI profiles, GPU tooling, battery charge threshold, and RGB interfaces, incrementing `passed`/`failed` counters.
-- Every check increments a counter; a missing fan hwmon device deliberately adds `failed += 4` (`openomen:1097`) to weight the fan block.
-- There is no assertion library and no non-zero exit code on doctor failures — `run_doctor()` always lets `main()` return `0` (`openomen:1695`), so **CI-style pass/fail is not expressible today**.
+- **Assertion messages explain the contract**, not just the value: `assert!(caps.has_fan_control(), "Nominal must report fan control")`, `assert_eq!(state, default, "Default configuration must be restored")`.
+- **Abbreviated scenario naming:** numbered tests for the degradation matrix (`degradation_01_...` … `degradation_08_...`) so the matrix is auditable against the plan.
+- **Structural byte-equality for hardware safety:** after a rejected write, the test re-reads the sysfs file and asserts it is unchanged: `assert_eq!(content, "2\n", "File content must not be corrupted on error")` (`tests/degradation_tests.rs`).
+- **Fixture struct literals with `..AppState::default()`** rather than builders for state-level tests (`tests/diagnostics_tests.rs:83`).
+- **`matches!` for error variants:** `assert!(matches!(RgbColor::from_hex(""), Err(RgbError::EmptyColor)))` (`tests/rgb_tests.rs`).
 
 ## Mocking
 
-**Framework:** None.
+**Framework:** none. Fakes are hand-written at the trait and filesystem boundaries.
 
-**Patterns:**
+**1. Trait injection — `MockHardware`:**
 
-```python
-
-# The codebase's testability seams, and what a future test would need to patch:
-
-# 1. All hardware paths are string literals inside functions  -> patch `open` / use tmp_path + monkeypatch of module constants
-
-# 2. Path constants ARE module-level for power/RGB             -> monkeypatch PROFILE_PATH (openomen:749), RGB_CONFIG_DIR (openomen:1303)
-
-# 3. External tools go through subprocess.run                  -> patch subprocess.run (nvidia-smi openomen:433, lsmod openomen:1016)
-
-# 4. Environment is read via os.geteuid / os.access            -> patch to simulate root and writability (openomen:111, openomen:860)
-
-# 5. Process replacement via os.execvp                         -> MUST be patched or monkeypatched, else the test process is replaced by sudo
-
-# 6. Network update path uses urllib.request.urlopen           -> patch to avoid hitting api.github.com (openomen:881)
-
+```rust
+pub trait HardwareProvider: Send + Sync {
+    fn capabilities(&self) -> HardwareCapabilities;
+    fn sample_telemetry(&self) -> Result<TelemetrySnapshot, String>;
+}
 ```
 
-**What to Mock:**
-- `os.execvp` (in `ensure_root()`, `openomen:119`) — non-negotiable; unpatched tests will exec sudo
-- `subprocess.run` (all external commands: `nvidia-smi`, `lsmod`, `sudo`, downloaded-binary verification at `openomen:938`)
-- `urllib.request.urlopen` and `urllib.request.Request` (update flows)
-- `os.geteuid`, `os.access`, `shutil.which` (privilege and install-path decisions)
-- `time.sleep` (`openomen:162`, `openomen:356`, monitor loop) to keep tests fast
-- Module constants for sysfs paths: `PROFILE_PATH`, `PROFILE_CHOICES_PATH`, `RGB_CONFIG_DIR`/`RGB_PROFILES_DIR`/`RGB_STATE_PATH`
+`MockHardware::new(MockScenario::Nominal)` implements it in `src/hardware/mock.rs`; the worker and `main` accept `Arc<dyn HardwareProvider>`, so tests pass the fake without touching sysfs (`tests/benchmark_tests.rs:44`, `src/main.rs:172`).
+- Scenarios: `Nominal` (all sensors, oscillating values), `ZeroCapabilities` (every flag false, empty snapshot), `SensorDataGap` (GPU readings vanish for 3 of every 10 ticks).
+- Runtime selection in the real binary: `ZENOMEN_MOCK_SCENARIO=zero|gap|nominal cargo run` (`src/hardware/mock.rs:76`, `src/main.rs:164`).
 
-**What NOT to Mock:**
-- `find_hwmon_path()` / `read_fan_rpm()` / `read_temperature()` internals — prefer pointing them at a fake `tmp_path` tree via monkeypatched `glob`/`open`, so the driver-priority logic itself is exercised
-- `json` round-tripping for RGB profiles — use real files in `tmp_path` (cheap, no I/O hazards)
-- The argparse tree — build it through `main()` with patched `sys.argv` so subcommand wiring is covered
+**2. Filesystem-root injection — the dominant hardware fake:**
+- `SensorRegistry::scan_roots(&hwmon_root, &acpi_root)` — tests create a temp tree with `hwmon0/name`, `temp1_input`, `fan1_input`, `pwm1_enable`, `platform_profile*` and point the scan at it (`tests/degradation_tests.rs:16`, `tests/sensor_registry_tests.rs`).
+- `HardwareBackend::new(&root)` prefixes every sysfs path (`src/service/backend.rs:63`); `HardwareBackend::default()` is `new("/")`. Tests build `root/sys/devices/platform/hp-wmi/hwmon/hwmon5/...` under a temp dir (`tests/hardware_service_tests.rs:11`).
+- `detect_rgb_interface(&sysfs_root)`, `install_to_prefix(&temp_dir)`, `is_autostart_enabled_at(&path)`, `set_autostart_enabled_at(&path, bool)`, `collect_diagnostics_from_roots(...)`.
+- There is **no global env-var path override** (besides the mock-scenario selector); prefer adding an `_at`/`_roots`/`_from_prefix` variant over reading env vars.
 
-**Loading the module under test:** the file has no `.py` extension, so `import openomen` will not work directly. Use `importlib.util.spec_from_loader` / `SourceFileLoader`, or have the test suite install the file as `openomen.py` via a fixture or `conftest.py` symlink. This is the single biggest practical obstacle to adding tests and is worth solving first.
+**3. Temp-directory fixtures with `Drop` cleanup:**
+
+```rust
+struct MockSysfs { root: PathBuf }
+
+impl MockSysfs {
+    fn new(test_name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "zenomen_test_hw_{test_name}_{}", std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);   // idempotent start
+        fs::create_dir_all(&root).unwrap();
+        Self { root }
+    }
+}
+
+impl Drop for MockSysfs {
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
+}
+```
+
+(`tests/hardware_service_tests.rs:12`; same shape as `TestDir` in `tests/diagnostics_tests.rs:12` and `src/hardware/linux/hwmon.rs:92`.)
+- Unique names use `std::process::id()` or `SystemTime::now().duration_since(UNIX_EPOCH).as_nanos()` — tests run in parallel threads of one process, so the prefix must include the test name.
+- Always clean at the start *and* in `Drop`; never assume the directory is fresh.
+
+**4. Channel and D-Bus fakes:**
+- Worker tests use `mpsc::channel()` for events and `mpsc::sync_channel(8)` for commands, asserting with `recv_timeout(Duration::from_millis(500))` (`tests/benchmark_tests.rs:46`).
+- Desktop/tray tests call the zbus interface methods directly on the service object and read the action channel instead of starting a bus (`tests/desktop_integration_tests.rs:56`).
+- The absent-daemon test tolerates both environments: it only asserts errors when `status.is_connected()` is false (`tests/degradation_tests.rs`).
+
+**What to mock:**
+- Hardware reads (filesystem roots, `HardwareProvider`).
+- External commands (`nvidia-smi` output is passed as a `&str` to `parse_nvidia_smi_output`, never spawned).
+- Privileged installation targets (`install_to_prefix`).
+- Absence scenarios: delete a file/dir from the fake tree rather than returning an error.
+
+**What NOT to mock:**
+- Pure parsers (`parse_stat_line`, `parse_proc_meminfo`, `parse_nvidia_smi_output`, `RgbColor::from_hex`) — call them directly with literal input.
+- `AppState` / `TelemetryHistory` — plain structs, construct and assert.
+- The filesystem itself via a mocking crate — use a temp root instead.
 
 ## Fixtures and Factories
 
-**Test Data:**
-- None exist. A test suite would need synthetic sysfs trees. Example of the shape required by the readers:
+- No `fixtures/` directory and no factory crate. Fixtures are constructed inline.
+- Full snapshot fixture pattern (`src/core/state.rs:427`):
 
-```text
-tmp/sys/class/hwmon/hwmon0/name          -> "k10temp\n"
-tmp/sys/class/hwmon/hwmon0/temp1_input   -> "45000\n"
-tmp/sys/class/hwmon/hwmon0/temp1_label   -> "Tctl\n"
-tmp/sys/devices/platform/hp-wmi/hwmon/hwmon3/pwm1_enable -> "2\n"
-tmp/sys/devices/platform/hp-wmi/hwmon/hwmon3/fan1_input  -> "2400\n"
-tmp/sys/firmware/acpi/platform_profile          -> "balanced\n"
-tmp/sys/firmware/acpi/platform_profile_choices  -> "low-power balanced performance\n"
+```rust
+fn full_snapshot() -> TelemetrySnapshot {
+    TelemetrySnapshot {
+        cpu_name: "AMD Ryzen 7 5800H".to_string(),
+        cpu_temperature_c: Some(68.0),
+        gpu_utilization: Some(62.0),
+        ram_total_mb: 16_384,
+        fan_rpms: vec![2_450, 2_400],
+        power_profile: "balanced".to_string(),
+        ..TelemetrySnapshot::default()
+    }
+}
 ```
 
-- Note: readers hardcode absolute `/sys` paths, so fixtures require monkeypatching `glob.glob` and/or `builtins.open` rather than just setting a root prefix. Introducing a module-level `SYSFS_ROOT = "/sys"` (and composing every path from it) would make the whole surface testable with one monkeypatch — the highest-leverage refactor for testability.
-
-**Location:**
-- N/A
+- Capability fixture: `HardwareCapabilities::all_supported()` for "fully equipped", then mutate one flag for the degraded case (`src/core/state.rs:318`).
+- Mock sysfs fixture: a `MockSysfs`/`TestDir` struct with `new(name)` + `Drop`; add files with `fs::write(dir.join("temp1_input"), "55000\n")`.
+- Embedded-resource fixtures: `tests/packaging_tests.rs` compares `EMBEDDED_*` constants against `data/**` on disk, so edits to `data/` must be mirrored in `src/desktop/system_integration.rs`.
 
 ## Coverage
 
-**Requirements:** None enforced. No coverage tooling, no thresholds, no CI gate.
-
-**View Coverage:**
-
-```bash
-
-# No coverage configuration exists. If added:
-
-# python -m pytest --cov=. tests/
-
-```
+**Requirements:** none enforced. No coverage tool, config, threshold, or CI coverage step.
+- CI enforces **pass/fail only** plus the clippy/format/audit gates.
+- To measure locally you would need to add a tool (e.g. `cargo llvm-cov`); none is installed or documented.
+- Practical coverage expectation comes from the requirement IDs in test-file headers and plan acceptance criteria, not from a percentage.
 
 ## Test Types
 
-**Unit Tests:**
-- None. The natural unit-test targets, if introduced:
-  - `get_friendly_label()` (`openomen:200`) — pure dict lookup, zero I/O
-  - `read_cpu_stats()` usage math (`openomen:365`–`369`) — pure arithmetic on parsed `/proc/stat` values
-  - `get_install_path()` (`openomen:829`) — pure path-selection logic given `shutil.which`/`os.access`
-  - `get_amd_driver_info()` (`openomen:401`) — `readlink` basename vs `/proc/modules` fallback
-  - `apply_rgb_hardware()` color normalization (`openomen:1443`–`1452`) — hex parsing and `zones` vs `animation.full` fallback
-  - `detect_rgb_hardware()` (`openomen:1413`) — which of the three interfaces is reported
+**Unit tests:**
+- In-source `#[cfg(test)] mod tests`, 29 tests across 6 modules.
+- Scope: pure parsing (`CpuJiffies`, nvidia-smi CSV, meminfo), state folding (`AppState::apply`), history bounds/SVG paths, and the three hwmon readers against a temp file.
 
-**Integration Tests:**
-- None. Best candidates are the readers that touch several files at once: `read_temperature()` driver prioritization (`openomen:220`, multi-hwmon fake tree), `read_gpu_stats()` vendor dispatch (`openomen:460`–`530`, fake DRM tree + patched `nvidia-smi`), and `update_openomen()` (`openomen:851`, patched `urlopen` + `tmp_path` install dir + patched `subprocess.run`).
+**Integration tests:**
+- `tests/*.rs`, 79 tests across 15 crates.
+- Scope: public API behavior across modules — registry priority, degradation matrix, backend write/read-back verification, presets, RGB variants/migration, config persistence, desktop integration, packaging assets.
 
-**E2E Tests:**
-- Not used, and not realistically available: writes go to real `/sys` hardware. `run_doctor()` is the substitute and is manual by design.
+**Headless/GUI tests:**
+- CI runs the whole suite through `xvfb-run --auto-servernum cargo test --all` because the test binaries link the Slint/winit/femtovg stack and a future GUI test needs a display (`.github/workflows/ci.yml`, `.github/workflows/release.yml`).
+- **No current test constructs `AppWindow`** (`grep AppWindow tests/` returns nothing). The suite is deliberately headless: `tests/benchmark_tests.rs` states "Headless CI safety (no GUI server requirement or panics)". The window is exercised only by launching the binary under `xvfb-run` in manual/packaging verification (`docs/PACKAGING.md`, `.planning/phases/05-*/05-01-PLAN.md`).
+- If you add a GUI test, put it in `tests/ui_*_tests.rs`, construct `zenomen::AppWindow::new()` on the test thread, keep it short, and run under `xvfb-run`; never leave a window shown or block on the event loop.
+
+**Performance tests:**
+- `tests/benchmark_tests.rs` asserts a worker tick is under ~5 ms, RSS is < 500 MB (sanity bound for the 40 MB budget), and the worker answers `RefreshTelemetry` within 500 ms without waiting for the 1 s tick.
+- Long-duration budget measurement is a shell harness, not a test: `scripts/measure-budget.sh` (with `--soak`), documented in `docs/RESOURCE-BUDGET.md`.
 
 ## Common Patterns
 
-**Manual verification workflow (current de-facto practice):**
+**Async/channel testing (no async runtime):**
 
-```bash
+```rust
+let (event_sender, event_receiver) = mpsc::channel();
+let (command_sender, command_receiver) = mpsc::sync_channel(8);
+let worker = spawn_monitoring_worker(provider, event_sender, command_receiver);
 
-# what a contributor is expected to do per how-to-release.txt + README
-
-python3 -m venv .venv && source .venv/bin/activate
-pip install pyinstaller
-pyinstaller --onefile --name openomen openomen
-sudo dist/openomen doctor     # hardware compatibility
-sudo dist/openomen stats      # sanity-check readings
-dist/openomen --version       # verify frozen binary reports VERSION
+let event = event_receiver
+    .recv_timeout(Duration::from_millis(500))
+    .expect("Worker must send initial capabilities immediately");
+match event {
+    AppEvent::CapabilitiesLoaded(caps) => assert!(caps.has_cpu_metrics()),
+    other => panic!("Expected CapabilitiesLoaded, got: {other:?}"),
+}
 ```
 
-**Error Testing:**
+Never `thread::sleep` to wait for a result; use `recv_timeout` and fail with a contract message.
 
-```python
+**Error testing:**
 
-# No pattern exists. Handlers swallow IOError and return False, so a future
+```rust
+assert!(matches!(RgbColor::from_hex("#FFF"), Err(RgbError::InvalidLength(_))));
+assert!(RgbColor::from_hex("#GGGGGG").is_err());
 
-# test should assert on (a) the boolean return and (b) captured stderr text,
-
-# e.g. capsys.readouterr().err containing "Error: Permission denied"
-
-# (message produced at openomen:174).
-
+match install() {
+    Err(SystemIntegrationError::NotRoot) => {}
+    other => panic!("Expected NotRoot error when non-root, got: {other:?}"),
+}
 ```
 
-**Non-determinism to control in tests:**
-- `/proc/stat` deltas + `time.sleep(0.5)` in `read_cpu_stats()` (`openomen:356`)
-- 0.1 s settle after the fan write before read-back (`openomen:162`)
-- 1.5 s monitor interval (`openomen:1278`), yet `--watch` help text says "every 2 seconds" (`openomen:1574`) — a test asserting the interval would document the discrepancy
-- Live network in `update_openomen()` and live `nvidia-smi` presence
+- Assert the **variant**, not just `is_err()`, whenever the variant carries meaning.
+- For absence, assert `Option::is_none()` and explicitly no fabricated zero: `assert!(sample.gpu_utilization.is_none(), "Non-numeric utilization degrades cleanly to None")`.
 
-## Missing Test Infrastructure (what to add first)
+**Filesystem assertions:**
+- Read back the file to prove hardware safety (`content == "2\n"` after a rejected write).
+- Assert side-effect files exist (`config.toml.bak.<timestamp>`), and that temp files do **not** linger (`config_atomic_write_leaves_no_lingering_temp_file`).
+- Parse exported JSON back into the typed struct and assert equality (`tests/diagnostics_tests.rs`).
 
-- `tests/` directory with a `conftest.py` that loads the extensionless `openomen` as a module
-- `requirements-dev.txt` (or `pyproject.toml`) pinning `pytest` (and optionally `pytest-cov`)
-- A `.gitignore` covering `.venv/`, `build/`, `dist/`, `__pycache__/`, `.pytest_cache/` — none exists, so test artifacts would otherwise be committed
-- A CI workflow (`.github/workflows/`) running `pytest` on push — currently there is no CI at all
-- Module-level `SYSFS_ROOT`-style indirection so fake hardware trees are injectable without patching `builtins.open`
+**Live-system tests (small, non-assertive):**
+- `collect_diagnostics_live_system_does_not_panic` and `linux_hardware_provider_samples_cleanly_on_linux` may read the real `/sys` and `/proc`.
+- They assert only invariants that hold on every Linux host (non-empty strings, no panic). They must not assert a specific CPU model, fan count, or GPU — CI runners have none of these.
+
+## CI Quality Gate
+
+Both workflows run the same four gates; release adds packaging. Order matters — packaging cannot start if a gate fails.
+
+**`.github/workflows/ci.yml` (push/PR to `main`):**
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --all-targets --all-features -- -D warnings`
+3. `xvfb-run --auto-servernum cargo test --all`
+4. `cargo audit` (audits the committed `Cargo.lock`)
+
+**`.github/workflows/release.yml` (tag `v*` or manual):**
+1. Tag must equal `Cargo.toml` version (`cargo metadata` + `jq`)
+2. `cargo fmt --all -- --check`
+3. `cargo clippy --locked --all-targets --all-features -- -D warnings`
+4. `xvfb-run --auto-servernum cargo test --locked --all`
+5. `cargo audit`
+6. `cargo packager --release --formats deb,appimage`
+7. Artifact names must contain the version; generate `SHA256SUMS`; publish release
+
+**Implications for new tests:** they must be warning-free under clippy (`-D warnings`), rustfmt-clean, pass with `--locked` (do not add a dependency just for a test), not require network access, and clean up temp files.
+
+## Conventions Checklist for New Tests
+
+- [ ] File-level `//!` doc naming the requirement ID(s) verified.
+- [ ] Integration file named `tests/<domain>_tests.rs`; unit tests in `#[cfg(test)] mod tests` at the bottom of the source file.
+- [ ] Test name is a snake_case sentence describing the expected behavior (`sensor_data_gap_scenario_periodically_emits_none`).
+- [ ] Fake hardware through `MockHardware` or a temp filesystem root; no real `/sys` writes.
+- [ ] Temp dir name includes the test name plus PID/nanos; cleanup on start and in `Drop`.
+- [ ] Assert with an explanatory message; assert error variants with `matches!`.
+- [ ] Absence asserted as `None`/empty — never assert or accept a fabricated `0`.
+- [ ] Channels use `recv_timeout`; no fixed `sleep` for synchronization.
+- [ ] No new dev-dependency; std only.
+- [ ] Runs green under `xvfb-run --auto-servernum cargo test --all`, `cargo fmt --all -- --check`, and `cargo clippy --all-targets --all-features -- -D warnings`.
 
 ---
 
-*Testing analysis: 2026-10-30*
+*Testing analysis: 2026-11-02*

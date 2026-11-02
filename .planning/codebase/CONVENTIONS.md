@@ -1,139 +1,200 @@
 ---
-last_mapped_commit: ecfd66bdc4fe2a588e06acb885b8c17802804ae4
-last_mapped_at: 2026-10-30
+last_mapped_commit: e50af8f9ea61300a1c10d36dc6954e319da7b6e2
+last_mapped_at: 2026-11-02
 ---
 # Coding Conventions
 
-**Analysis Date:** 2026-10-30
+**Analysis Date:** 2026-11-02
+
+This document describes the conventions of the **Rust + Slint** codebase as it exists on disk. Sources of truth: `src/**/*.rs`, `ui/**/*.slint`, `tests/**/*.rs`, `build.rs`, `Cargo.toml`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
 ## Naming Patterns
 
-**Files:**
-- The application file is `openomen` — extensionless, lowercase, matches the installed command and the PyInstaller `name=` in `openomen.spec`. Keep it extensionless: `Analysis(['openomen'])` depends on it.
-- Docs: `README.md`, `LICENSE`, prose runbook `how-to-release.txt`
+**Rust source files:**
+- `snake_case.rs`, one module per file: `src/core/telemetry.rs`, `src/hardware/linux/hwmon.rs`, `src/desktop/single_instance.rs`.
+- Directories are modules with `mod.rs`: `src/core/mod.rs`, `src/config/mod.rs`, `src/service/mod.rs`, `src/hardware/linux/mod.rs`.
+- Two binaries: `src/main.rs` (GUI shell) and `src/bin/zenomen-hw.rs` (privileged D-Bus daemon). The library is `src/lib.rs`.
+- Integration test files are flat in `tests/` and suffixed `_tests.rs`: `tests/sensor_registry_tests.rs`, `tests/hardware_service_tests.rs`.
 
-**Functions:**
-- `snake_case`, verb-first, prefixed by subsystem rather than namespaced by module (there are no modules). The accepted prefixes:
-  - `read_*` — non-mutating readers returning either a dict of values or `bool`: `read_fan_rpm()` `openomen:58`, `read_fan_boost_status()` `openomen:121`, `read_temperature()` `openomen:220`, `read_cpu_stats()` `openomen:333`, `read_gpu_stats()` `openomen:422`, `read_all_stats()` `openomen:539`, `read_system_info()` `openomen:578`, `read_power_profile()` `openomen:758`, `read_rgb_state()` `openomen:1369`
-  - `set_*` — single-value sysfs writers returning `bool`: `set_fan_boost_mode()` `openomen:136`, `set_power_profile()` `openomen:774`
-  - `apply_*` — multi-step mutators: `apply_combined_profile()` `openomen:801`, `apply_rgb_hardware()` `openomen:1423`
-  - `get_*` — lookups: `get_friendly_label()` `openomen:200`, `get_amd_driver_info()` `openomen:401`, `get_install_path()` `openomen:829`
-  - `rgb_*` — RGB command handlers: `rgb_status()` `openomen:1492`, `rgb_list()`, `rgb_set()`, `rgb_power()`
-  - `ensure_*` — idempotent setup: `ensure_root()` `openomen:113`, `ensure_rgb_config()` `openomen:1355`
-  - `run_*` — long tasks: `run_doctor()` `openomen:991`
-  - `check_*` / `find_*` / `detect_*` — predicates and probes: `check_root()` `openomen:110`, `find_hwmon_path()` `openomen:40`, `detect_rgb_hardware()` `openomen:1413`
-- Private/underscore-prefixed functions: **not used at all** — everything is public. Follow that (no new `_helper()` names unless you introduce a package).
+**Slint files (kebab-case, no `_`):**
+- Components: `ui/components/metric-card.slint`, `ui/components/unavailable-panel.slint`, `ui/components/status-strip.slint`.
+- Screens: `ui/screens/overview.slint`, `ui/screens/cooling.slint`, `ui/screens/lighting.slint`.
+- Theme tokens: `ui/theme/colors.slint`, `ui/theme/typography.slint`, `ui/theme/metrics.slint`.
+- Exported component names are `PascalCase` and match the file in kebab form: `MetricCard`, `UnavailablePanel`, `AppWindow`.
+- Slint properties and callbacks are `kebab-case`: `active-screen`, `has-cpu-metrics`, `status-text`, `sparkline-commands`, `callback open-diagnostics()`.
+- Theme globals are `PascalCase` with `Theme` prefix: `ThemeColors`, `ThemeTypography`, `ThemeMetrics` (`ui/theme/colors.slint:8`).
 
-**Variables:**
-- `snake_case`. Hardware values are named for the file they came from: `hwmon_path`, `pwm_enable_path`, `pwm_enable_path`, `raw_label`, `temp_celsius`, `fan_rpm`, `card_dir`, `vendor_file`, `busy_file`.
-- CLI-parsed names mirror the flag: `args.command`, `args.fan_command`, `args.power_command`, `args.rgb_command`, `args.watch`, `args.force`, `args.verify`.
-- Counters for checklist output: `passed`, `failed`, `gpus_found`, `gpu_detected`.
+**Types and traits:**
+- `PascalCase`, acronyms normalized to one capital + lowercase: `RgbProfile`, `RgbColor`, `RgbError`, `RgbInterfaceVariant` — **not** `RGBProfile` (`src/rgb/schema.rs:28`, `src/hardware/rgb.rs`).
+- Data carriers are `*Snapshot`, `*Capabilities`, `*Report`, `*Descriptor`, `*Result`, `*Status`: `TelemetrySnapshot`, `HardwareCapabilities`, `DiagnosticsReport`, `SensorDescriptor`, `PresetResult`, `ServiceConnectionStatus`.
+- Errors are `*Error` enums (`HardwareControlError`, `RgbError`, `SystemIntegrationError`) and implement `std::error::Error` through `thiserror`.
+- Traits name the role, not the implementation: `HardwareProvider` (`src/hardware/provider.rs:232`). Implementations are prefixed by their nature: `MockHardware`, `LinuxHardwareProvider`.
+
+**Functions and methods (snake_case, verb-first):**
+- Constructors/parsers: `new`, `from_sysfs`, `from_hex`, `from_name`, `from_env`, `parse_stat_line`, `parse_nvidia_smi_output`.
+- Accessors and predicates: `capabilities`, `sample_telemetry`, `has_fan_control`, `is_connected`, `is_degraded`, `reported_sensor_count`, `sample_count`.
+- Mutators/actions: `set_fan_mode`, `apply_preset`, `save_atomic`, `install_system_integration`, `spawn_monitoring_worker`.
+- Conversions: `as_str`, `as_sysfs_value`, `to_hex`, `to_slint_color`, `rss_mb`, `name`.
+- **Path-injectable variants are suffixed, never configured by a global:** `_at` (`is_autostart_enabled_at`, `set_autostart_enabled_at`), `_roots` (`SensorRegistry::scan_roots`, `collect_diagnostics_from_roots`), `_from_*` (`collect_diagnostics_from_roots`, `read_cpu_freq_from_cpuinfo`, `parse_nvidia_smi_output`), `_to_prefix`/`_from_prefix` (`install_to_prefix`, `uninstall_from_prefix`).
+- Free helpers in `src/hardware/linux/*` are plain `read_*`/`parse_*` functions with no `self`, and are the testable seam for parsers (`src/hardware/linux/cpu.rs:156`, `src/hardware/linux/gpu.rs:175`).
+
+**Fields and locals:**
+- `snake_case`; units are part of the name: `cpu_temperature_c`, `cpu_frequency_mhz`, `ram_total_mb`, `rss_kb`, `max_retries`, `initial_delay`.
+- Collections are plural (`fan_rpms`, `power_profiles`, `discovered_devices`); optional readings use `Option` and the name says so implicitly (`gpu_name: Option<String>`).
 
 **Constants:**
-- `UPPER_SNAKE` at module level: `VERSION` (`openomen:33`), `APP_NAME` (`openomen:34`, currently unused), `CLEAR_SCREEN`/`HIDE_CURSOR`/`SHOW_CURSOR` (`openomen:36`–`38`), `PROFILE_CHOICES_PATH`/`PROFILE_PATH` (`openomen:748`–`749`), `COMBINED_PROFILES` (`openomen:752`), `RGB_*` paths (`openomen:1303`–`1305`), `DEFAULT_RGB_PROFILES` (`openomen:1307`).
-- Exception: `CPU_DRIVER_PRIORITY`, `CPU_LABEL_KEYWORDS`, `SKIP_LABEL_KEYWORDS` are declared **inside** functions (`openomen:234`, `openomen:1110`) and are therefore duplicated. Any new sensor-selection logic should promote them to module level instead of adding a third copy.
+- `SCREAMING_SNAKE_CASE` with unit or meaning encoded: `MIN_POLLING_INTERVAL_MS`, `MAX_POLLING_INTERVAL_MS`, `DEFAULT_POLLING_INTERVAL_MS` (`src/config/schema.rs:10`), `HISTORY_WINDOW` (`src/core/state.rs:23`), `MAX_SAMPLES`, `GAP_PERIOD_TICKS`, `SAMPLING_INTERVAL`, `EXPECTED_SENSOR_COUNT`.
+- Path constants are absolute strings named `*_TARGET`: `DESKTOP_ENTRY_TARGET`, `DBUS_CONF_TARGET`, `POLKIT_POLICY_TARGET` (`src/desktop/system_integration.rs:13`).
+- Embedded assets use `EMBEDDED_*` plus `include_str!` (`src/desktop/system_integration.rs:21`).
 
-**Types:**
-- None. No type hints, annotations, `typing` imports, dataclasses, classes, or enums anywhere in the codebase. Do not introduce a type-hint style for one function — if annotations are wanted, they need a project-wide decision (and Python version pinning, which the repo lacks).
+**Test names:**
+- `snake_case`, descriptive assertion-style sentences: `missing_sensors_return_none_without_synthesizing_zero`, `history_strictly_bounds_samples_to_120_on_overflow`, `degradation_07_unauthorized_fan_write_preserves_hardware_state`.
+- Some older suites retain a `test_` prefix (`tests/desktop_integration_tests.rs`, `tests/packaging_tests.rs`, `tests/hardware_service_tests.rs`). Match the file you are editing; new test files should use the descriptive sentence form without `test_` (the majority and the newer style).
+- Numbered degradation scenarios: `degradation_01_...` through `degradation_08_...` (`tests/degradation_tests.rs`).
 
 ## Code Style
 
 **Formatting:**
-- No formatter config (no `black`, `ruff`, `autopep8`, `.editorconfig`). Formatting is hand-maintained and roughly PEP 8 with permissive spacing.
-- Observed deviations to preserve consistency with:
-  - occasional double blank lines inside functions (e.g. before `return` in `read_fan_boost_status()` `openomen:133`)
-  - occasional extra spaces for visual alignment: `idle_delta  = idle2  - idle1` (`openomen:362`), `filled  = int(...)` (`openomen:383`)
-  - trailing whitespace exists in a few places
-- Indentation: 4 spaces, LF newlines, UTF-8 with literal Unicode in output strings (`█`, `░`, `─`, `✓`, `✗`, `°`, `—`).
-- Line length is not enforced; long lines exist (e.g. the `argparse` description at `openomen:1559`, `needs_sudo` at `openomen:860`).
+- `rustfmt` with **default settings** — there is no `rustfmt.toml` or `.rustfmt.toml`. 4-space indent, 100-column default, trailing commas, one import per line where rustfmt decides.
+- CI enforces it: `cargo fmt --all -- --check` (`.github/workflows/ci.yml`, `.github/workflows/release.yml`). Run `cargo fmt --all` before committing.
+- Blank line between the import block and the first item; module docs (`//!`) come first, before imports.
 
-**Linting:**
-- None configured. No `.flake8`, `ruff.toml`, `pylintrc`, `mypy.ini`, `.pre-commit-config.yaml`.
-- Known lint-level issues exist and are tolerated today: unused imports `io` (`openomen:28`) and `contextlib` (`openomen:29`), unused constant `APP_NAME` (`openomen:34`), redundant `import sys` inside `ensure_root()` (`openomen:114`), f-string with no placeholders at `openomen:166`.
+**Import organization (rustfmt default ordering):**
+1. `std::*` imports (`use std::fs;`, `use std::sync::Arc;`)
+2. blank line
+3. external crates (`use serde::{Deserialize, Serialize};`, `use slint::{...};`, `use thiserror::Error;`)
+4. blank line
+5. crate-local imports (`use crate::core::events::{AppCommand, AppEvent};`, `use crate::hardware::HardwareProvider;`)
 
-## Import Organization
+Example: `src/core/worker.rs:17`–`24`, `src/app.rs:18`–`26`. Binary entry points import the library as `zenomen::...` (`src/main.rs:9`–`16`), never as `crate::`.
 
-**Order (single block at top, `openomen:19`–`30`):**
-1. Stdlib only, alphabetization not enforced — actual order is `argparse, os, sys, glob, subprocess, time, json, urllib.request, urllib.error, tempfile, re, io, contextlib, shutil, ssl`
-2. Then module-level constants (`VERSION`, `APP_NAME`, ANSI codes)
-3. One stray **function-local** import of `sys` inside `ensure_root()` (`openomen:114`) — remove it rather than emulate it
+**Edition-2024 idioms in use:**
+- `let ... else` for early exit: `let Some(ui) = ui.upgrade() else { ... };` (`src/app.rs:344`), `let Ok(content) = fs::read_to_string(...) else { ... };` (`src/core/diagnostics.rs:163`).
+- Let-chains: `if hp_wmi_hwmon.is_dir() && let Ok(entries) = fs::read_dir(&hp_wmi_hwmon) { ... }` (`src/service/backend.rs:81`).
+- Inline format args: `format!("Write to {} failed: {e}", path.display())`, not positional `{0}` where avoidable.
+- `Self { .. }` in constructors; `impl Default` written explicitly rather than always derived when defaults carry meaning (e.g. `HardwareCapabilities::default() == none()`, `src/hardware/provider.rs:207`).
 
-**Path Aliases:**
-- None. No package, so no `__init__.py`, no relative imports.
+## Linting
 
-**Rule for new dependencies:** the project is deliberately stdlib-only (that is what makes a 64 KB self-updating binary viable). Adding any third-party import requires updating `openomen.spec` hidden imports and `how-to-release.txt`, and should be justified in the PR.
+- Clippy is a **blocking gate with zero warnings**: `cargo clippy --all-targets --all-features -- -D warnings` (`.github/workflows/ci.yml`), and `--locked` in release (`.github/workflows/release.yml`).
+- No `clippy.toml`; no `pedantic`/`nursery` groups enabled. Write code that passes default clippy without suppressions.
+- Suppressions must be narrow, justified, and rare. The only one in the tree is `#[allow(clippy::large_enum_variant)]` on `AppEvent` (`src/core/events.rs:113`). If you add one, put a `//` comment above it explaining why the alternative is worse.
+- No `todo!()`, `unimplemented!()`, or `#[ignore]` anywhere. Do not introduce them.
 
 ## Error Handling
 
-**Patterns:**
-- `try/except` around the specific operation, catching narrow OS exceptions: `(IOError, ValueError)` for reads (`openomen:66`), `IOError` for single reads (`openomen:131`), `PermissionError` then `IOError` for writes (`openomen:173`–`179`), `OSError` for `readlink` (`openomen:410`).
-- Mixed tuples are common: `except (IOError, json.JSONDecodeError)` for profile loading (`openomen:1397`, `openomen:1409`), `except (IOError, ValueError)` for fan RPM (`openomen:69`), `except (subprocess.TimeoutExpired, FileNotFoundError)` for external tools (`openomen:680`, `openomen:1001`).
-- Message format: `print(f"Error: <what failed>: {e}", file=sys.stderr)` followed by an actionable follow-up line. Examples: `openomen:174`–`175` ("Make sure you're running with sudo."), `openomen:145`–`146` ("Make sure the hp-wmi kernel module is loaded."), `openomen:534`.
-- Warnings from non-fatal issues use the same shape with the `Warning:` prefix (`openomen:1367`, `openomen:1398`).
-- **Never raise** for expected conditions — return `False`/`None` and let the dispatcher map it to exit code 1. The only exceptions that escape are programming errors (e.g. `ValueError` from `int(col[0:2], 16)` on a malformed RGB profile, `openomen:1474`).
-- Bare `except IOError: pass` is common for optional sensors (`openomen:70`, `openomen:219`, `openomen:479`). Prefer keeping the loop resilient, but when adding a new one consider capturing the first error and surfacing it if nothing was found.
-- `KeyboardInterrupt` is caught and converted to a clean message in `monitor_stats_loop()` (`openomen:1288`), `read_cpu_stats()` (`openomen:392`), `read_gpu_stats()` (`openomen:452`), and `update_openomen()` (`openomen:984`).
-- Only one broad catch exists: `except Exception as e` in `update_openomen()` (`openomen:987`). Do not spread this pattern.
+The pattern depends on the boundary:
 
-## Logging
+**1. Library/service boundaries → typed `thiserror` enums.**
+- `HardwareControlError` (`src/service/types.rs:101`) with variants `IoError(String)`, `VerificationFailed { target, actual, retries }`, `UnsupportedMode(String)`, `PolkitDenied(String)`, `InvalidParameter(String)`, `InterfaceMissing(String)`.
+- `RgbError` (`src/rgb/schema.rs:13`), `SystemIntegrationError` (`src/desktop/system_integration.rs:29`).
+- Every variant carries a human-readable `#[error("...")]` message with named or positional fields. Structured data is kept in fields (e.g. `VerificationFailed`), not flattened into one string.
+- Use `#[from]` for transparent wrapping: `#[error("I/O error while writing system files: {0}")] Io(#[from] std::io::Error)`.
+- Cross-boundary conversion lives in `impl From<...> for ...`, e.g. `HardwareControlError -> zbus::fdo::Error` (`src/service/types.rs:132`). Do not hand-map D-Bus errors at each call site.
 
-**Framework:** None — `print()` only.
+**2. Core ↔ UI and D-Bus client boundary → `Result<T, String>`.**
+- The UI must display the reason verbatim, so the message is the payload: `Result<TelemetrySnapshot, String>` (`src/hardware/provider.rs:238`), all `HardwareServiceClient` methods (`src/service/client.rs:101`), and `AppEvent` result variants (`src/core/events.rs:132`).
+- Build messages with `.map_err(|e| format!("GetFanStatus failed: {e}"))?` — prefix the operation, keep the source. Never discard the cause.
 
-**Patterns:**
-- Success/normal output → stdout, aligned label/value with `:` padding: `f"Fan Status:       {desc}"` (`openomen:95`), `f"  Temperature:    {temp}°C"` (`openomen:440`), `f"CPU:              {cpu_name}"` (`openomen:341`).
-- Errors → `file=sys.stderr`.
-- Sections in multi-part output → `─── Name ─────` headers with U+2500 (e.g. `openomen:543`, `openomen:999`, `openomen:1051`).
-- Checklists (doctor) → `[✓]` / `[✗]` prefixes with a trailing summary line (`openomen:1276`).
-- Bars → 20-cell `█`/`░` with `{usage:5.1f}%` (`openomen:381`–`386`).
-- No log levels, no timestamps, no file output. Do not add a logging dependency for a single message.
+**3. Absence is `Option`, never an error and never a zero.**
+- Missing sensors return `None` (individual value) or an empty `Vec`/`String` (collection): `read_cpu_temp() -> Option<f32>`, `read_active_power_profile() -> Option<String>`, `TelemetrySnapshot::gpu_utilization: Option<f32>`.
+- `HardwareCapabilities::default()` is `none()` — a machine with nothing detected still launches and explains itself (`src/hardware/provider.rs:207`).
+- This is a hard project rule: a sensor that is not present reads **Unavailable**, not `0`. Tests enforce it (`tests/mock_hardware_tests.rs`, `tests/degradation_tests.rs`).
 
-## Comments
+**4. Binaries → `Result<(), Box<dyn Error>>`.**
+- `src/main.rs:19`, `src/bin/zenomen-hw.rs:12`. `anyhow` is declared in `Cargo.toml` but **not used anywhere**; do not start using it without a project decision.
 
-**When to Comment:**
-- Section banners separate subsystems: `# ====...` blocks (e.g. the RGB banner `openomen:1293`–`1301`), and `# ACPI PROFILES!!` (`openomen:747`).
-- Inline comments explain *why* a hardware workaround exists, e.g. `# Small delay for sanity check!!` (`openomen:162`), `# Verify the write actually stuck by reading back the value` (`openomen:160`), `# PyInstaller sets sys.executable to the actual binary path` (`openomen:115`), `# Intel per-core temps` in the driver list (`openomen:235`).
-- Casual tone with `!!` and lowercase fragments is established; exact tone matters less than the "why" content.
+**5. No panics in library paths.**
+- `unwrap()`/`expect()` in `src/` are confined to `#[cfg(test)]` modules and three thread-spawn sites in binaries (`src/main.rs:151`, `src/main.rs:200`, `src/core/worker.rs:326`), each with a `"... must succeed"` message.
+- External reads use `.ok()`, `unwrap_or_default()`, or `?` with a typed error. A failed read of an optional sensor must not abort the sample.
 
-**Docstrings:**
-- Every top-level function has a one-line docstring; a third use multi-line. Style: descriptive sentence fragment, often with a leading space, e.g. `""" Dynamically resolve the hwmon path for hp-wmi """` (`openomen:41`), `""" this just display current fan status and RPM information """` (`openomen:90`), `""" reads it from pwm1_enable file earlier """` (`openomen:122`).
-- No parameter/return sections, no `Args:`/`Returns:` blocks, no type info. New functions should carry a one-line docstring in the same style.
-- Module docstring (`openomen:2`–`17`) holds the copyright, trademark disclaimer, warranty disclaimer, and GPL notice — preserve it verbatim.
+## Unsafe Code
 
-## Function Design
+- `unsafe` appears in exactly one place: the `geteuid` FFI declaration and call in `src/desktop/system_integration.rs:42`–`50`.
+- Policy: unsafe is acceptable only for a tiny, audited libc call with a `#[cfg(unix)]` guard and a `#[cfg(not(unix))]` fallback. Any new `unsafe` needs a `// SAFETY:` comment stating the invariant; the existing block does not yet have one — add it if you touch that function.
+- No `unsafe` in tests, UI code, or hardware readers.
 
-**Size:** Highly variable and uncapped — `run_doctor()` is ~285 lines (`openomen:991`–`1276`), `read_system_info()` ~168 (`openomen:578`–`746`), while `check_root()` is 2 lines. Small focused helpers (`get_friendly_label()`, `find_hwmon_path()`) sit next to monoliths. When extending a long function, consider extracting rather than appending (see `CONCERNS.md`).
+## Logging (`tracing`)
 
-**Parameters:**
-- 0–2 positional params, no keyword-only args, no defaults except `update_openomen(force=False, verify=True)` (`openomen:855`) and `monitor_stats_loop(interval=1.5)` (`openomen:1278`).
-- Nested `def`s are used as closures for hardware scanning (`get_hwmon_driver()`, `read_hwmon_temps()` inside `read_temperature()` at `openomen:266`–`297`; `get_hwmon_driver_doctor()`/`read_hwmon_temps_doctor()` inside `run_doctor()`).
+- Use the `tracing` macros directly at the call site — no wrapper module, no `log` crate.
+- Subscriber setup: `tracing_subscriber::fmt::init()` in the GUI (`src/main.rs:75`), `EnvFilter` with `info` default in the daemon (`src/bin/zenomen-hw.rs:13`). `RUST_LOG` is the user-facing switch; never hardcode a filter.
+- **Structured fields, not interpolation:** `tracing::warn!(path = %path.display(), error = %e, "could not read config file; using defaults")` (`src/config/mod.rs:42`). Use `%` for `Display` values, `?` for `Debug` values (`?dropped`, `?Self::ALL`).
+- Message text is a lowercase sentence fragment describing what happened; fields carry the data. Avoid trailing periods.
+- Levels:
+  - `error!` — an operation the user asked for failed: export failure, config backup failure (`src/app.rs:251`, `src/config/mod.rs:60`).
+  - `warn!` — degraded but recoverable: provider sampling failure, corrupt config fallback, unknown mock scenario, dropped command (`src/core/worker.rs:340`, `src/config/mod.rs:73`, `src/hardware/mock.rs:78`).
+  - `info!` — lifecycle and successful mutations: startup, worker start/stop, fan mode/preset applied, config saved, profile migration report (`src/main.rs:77`, `src/core/worker.rs:223`).
+  - `debug!` — per-tick internals, channel disconnects, queue drops, worker command handling (`src/core/worker.rs:106`, `src/app.rs:363`).
+- Logging is for the journal only; **user-facing failures also travel as `AppEvent` error variants** and are rendered in the status strip/banner. A `tracing::error!` alone is not a user notification.
+- `println!` is allowed only in binary `main` paths (`src/main.rs` install/uninstall messages) and the opt-in benchmark line gated by `ZENOMEN_BENCHMARK=1` (`src/core/benchmark.rs:242`). Never `println!` from library code or per-tick loops.
 
-**Return Values:**
-- Readers return `dict` when multiple values belong together (`read_fan_rpm()`), otherwise `bool` for "did I print something".
-- Writers return `bool`; `None` is used for "not found" (`find_hwmon_path()`, `read_fan_boost_status()`, `read_power_profile()`).
-- Dispatch maps to exit codes: `return 0 if fn(...) else 1` (`openomen:1646`, `openomen:1672`, `openomen:1689`, `openomen:1697`).
+## Doc Comments
 
-**Side effects:**
-- Printing is the contract. Handlers also `time.sleep()` (`openomen:162`, `openomen:356`), re-exec the process (`openomen:119`), and spawn subprocesses — assume any `read_*`/`set_*` call may do all three.
+**Module headers (`//!`):**
+- Every non-trivial module opens with a `//!` block explaining **why the module exists, what it deliberately does not do, and which project requirement it serves**.
+- Requirement IDs are cited in parentheses: `(FOUND-05)`, `(PERF-03)`, `(MON-11)`, `(RGB-06)`, `(SYS-06)`, `(REL-03)`. Preserve this: it is how plans and tests stay traceable.
+- Use `[`Type`]` intra-doc links for cross-references: `[`provider::HardwareProvider`]`, `[`AppState::apply`]`.
+- Good examples: `src/app.rs:1`–`16` (the two-direction bridge and the `Weak` rationale), `src/hardware/provider.rs:1`–`17` (the no-fabricated-zero contract), `src/core/state.rs:1`–`11`.
 
-## Module Design
+**Item docs (`///`):**
+- Every `pub` item (struct, field, enum, variant, trait method, function) gets a `///` sentence. Private helpers get one when the intent is not obvious.
+- Describe the contract and the failure mode, not the syntax: "`Err` carries a human-readable reason the UI can show in the status strip; it must never be a panic." (`src/hardware/provider.rs:236`).
+- Doc the units and ranges: "Aggregate CPU utilization in percent (0–100)." (`src/hardware/provider.rs:156`).
+- No `# Arguments`/`# Returns` sections and no runnable doctests; this crate has none and GUI/hardware code is not doctest-friendly. Keep the prose sentence form.
+- Public error enums document each variant with a `///` line (`src/service/types.rs`).
 
-**Exports:** No `__all__`, no package. The "public API" is the CLI surface plus whatever `main()` dispatches to.
+**Slint comments:**
+- `//` header block at the top of each component explaining the layout source (`01-UI-SPEC.md`) and the invariant it enforces.
+- `///` on properties whose semantics are not obvious: "Empty string means \"no pill\" — a nominal card carries no state chrome." (`ui/components/metric-card.slint:15`).
+- Inline `//` explains non-obvious unit conversions, e.g. `letter-spacing: 0.5px; // UI-SPEC 0.04em at 12px; Slint has no em unit`.
 
-**Barrel Files:** Not applicable.
+## Representing "Unavailable" / Missing Sensors
 
-**Mutable module-level state:** Only path constants and the profile dicts; nothing is mutated at runtime except through `write_rgb_state()` (file, not memory). Avoid adding mutable globals — each invocation must remain independent.
+This is the codebase's defining convention — follow it in every new feature:
 
-**Ordering dependency (important):** constants are declared *after* functions that reference them (`PROFILE_CHOICES_PATH` at `openomen:748` is used by `read_system_info()` at `openomen:578`). This works because lookups are lazy. If you restructure the file into modules, move these to the top of their module — and if you add a new constant used by a function defined above it, put it near the existing path-constant cluster so the pattern stays readable.
+- **Data layer:** `Option<T>` per reading, empty `Vec`/`String` for collections. `TelemetrySnapshot` is the contract (`src/hardware/provider.rs:146`).
+- **Capability layer:** one flag per interface in `HardwareCapabilities`, defaulting to `false` (`cpu_metrics`, `gpu_metrics`, `ram_metrics`, `fan_rpm`, `fan_control`, `power_profiles`, `rgb_lighting`, `battery_metrics`). Query per subsystem; do not collapse to one boolean.
+- **Counting:** `reported_sensor_count()` measures presence from model/struct fields, not from numeric values — an idle CPU at 0 % still counts as reported (`src/hardware/provider.rs:183`).
+- **Service layer:** `ServiceConnectionStatus::Unavailable(String)` carries the reason (`src/service/client.rs:15`).
+- **UI:** the literal string `"Unavailable"` is the default value of value-bearing properties (`ui/components/metric-card.slint:12`), and `UnavailablePanel` is the only "cannot act here" treatment (`ui/components/unavailable-panel.slint`). Screens name the exact missing interface in the reason line.
+- **Never** substitute `0`, `0.0`, `"Unknown"`, or a plausible-looking value for a missing reading.
 
-## CLI Conventions
+## Function and Module Design
 
-- Subcommand tree built with nested `add_subparsers(dest=...)`: `command` → `fan_command` / `power_command` / `rgb_command` (`openomen:1567`–`1616`).
-- Every subcommand gets a `help=` string (short, imperative) and long commands get an `epilog` (`openomen:1562`).
-- A parent command with no subcommand prints its own help and `return 1` (`openomen:1642`–`1644`, `openomen:1670`–`1672`).
-- `-w`/`--watch` is the established flag name for live repetition (`openomen:1574`, `openomen:1576`).
-- `-v`/`--version` is registered on the root parser only (`openomen:1618`); the version string comes from `VERSION`, but the description hardcodes `V0.4.2` separately at `openomen:1559` — when bumping, update both.
-- Exit codes: `0` success, `1` failure or missing subcommand. No other codes are used.
+**Functions:**
+- Small and single-purpose; pure parsing helpers take `&str`/`&Path` and return `Option`/`Result`, so they are unit-testable without hardware (`src/hardware/linux/cpu.rs`, `src/hardware/linux/gpu.rs`).
+- Prefer 0–2 parameters; pass a struct when more are needed (e.g. `collect_diagnostics_from_roots` takes explicit roots because tests drive it).
+- Returning `()` + `tracing` is acceptable for lifecycle functions; returning `Self` chains constructors (`RgbColor::new`).
+- Blocking work never runs on the UI thread: sampling lives in `src/core/worker.rs`, and anything that sleeps documents it: "NOTE: Blocks for `window` duration. MUST NEVER be called from Slint UI thread." (`src/core/benchmark.rs:225`).
+
+**Modules:**
+- `src/lib.rs` exposes the seven public modules (`app`, `config`, `core`, `desktop`, `hardware`, `rgb`, `service`) plus `slint::include_modules!()`.
+- Each directory `mod.rs` re-exports its public surface so callers use short paths: `pub use provider::{HardwareCapabilities, HardwareProvider, TelemetrySnapshot};` (`src/hardware/mod.rs:18`), `pub use events::{AppCommand, AppEvent, ScreenId};` (`src/core/mod.rs:18`). Add new public types to the `mod.rs` re-export, not just the leaf file.
+- Dependency direction is one-way: `ui` ← `app` ← `core` ← `hardware`; `service` is the privileged side and must not depend on Slint. `src/core` never touches hardware directly, only through the `HardwareProvider` trait (`src/core/mod.rs:1`–`6`).
+- Barrel/re-export cycles are avoided by keeping `hardware/provider.rs` data-and-trait only.
+
+**Derives and serde:**
+- Data types derive `Debug, Clone` at minimum; value-like types add `PartialEq, Eq` when they contain no floats (`HardwareCapabilities`, `FanMode`, `PresetResult`); snapshot types with `f32` derive `PartialEq` but not `Eq` (`TelemetrySnapshot`).
+- Serde types add `Serialize, Deserialize`; enum wire format is normalized with `#[serde(rename_all = "lowercase")]` (`src/service/types.rs:8`).
+- Config structs use `#[serde(default)]` on every field plus an explicit `impl Default` so a partial TOML always loads (`src/config/schema.rs`), and call `sanitize()` on load and save (`src/config/mod.rs:48`, `src/config/mod.rs:87`).
+
+**Slint/UI:**
+- No hardware access in `.slint`; no literal colors (every color comes from `ThemeColors` — `ui/theme/colors.slint:7`); spacing/sizes come from `ThemeMetrics`; fonts from `ThemeTypography`.
+- Every out-of-range screen index falls back to Overview (`current-screen` in `ui/app.slint`); a bad value must never blank the window.
+- New screens go in `ui/screens/`, reusable pieces in `ui/components/`, tokens in `ui/theme/`; register the screen import in `ui/app.slint`.
+
+## Anti-Patterns (do not introduce)
+
+- **Fabricating a reading** (`0`, default string) when a sensor is absent — return `None` and let the UI render `Unavailable`.
+- **`unwrap()`/`expect()` in non-test library code** — the only permitted sites are thread spawns in binaries with an explicit `must succeed` message.
+- **`anyhow`** — it is an unused declared dependency; errors crossing boundaries are typed `thiserror` enums or `Result<_, String>` for the UI.
+- **`#[allow(...)]` without a reason comment**, or widening clippy lints to get a build green.
+- **`println!` outside `main`/benchmark opt-in** — use `tracing` with structured fields.
+- **Hardware I/O on the UI thread** or blocking calls inside Slint callbacks — queue an `AppCommand` instead (`src/app.rs:1`–`16`).
+- **New third-party crates** for small tasks — the stack is deliberately minimal (`Cargo.toml` comment on Slint features); prefer std.
+- **Literal hex colors or ad-hoc spacing in `.slint` files** — add a token to `ui/theme/*.slint` instead.
+- **Changing a write path without read-back verification** — `write_and_verify` (`src/service/backend.rs:12`) is the required pattern for every hardware write.
 
 ---
 
-*Convention analysis: 2026-10-30*
+*Convention analysis: 2026-11-02*
