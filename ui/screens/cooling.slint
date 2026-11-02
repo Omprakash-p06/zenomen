@@ -94,7 +94,6 @@ export component Cooling inherits Rectangle {
 
             if root.has-fan-rpm : HorizontalLayout {
                 spacing: ThemeMetrics.md;
-                alignment: start;
 
                 for entry[index] in root.fan-values : Rectangle {
                     min-width: 220px;
@@ -206,7 +205,6 @@ export component Cooling inherits Rectangle {
                 // Interactive control mode cards (Always visible when supported by hardware)
                 if root.has-fan-control : HorizontalLayout {
                     spacing: ThemeMetrics.md;
-                    alignment: start;
 
                     // Auto Mode Card
                     Rectangle {

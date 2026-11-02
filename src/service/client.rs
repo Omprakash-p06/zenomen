@@ -121,7 +121,7 @@ impl HardwareServiceClient {
     /// Set fan mode with verification.
     /// Mutating method: will prompt for Polkit if challenged.
     pub fn set_fan_mode(&self, mode: &str) -> Result<String, String> {
-        let conn = self.connect()?;
+        let conn = self.connect_service()?;
         let reply = conn
             .call_method(
                 Some(self.destination.as_str()),
@@ -130,7 +130,7 @@ impl HardwareServiceClient {
                 "SetFanMode",
                 &(mode,),
             )
-            .map_err(|e| format!("SetFanMode failed: {e}"))?;
+            .map_err(|e| self.format_service_error("SetFanMode", &e))?;
 
         let confirmed: String = reply
             .body()
@@ -185,7 +185,7 @@ impl HardwareServiceClient {
     /// Set ACPI platform profile with verification.
     /// Mutating method: will prompt for Polkit if challenged.
     pub fn set_power_profile(&self, profile: &str) -> Result<String, String> {
-        let conn = self.connect()?;
+        let conn = self.connect_service()?;
         let reply = conn
             .call_method(
                 Some(self.destination.as_str()),
@@ -194,7 +194,7 @@ impl HardwareServiceClient {
                 "SetPowerProfile",
                 &(profile,),
             )
-            .map_err(|e| format!("SetPowerProfile failed: {e}"))?;
+            .map_err(|e| self.format_service_error("SetPowerProfile", &e))?;
 
         let confirmed: String = reply
             .body()
@@ -206,7 +206,7 @@ impl HardwareServiceClient {
 
     /// Apply combined preset (Quiet, Balanced, Gaming) coordinating power profile and fan mode.
     pub fn apply_preset(&self, preset: &str) -> Result<PresetResult, String> {
-        let conn = self.connect()?;
+        let conn = self.connect_service()?;
         let reply = conn
             .call_method(
                 Some(self.destination.as_str()),
@@ -215,7 +215,7 @@ impl HardwareServiceClient {
                 "ApplyPreset",
                 &(preset,),
             )
-            .map_err(|e| format!("ApplyPreset failed: {e}"))?;
+            .map_err(|e| self.format_service_error("ApplyPreset", &e))?;
 
         let raw_json: String = reply
             .body()
@@ -226,6 +226,26 @@ impl HardwareServiceClient {
             .map_err(|e| format!("Invalid PresetResult JSON from service: {e}"))?;
 
         Ok(result)
+    }
+
+    /// Helper to ensure service connection or produce actionable offline guidance.
+    fn connect_service(&self) -> Result<Connection, String> {
+        if !self.status().is_connected() {
+            return Err("Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with `sudo target/debug/zenomen-hw` or install with `sudo target/debug/zenomen --install-system-integration`.".to_string());
+        }
+        self.connect()
+    }
+
+    /// Format D-Bus errors with user-actionable explanations when service is missing.
+    fn format_service_error(&self, op: &str, e: &zbus::Error) -> String {
+        let err_str = e.to_string();
+        if err_str.contains("ServiceUnknown")
+            || err_str.contains("not provided by any .service files")
+        {
+            "Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with `sudo target/debug/zenomen-hw` or install with `sudo target/debug/zenomen --install-system-integration`.".to_string()
+        } else {
+            format!("{op} failed: {err_str}")
+        }
     }
 
     /// Check polkit authorization readiness without user prompting (DIAG-04).

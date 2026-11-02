@@ -265,10 +265,17 @@ export component AppWindow inherits Window {
                         width: 100%;
                         height: 100%;
 
-                        VerticalLayout {
+                        HorizontalLayout {
+                            alignment: center;
                             padding: ThemeMetrics.lg;
-                            spacing: ThemeMetrics.lg;
-                            alignment: start;
+
+                            Rectangle {
+                                max-width: 1040px;
+                                horizontal-stretch: 1;
+
+                                VerticalLayout {
+                                    spacing: ThemeMetrics.lg;
+                                    alignment: start;
 
                             if root.current-screen == 0 : Overview {
                                 has-cpu-metrics: root.has-cpu-metrics;
@@ -417,6 +424,8 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+            }
+        }
             }
         }
     }
