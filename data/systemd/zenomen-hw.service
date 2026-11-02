@@ -7,7 +7,7 @@ Wants=dbus.service
 [Service]
 Type=dbus
 BusName=com.zenomen.Hardware1
-ExecStart=/usr/local/bin/zenomen-hw
+ExecStart=/usr/bin/zenomen-hw
 Restart=on-failure
 RestartSec=3s
 

@@ -17,6 +17,33 @@ use zenomen::hardware::{HardwareProvider, MockHardware};
 use zenomen::AppWindow;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Check for root-only system integration commands before launching GUI (REL-03)
+    if std::env::args().any(|a| a == "--install-system-integration") {
+        match zenomen::desktop::install_system_integration() {
+            Ok(()) => {
+                println!("ZenOmen system integration installed successfully.");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error installing system integration: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if std::env::args().any(|a| a == "--uninstall-system-integration") {
+        match zenomen::desktop::uninstall_system_integration() {
+            Ok(()) => {
+                println!("ZenOmen system integration uninstalled successfully.");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error uninstalling system integration: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // 0. Load persistent configuration (SYS-06, SYS-07)
     let config_path = zenomen::config::default_config_path()
         .unwrap_or_else(|| std::path::PathBuf::from("config.toml"));

@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable, clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Install native Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libfontconfig1-dev \
+            libgl1-mesa-dev \
+            xvfb \
+            dpkg-dev \
+            file \
+            libfuse2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (zero warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test (headless)
+        run: xvfb-run --auto-servernum cargo test --all
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Security audit
+        run: cargo audit
+
+      - name: Install cargo-packager
+        uses: taiki-e/install-action@cargo-packager
+
+      - name: Build release packages (DEB & AppImage)
+        run: cargo packager --release --formats deb,appimage
+
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        run: |
+          sha256sum *.deb *.AppImage > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS
+          draft: false
+          prerelease: false
+          generate_release_notes: true
