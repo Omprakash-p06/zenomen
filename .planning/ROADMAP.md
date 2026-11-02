@@ -121,7 +121,10 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 - [ ] 05-01: Packaging — DEB, AppImage, desktop entry, systemd unit, D-Bus/polkit policy, CI/release workflows with checksums and audit gate
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 05-02: Resource budget measurement — empirical cold start, warm dashboard, minimized tray, and peak RSS profiling, degradation matrix
 - [ ] 05-03: Rebrand and cleanup — README/docs, update link, remove the Python CLI after full parity verification
 

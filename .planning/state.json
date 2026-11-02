@@ -6,22 +6,22 @@
     {
       "number": "1",
       "name": "Foundation",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "2",
       "name": "Linux Telemetry",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "3",
       "name": "Verified Control",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "4",
       "name": "Desktop Integration",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "5",
@@ -30,9 +30,9 @@
     }
   ],
   "next": {
-    "command": "/gsd-progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 1 of 5 · 0% · executing"
+    "command": "/gsd-progress",
+    "label": "Show progress",
+    "reason": "Unsure of state — showing progress"
   },
-  "updated_at": "2026-11-01T06:01:30.630Z"
+  "updated_at": "2026-11-02T04:21:08.586Z"
 }

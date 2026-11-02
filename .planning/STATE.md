@@ -1,20 +1,20 @@
 ---
 gsd_state_version: "1.0"
 current_phase: 04
-current_phase_name: Desktop Integration, Config & Basic RGB
-current_plan: 3
 status: phase_complete
-stopped_at: Completed Phase 04 (Desktop Integration, Config & Basic RGB)
-last_updated: "2026-11-02T01:30:00.000Z"
-last_activity: 2026-11-02
-last_activity_desc: Phase 04 executed — all 3 plans complete and verified
-state_head: 81542c3
+last_updated: "2026-11-02T04:21:08.553Z"
+state_head: 77a5d22889974d3787a3f6b021cb6cd9ac54d655
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 15
   completed_plans: 12
   percent: 80
+last_activity: 2026-11-02
+current_phase_name: Distribution, Resource Budget & Rebrand
+current_plan: 3
+stopped_at: Completed Phase 04 (Desktop Integration, Config & Basic RGB)
+last_activity_desc: Phase 04 executed — all 3 plans complete and verified
 ---
 
 # Project State
@@ -48,6 +48,7 @@ Progress: [████████░░] 80%
 ## Accumulated Context
 
 ### Decisions
+
 - **Two-Process Architecture:** Unprivileged desktop GUI (`zenomen-gui`, ≤40 MB peak RSS) + privileged system D-Bus daemon (`zenomen-hw`, ≤15 MB RSS) over 3 logical layers. Kernel interfaces are an interface layer, not an application process.
 - **Single Shared SensorRegistry:** Centralized sensor discovery (`src/hardware/registry.rs`) eliminates heuristic drift between dashboard telemetry and diagnostics export (MON-12). Dynamic DRM card resolution replaces legacy hardcoded `card0` (MON-05).
 - **Driver & Label Priority Matrix:** Resolves CPU temperature strictly via `k10temp` (AMD Zen: Tctl/Tdie) > `coretemp` (Intel: Package id 0) > `acpitz` fallback (MON-04).
