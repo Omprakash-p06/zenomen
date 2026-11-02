@@ -49,22 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| std::path::PathBuf::from("config.toml"));
     let (config, corrupt_notice) = zenomen::config::load_or_default(&config_path);
 
-    // Migrate legacy OpenOMEN RGB profiles non-destructively if present (RGB-05)
-    if let (Some(source_dir), Some(target_dir)) = (
-        zenomen::rgb::default_openomen_rgb_dir(),
-        zenomen::rgb::default_zenomen_rgb_dir(),
-    ) {
-        let report = zenomen::rgb::migrate_openomen_profiles(&source_dir, &target_dir);
-        if report.total_scanned > 0 {
-            tracing::info!(
-                scanned = report.total_scanned,
-                imported = report.imported.len(),
-                skipped = report.skipped.len(),
-                "OpenOMEN RGB profiles migration report"
-            );
-        }
-    }
-
     // 1. Check CLI args or config for start-minimized flag (SYS-03)
     let start_minimized = std::env::args().any(|arg| arg == "--minimized" || arg == "-m")
         || config.general.start_minimized;
@@ -92,6 +76,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting ZenOmen");
     log_benchmark("cold-start");
+
+    // Migrate legacy OpenOMEN RGB profiles non-destructively if present (RGB-05, IN-08)
+    if let (Some(source_dir), Some(target_dir)) = (
+        zenomen::rgb::default_openomen_rgb_dir(),
+        zenomen::rgb::default_zenomen_rgb_dir(),
+    ) {
+        let report = zenomen::rgb::migrate_openomen_profiles(&source_dir, &target_dir);
+        if report.total_scanned > 0 {
+            tracing::info!(
+                scanned = report.total_scanned,
+                imported = report.imported.len(),
+                preserved = report.preserved.len(),
+                skipped = report.skipped.len(),
+                "OpenOMEN RGB profiles migration report"
+            );
+        }
+    }
 
     let ui = AppWindow::new()?;
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
@@ -167,9 +168,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(scenario) = scenario_name {
         tracing::info!(scenario, "mock hardware provider initialized");
         ui.set_provider_mode("mock".into());
+        app.set_provider_label("Mock provider");
     } else {
         tracing::info!("linux hardware provider initialized");
         ui.set_provider_mode("linux".into());
+        app.set_provider_label("Linux provider");
     }
 
     if let Some(reg) = registry_opt {
@@ -210,11 +213,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         slint::run_event_loop_until_quit()?;
     }
 
-    // Clean teardown: drop window and app to close channels and terminate worker/pump
+    // Clean teardown: explicit shutdown signal, then drop senders in dependency order (CR-01)
+    let _ = command_sender.try_send(zenomen::core::AppCommand::Shutdown);
+    drop(command_sender);
     drop(ui);
     drop(app);
     let _ = worker.join();
     let _ = event_pump.join();
+    drop(_session_conn);
     let _ = desktop_action_thread.join();
 
     tracing::info!("ZenOmen shut down cleanly");

@@ -22,7 +22,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "zenomen") | .version')
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag v$tag does not match Cargo.toml version $ver" >&2
+            exit 1
+          fi
 
       - name: Install Rust toolchain (stable, clippy, rustfmt)
         run: |
@@ -46,22 +57,34 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (zero warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Test (headless)
-        run: xvfb-run --auto-servernum cargo test --all
+        run: xvfb-run --auto-servernum cargo test --locked --all
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
+        uses: taiki-e/install-action@51c68eec2f87cf80a8276f57ee92a2a7a8d569cc # v2.49.18
+        with:
+          tool: cargo-audit
 
       - name: Security audit
         run: cargo audit
 
       - name: Install cargo-packager
-        uses: taiki-e/install-action@cargo-packager
+        uses: taiki-e/install-action@51c68eec2f87cf80a8276f57ee92a2a7a8d569cc # v2.49.18
+        with:
+          tool: cargo-packager
 
       - name: Build release packages (DEB & AppImage)
         run: cargo packager --release --formats deb,appimage
+
+      - name: Verify artifact filenames match version
+        working-directory: dist
+        run: |
+          ver=$(cargo metadata --no-deps --format-version 1 --manifest-path ../Cargo.toml \
+            | jq -r '.packages[] | select(.name == "zenomen") | .version')
+          ls *"$ver"*.deb
+          ls *"$ver"*.AppImage
 
       - name: Generate SHA-256 checksums
         working-directory: dist
@@ -71,7 +94,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c95c14d83b5ac94360644342dd3080ff559f6d48 # v2.2.1
         with:
           files: |
             dist/*.deb

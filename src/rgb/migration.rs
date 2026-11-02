@@ -16,6 +16,8 @@ use crate::rgb::schema::{RgbColor, RgbError, RgbProfile};
 pub struct MigrationReport {
     /// Successfully imported profile IDs.
     pub imported: Vec<String>,
+    /// Files preserved because target profile already existed.
+    pub preserved: Vec<(String, String)>,
     /// Files skipped due to parsing or validation errors, with reason.
     pub skipped: Vec<(String, String)>,
     /// Total count of source files scanned.
@@ -43,7 +45,7 @@ pub fn default_openomen_rgb_dir() -> Option<PathBuf> {
 
 /// Resolve the ZenOmen RGB profile storage directory (`~/.config/zenomen/rgb`).
 pub fn default_zenomen_rgb_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "zenomen").map(|dirs| dirs.config_dir().join("rgb"))
+    crate::config::project_dirs().map(|dirs| dirs.config_dir().join("rgb"))
 }
 
 /// Return standard static built-in RGB presets (RGB-03).
@@ -223,7 +225,12 @@ pub fn migrate_openomen_profiles(source_dir: &Path, target_dir: &Path) -> Migrat
             Ok(profile) => {
                 let target_path = target_dir.join(format!("{}.json", profile.id));
                 // Only write if target does not already exist, to preserve user modifications
-                if !target_path.exists() {
+                if target_path.exists() {
+                    report.preserved.push((
+                        file_stem.to_string(),
+                        "target exists; kept existing profile".to_string(),
+                    ));
+                } else {
                     match serde_json::to_string_pretty(&profile) {
                         Ok(json_str) => {
                             if let Err(e) = fs::write(&target_path, json_str) {
@@ -232,6 +239,7 @@ pub fn migrate_openomen_profiles(source_dir: &Path, target_dir: &Path) -> Migrat
                                     .push((file_stem.to_string(), format!("Write error: {e}")));
                                 continue;
                             }
+                            report.imported.push(profile.id);
                         }
                         Err(e) => {
                             report
@@ -241,7 +249,6 @@ pub fn migrate_openomen_profiles(source_dir: &Path, target_dir: &Path) -> Migrat
                         }
                     }
                 }
-                report.imported.push(profile.id);
             }
             Err(err) => {
                 report
@@ -254,6 +261,7 @@ pub fn migrate_openomen_profiles(source_dir: &Path, target_dir: &Path) -> Migrat
     tracing::info!(
         scanned = report.total_scanned,
         imported = report.imported.len(),
+        preserved = report.preserved.len(),
         skipped = report.skipped.len(),
         "OpenOMEN profile migration complete"
     );

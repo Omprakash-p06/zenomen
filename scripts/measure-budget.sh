@@ -11,19 +11,22 @@ if [ "${1:-}" = "--soak" ]; then
     SOAK_MODE=true
     SOAK_DURATION="${2:-7200}"
     shift 2
+    STAGE="${1:?missing stage}"
+    shift 1
+    DURATION="$SOAK_DURATION"
+else
+    STAGE="${1:-dashboard-open}"
+    DURATION="${2:-60}"
+    if [ "$#" -lt 2 ]; then
+        echo "Usage: $0 [--soak <seconds>] <stage> <duration-seconds> <command...>" >&2
+        exit 1
+    fi
+    shift 2
 fi
-
-STAGE="${1:-dashboard-open}"
-DURATION="${2:-60}"
-shift 2
 
 if [ "$#" -lt 1 ]; then
     echo "Usage: $0 [--soak <seconds>] <stage> <duration-seconds> <command...>" >&2
     exit 1
-fi
-
-if [ "$SOAK_MODE" = true ]; then
-    DURATION="$SOAK_DURATION"
 fi
 
 CLK_TCK=$(getconf CLK_TCK 2>/dev/null || echo 100)

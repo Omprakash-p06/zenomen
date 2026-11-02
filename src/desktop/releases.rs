@@ -19,17 +19,26 @@ pub enum ReleasesError {
     Spawn(#[from] io::Error),
 }
 
-/// Open the official GitHub Releases page in the user's default web browser.
+/// Open the official GitHub Releases page using a specified launcher command.
 ///
-/// Spawns `xdg-open` asynchronously without blocking and without waiting for
-/// the child process.
-pub fn open_releases_page() -> Result<(), ReleasesError> {
-    Command::new("xdg-open")
+/// Spawns the launcher asynchronously and reaps the child process on a background
+/// thread to avoid leaving zombie processes (IN-11).
+pub fn open_releases_page_with(launcher: &str) -> Result<(), ReleasesError> {
+    let mut child = Command::new(launcher)
         .arg(RELEASES_URL)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
 
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
     Ok(())
+}
+
+/// Open the official GitHub Releases page in the user's default web browser.
+pub fn open_releases_page() -> Result<(), ReleasesError> {
+    open_releases_page_with("xdg-open")
 }

@@ -273,6 +273,8 @@ fn test_configuration_and_policy_assets_exist() {
     assert!(systemd_service.contains("BusName=com.zenomen.Hardware1"));
     assert!(systemd_service.contains("ProtectSystem=strict"));
     assert!(
-        systemd_service.contains("ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi")
+        systemd_service
+            .contains("ReadWritePaths=-/sys/devices/platform/hp-wmi -/sys/firmware/acpi")
     );
+    assert!(systemd_service.contains("NoNewPrivileges=true"));
 }

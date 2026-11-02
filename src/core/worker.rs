@@ -16,7 +16,7 @@
 //!    and only receives plain events through the bridge.
 
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -221,58 +221,72 @@ pub fn spawn_monitoring_worker(
                         }
                         AppCommand::SetFanMode(mode) => {
                             tracing::info!(mode = mode.as_str(), "applying fan mode via service");
-                            let res = client.set_fan_mode(&mode);
-                            if event_sender.send(AppEvent::FanModeChanged(res)).is_err() {
-                                break;
-                            }
+                            let c = client.clone();
+                            let tx = event_sender.clone();
+                            execute_mutating_action(
+                                "fan",
+                                tx,
+                                move || c.set_fan_mode(&mode),
+                                AppEvent::FanModeChanged,
+                            );
                         }
                         AppCommand::SetPowerProfile(profile) => {
                             tracing::info!(
                                 profile = profile.as_str(),
                                 "applying power profile via service"
                             );
-                            let res = client.set_power_profile(&profile);
-                            if event_sender
-                                .send(AppEvent::PowerProfileChanged(res))
-                                .is_err()
-                            {
-                                break;
-                            }
+                            let c = client.clone();
+                            let tx = event_sender.clone();
+                            execute_mutating_action(
+                                "power",
+                                tx,
+                                move || c.set_power_profile(&profile),
+                                AppEvent::PowerProfileChanged,
+                            );
                         }
                         AppCommand::ApplyPreset(preset) => {
                             tracing::info!(preset = preset.as_str(), "applying preset via service");
-                            let res = client.apply_preset(&preset);
-                            if event_sender.send(AppEvent::PresetApplied(res)).is_err() {
-                                break;
-                            }
+                            let c = client.clone();
+                            let tx = event_sender.clone();
+                            execute_mutating_action(
+                                "preset",
+                                tx,
+                                move || c.apply_preset(&preset),
+                                AppEvent::PresetApplied,
+                            );
                         }
                         AppCommand::ApplyRgbProfile(profile) => {
                             tracing::info!(
                                 profile = profile.name.as_str(),
                                 "applying RGB profile via service"
                             );
-                            let res = client.apply_rgb_profile(&profile);
-                            let event_res = res.map(|_| profile);
-                            if event_sender
-                                .send(AppEvent::RgbProfileApplied(event_res))
-                                .is_err()
-                            {
-                                break;
-                            }
+                            let c = client.clone();
+                            let tx = event_sender.clone();
+                            let p = profile.clone();
+                            execute_mutating_action(
+                                "rgb-prof",
+                                tx,
+                                move || c.apply_rgb_profile(&p),
+                                move |res| AppEvent::RgbProfileApplied(res.map(|_| profile)),
+                            );
                         }
                         AppCommand::SetRgbPower(enabled) => {
                             tracing::info!(enabled, "setting RGB power via service");
-                            let res = client.set_rgb_enabled(enabled);
-                            let event_res = res.map(|_| enabled);
-                            if event_sender
-                                .send(AppEvent::RgbPowerChanged(event_res))
-                                .is_err()
-                            {
-                                break;
-                            }
+                            let c = client.clone();
+                            let tx = event_sender.clone();
+                            execute_mutating_action(
+                                "rgb-pwr",
+                                tx,
+                                move || c.set_rgb_enabled(enabled),
+                                move |res| AppEvent::RgbPowerChanged(res.map(|_| enabled)),
+                            );
                         }
                         AppCommand::DismissControlError => {
                             let _ = event_sender.send(AppEvent::ControlErrorDismissed);
+                        }
+                        AppCommand::Shutdown => {
+                            tracing::debug!("shutdown command received; exiting worker");
+                            break;
                         }
                     }
                 } else {
@@ -329,4 +343,38 @@ fn sample_and_dispatch(
                 .is_ok()
         }
     }
+}
+
+/// Offload mutating hardware operations with a 30s timeout to a dedicated background
+/// worker, ensuring the monitoring loop is never blocked by polkit prompts (WR-01).
+fn execute_mutating_action<F, R>(
+    name: &'static str,
+    event_sender: Sender<AppEvent>,
+    f: F,
+    event_builder: impl FnOnce(Result<R, String>) -> AppEvent + Send + 'static,
+) where
+    F: FnOnce() -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let _ = std::thread::Builder::new()
+        .name(format!("zenomen-ctrl-{name}"))
+        .spawn(move || {
+            let (tx, rx) = mpsc::channel();
+            let _ = std::thread::Builder::new()
+                .name(format!("zenomen-rpc-{name}"))
+                .spawn(move || {
+                    let _ = tx.send(f());
+                });
+            let res = match rx.recv_timeout(Duration::from_secs(30)) {
+                Ok(r) => r,
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(
+                    "Operation timed out waiting for authorization or hardware response"
+                        .to_string(),
+                ),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    Err("Control RPC thread exited prematurely".to_string())
+                }
+            };
+            let _ = event_sender.send(event_builder(res));
+        });
 }

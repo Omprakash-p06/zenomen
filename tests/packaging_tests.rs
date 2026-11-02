@@ -32,6 +32,14 @@ fn test_embedded_assets_match_disk_files() {
         "Embedded D-Bus conf must match data/dbus/com.zenomen.Hardware1.conf"
     );
 
+    let dbus_srv_disk =
+        fs::read_to_string("data/dbus/com.zenomen.Hardware1.service").expect("dbus service exists");
+    assert_eq!(
+        zenomen::desktop::system_integration::EMBEDDED_DBUS_SERVICE,
+        dbus_srv_disk,
+        "Embedded D-Bus service must match data/dbus/com.zenomen.Hardware1.service"
+    );
+
     let polkit_disk = fs::read_to_string("data/polkit/com.zenomen.hardware.policy")
         .expect("polkit policy exists");
     assert_eq!(
@@ -68,6 +76,8 @@ fn test_install_and_uninstall_to_prefix_mock() {
     let desktop_file = temp_dir.join(DESKTOP_ENTRY_TARGET.trim_start_matches('/'));
     let unit_file = temp_dir.join(SYSTEMD_UNIT_TARGET.trim_start_matches('/'));
     let dbus_file = temp_dir.join(DBUS_CONF_TARGET.trim_start_matches('/'));
+    let dbus_srv_file = temp_dir
+        .join(zenomen::desktop::system_integration::DBUS_SERVICE_TARGET.trim_start_matches('/'));
     let polkit_file = temp_dir.join(POLKIT_POLICY_TARGET.trim_start_matches('/'));
 
     assert!(
@@ -76,6 +86,10 @@ fn test_install_and_uninstall_to_prefix_mock() {
     );
     assert!(unit_file.is_file(), "unit file should exist in prefix");
     assert!(dbus_file.is_file(), "dbus file should exist in prefix");
+    assert!(
+        dbus_srv_file.is_file(),
+        "dbus service file should exist in prefix"
+    );
     assert!(polkit_file.is_file(), "polkit file should exist in prefix");
 
     assert_eq!(
@@ -88,6 +102,10 @@ fn test_install_and_uninstall_to_prefix_mock() {
     );
     assert_eq!(fs::read_to_string(&dbus_file).unwrap(), EMBEDDED_DBUS_CONF);
     assert_eq!(
+        fs::read_to_string(&dbus_srv_file).unwrap(),
+        zenomen::desktop::system_integration::EMBEDDED_DBUS_SERVICE
+    );
+    assert_eq!(
         fs::read_to_string(&polkit_file).unwrap(),
         EMBEDDED_POLKIT_POLICY
     );
@@ -98,6 +116,10 @@ fn test_install_and_uninstall_to_prefix_mock() {
     assert!(!desktop_file.exists(), "desktop file should be deleted");
     assert!(!unit_file.exists(), "unit file should be deleted");
     assert!(!dbus_file.exists(), "dbus file should be deleted");
+    assert!(
+        !dbus_srv_file.exists(),
+        "dbus service file should be deleted"
+    );
     assert!(!polkit_file.exists(), "polkit file should be deleted");
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -126,4 +148,25 @@ fn test_atomic_write_file_creates_content_cleanly() {
     assert_eq!(entries[0], target);
 
     let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cargo_toml_deb_files_mappings() {
+    let cargo_toml = fs::read_to_string("Cargo.toml").expect("Cargo.toml must exist");
+    assert!(
+        cargo_toml.contains("\"NOTICE\" = \"/usr/share/doc/zenomen/NOTICE\""),
+        "deb.files must map NOTICE (IN-04)"
+    );
+    assert!(
+        cargo_toml.contains("\"data/dbus/com.zenomen.Hardware1.service\" = \"/usr/share/dbus-1/system-services/com.zenomen.Hardware1.service\""),
+        "deb.files must map D-Bus system-service file (WR-07)"
+    );
+    assert!(
+        cargo_toml.contains("binaries-dir = \"target/release\""),
+        "packager config must specify binaries-dir (WR-08)"
+    );
+    assert!(
+        !cargo_toml.contains("[package.metadata.packager.appimage]"),
+        "packager config must not include invalid appimage.bins (WR-08)"
+    );
 }

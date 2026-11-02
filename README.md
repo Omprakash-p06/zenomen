@@ -12,7 +12,7 @@ A lightweight, native hardware control center for HP OMEN and Victus laptops on 
 
 ZenOmen is written from scratch in Rust and Slint to deliver a fast, responsive, and low-overhead control center. Features available today:
 
-- **Hardware Telemetry**: Live CPU, GPU, and RAM utilization, package temperatures, and fan speeds (RPM), rendered via 60-second real-time telemetry sparklines and charts.
+- **Hardware Telemetry**: Live CPU, GPU, and RAM utilization, package temperatures, and fan speeds (RPM), rendered via configurable (default 120-second) real-time telemetry sparklines and charts.
 - **Fan Controls**: Switching between automatic fan management and max cooling mode via the privileged hardware daemon.
 - **Power Profiles**: Dynamic discovery and switching across kernel power performance profiles (`quiet`, `balanced`, `performance`).
 - **Keyboard RGB**: Lighting control with kernel patch sysfs, legacy sysfs, and 4-zone support, verified hardware write cycles, and built-in presets.
@@ -48,14 +48,14 @@ The package automatically installs the desktop entry, icons, D-Bus system bus co
 Make the AppImage executable and run it:
 
 ```bash
-chmod +x ZenOmen-0.1.0-x86_64.AppImage
-./ZenOmen-0.1.0-x86_64.AppImage
+chmod +x ZenOmen_0.1.0_amd64.AppImage
+./ZenOmen_0.1.0_amd64.AppImage
 ```
 
 To enable hardware fan and power control under AppImage, register system integration files once as root:
 
 ```bash
-sudo ./ZenOmen-0.1.0-x86_64.AppImage --install-system-integration
+sudo ./ZenOmen_0.1.0_amd64.AppImage --install-system-integration
 ```
 
 For full packaging details and instructions for building from source, see [docs/PACKAGING.md](docs/PACKAGING.md).

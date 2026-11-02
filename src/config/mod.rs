@@ -16,10 +16,14 @@ pub use schema::{
     MIN_POLLING_INTERVAL_MS, TelemetryConfig,
 };
 
+/// Standard ProjectDirs helper for ZenOmen user paths (IN-02).
+pub fn project_dirs() -> Option<directories::ProjectDirs> {
+    directories::ProjectDirs::from("com", "zenomen", "zenomen")
+}
+
 /// Get the default path for ZenOmen's configuration file.
 pub fn default_config_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "zenomen")
-        .map(|dirs| dirs.config_dir().join("config.toml"))
+    project_dirs().map(|dirs| dirs.config_dir().join("config.toml"))
 }
 
 /// Load configuration from disk, or return safe defaults if not found.

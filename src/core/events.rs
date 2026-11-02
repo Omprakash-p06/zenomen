@@ -99,6 +99,8 @@ pub enum AppCommand {
     SetRgbPower(bool),
     /// Notify worker of window visibility to pause/resume sampling (PERF-02).
     SetUiVisible(bool),
+    /// Terminate the monitoring worker without depending on channel disconnect (CR-01).
+    Shutdown,
 }
 
 /// Something the core wants the UI to show.

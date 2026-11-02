@@ -11,17 +11,25 @@ ExecStart=/usr/bin/zenomen-hw
 Restart=on-failure
 RestartSec=3s
 
-# Security Sandboxing (SVC-05)
+# Security Sandboxing (SVC-05, WR-03, WR-04)
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/
-ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi
+# Prefix with '-' so absent optional hardware paths do not fail unit start (WR-03)
+ReadWritePaths=-/sys/devices/platform/hp-wmi -/sys/firmware/acpi -/sys/class/hwmon -/sys/class/leds
 PrivateTmp=true
-ProtectKernelTunables=true
+# ProtectKernelTunables is omitted because it renders /sys read-only,
+# conflicting with sysfs fan/power/RGB control carve-outs (WR-03).
 ProtectControlGroups=true
 RestrictRealtime=true
 RestrictNamespaces=true
-NoNewPrivileges=false
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+LockPersonality=true
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target

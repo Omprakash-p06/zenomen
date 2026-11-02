@@ -10,7 +10,7 @@ This document tracks functional parity between the legacy Python CLI (`openomen`
 |---|---|---|---|---|
 | **FAN-01 / COOL-01** | Reads fan RPM from hwmon sysfs | `src/hardware/linux/sensors.rs` | `tests/sensor_registry_tests.rs` | **PARITY (Automated)** |
 | **FAN-02 / COOL-02** | Reports fan mode (auto, max, manual) | `src/service/backend.rs`, `src/hardware/provider.rs` | `tests/fan_control_tests.rs` | **PARITY (Automated)** |
-| **FAN-03 / COOL-03** | Switches fan modes via sysfs writes | `src/service/backend.rs`, `src/service/service.rs` | `tests/hardware_service_tests.rs` | **PARITY (Automated)** |
+| **FAN-03 / COOL-03** | Switches fan modes via sysfs writes | `src/service/backend.rs`, `src/service/contract.rs` | `tests/hardware_service_tests.rs` | **PARITY (Automated)** |
 | **FAN-04 / COOL-04** | Writes mode and assumes success | `src/service/backend.rs` (verified write/backoff) | `tests/hardware_service_tests.rs` | **SUPERIOR (Automated)** |
 | **COOL-05** | Crashed or errored on unsupported model | `src/hardware/registry.rs`, `src/app.rs` | `tests/degradation_tests.rs` | **SUPERIOR (Automated)** |
 | **COOL-06** | Required root privilege for CLI reads | `src/hardware/linux/sensors.rs` (unprivileged reads) | `tests/sensor_registry_tests.rs` | **SUPERIOR (Automated)** |
@@ -22,24 +22,24 @@ This document tracks functional parity between the legacy Python CLI (`openomen`
 | **MON-06** | GPU VRAM & power draw | `src/hardware/linux/gpu.rs` | `tests/linux_gpu_tests.rs` | **PARITY (Automated)** |
 | **MON-07** | Absent in Python CLI (no RAM metrics) | `src/hardware/linux/procfs.rs` (`MemAvailable`) | `tests/linux_procfs_tests.rs` | **NEW FEATURE (Automated)** |
 | **MON-08** | Emitted `0` or failed on missing sensors | `src/hardware/registry.rs` (`None` / Unavailable) | `tests/degradation_tests.rs` | **SUPERIOR (Automated)** |
-| **MON-09** | Absent in Python CLI (no history) | `src/core/history.rs` (bounded buffer) | `tests/telemetry_history_tests.rs` | **NEW FEATURE (Automated)** |
+| **MON-09** | Absent in Python CLI (no history) | `src/core/telemetry.rs` (bounded buffer) | `tests/telemetry_history_tests.rs` | **NEW FEATURE (Automated)** |
 | **MON-10** | Continuous terminal output loop | `src/core/worker.rs` (on-demand refresh command) | `tests/benchmark_tests.rs` | **PARITY (Automated)** |
 | **MON-11** | Unconfigurable fixed loop | `src/config/mod.rs` (30s, 60s, 120s, 300s window) | `tests/config_tests.rs` | **NEW FEATURE (Automated)** |
 | **MON-12** | Diverging heuristics between CLI modes | `src/hardware/registry.rs` (shared registry) | `tests/sensor_registry_tests.rs` | **SUPERIOR (Automated)** |
 | **PWR-01** | Hardcoded `platform_profile` choices | `src/service/backend.rs` (dynamic sysfs enum) | `tests/power_preset_tests.rs` | **SUPERIOR (Automated)** |
 | **PWR-02** | Display active power profile | `src/service/backend.rs` | `tests/power_preset_tests.rs` | **PARITY (Automated)** |
-| **PWR-03** | Write to `/sys/firmware/acpi/platform_profile` | `src/service/backend.rs`, `src/service/service.rs` | `tests/hardware_service_tests.rs` | **PARITY (Automated)** |
+| **PWR-03** | Write to `/sys/firmware/acpi/platform_profile` | `src/service/backend.rs`, `src/service/contract.rs` | `tests/hardware_service_tests.rs` | **PARITY (Automated)** |
 | **PWR-04** | Unverified sysfs write | `src/service/backend.rs` (read-back verification) | `tests/power_preset_tests.rs` | **SUPERIOR (Automated)** |
-| **PWR-05** | Combined presets (Quiet/Balanced/Gaming) | `src/core/worker.rs`, `src/service/service.rs` | `tests/power_preset_tests.rs` | **PARITY (Automated)** |
+| **PWR-05** | Combined presets (Quiet/Balanced/Gaming) | `src/core/worker.rs`, `src/service/contract.rs` | `tests/power_preset_tests.rs` | **PARITY (Automated)** |
 | **PWR-06** | Presets lacked failure feedback | `src/core/events.rs` (`PresetResult` partial reporting) | `tests/power_preset_tests.rs` | **SUPERIOR (Automated)** |
 | **RGB-01** | Interface variant detection | `src/hardware/rgb.rs` (4-zone, legacy, kernel patch) | `tests/rgb_tests.rs` | **PARITY (Automated)** |
 | **RGB-02** | Active profile state tracking | `src/app.rs`, `src/hardware/rgb.rs` | `tests/rgb_tests.rs` | **PARITY (Automated)** |
-| **RGB-03** | Apply RGB lighting preset | `src/hardware/rgb.rs`, `src/service/service.rs` | `tests/rgb_tests.rs` | **PARITY (Automated)** |
-| **RGB-04** | Keyboard lighting power switch | `src/hardware/rgb.rs`, `src/service/service.rs` | `tests/rgb_tests.rs` | **PARITY (Automated)** |
+| **RGB-03** | Apply RGB lighting preset | `src/hardware/rgb.rs`, `src/service/contract.rs` | `tests/rgb_tests.rs` | **PARITY (Automated)** |
+| **RGB-04** | Keyboard lighting power switch | `src/hardware/rgb.rs`, `src/service/contract.rs` | `tests/rgb_tests.rs` | **PARITY (Automated)** |
 | **RGB-05** | Read profiles in `~/.config/openomen/rgb/` | `src/rgb/migration.rs` (lossless profile import) | `tests/rgb_tests.rs` | **PARITY (Automated)** |
 | **RGB-06** | Uncaught Python tracebacks on bad color | `src/hardware/rgb.rs` (strict `#RRGGBB` parse) | `tests/rgb_tests.rs` | **SUPERIOR (Automated)** |
 | **RGB-07** | Silently ignored unsupported fields | `src/hardware/rgb.rs` (transparently explained) | `tests/rgb_tests.rs` | **SUPERIOR (Automated)** |
-| **RGB-08** | Direct unprivileged or sudo write | `src/service/service.rs` (Polkit verified write) | `tests/hardware_service_tests.rs` | **SUPERIOR (Automated)** |
+| **RGB-08** | Direct unprivileged or sudo write | `src/service/contract.rs` (Polkit verified write) | `tests/hardware_service_tests.rs` | **SUPERIOR (Automated)** |
 | **SVC-01** | Sudo re-exec for CLI execution | Separate unprivileged GUI (`zenomen`) process | `tests/packaging_tests.rs` | **SUPERIOR (Automated)** |
 | **SVC-02** | Direct `/dev/ec` / sysfs writes by CLI | `com.zenomen.Hardware1` D-Bus system service | `tests/hardware_service_tests.rs` | **SUPERIOR (Automated)** |
 | **SVC-03** | Uncontrolled root execution | Polkit authorization (`com.zenomen.hardware.control`) | `tests/hardware_service_tests.rs` | **SUPERIOR (Automated)** |
@@ -80,6 +80,6 @@ The following behaviors implemented in the Python `openomen` CLI are intentional
 ## 3. Summary & Parity Certification
 
 - **Total Functional Requirements Mapped**: 53 requirements across Cooling/Fans, Power Profiles, Monitoring, RGB Lighting, Hardware Service, System Integration, and Diagnostics.
-- **Automated Verification**: 48 requirements verified by 72 automated integration tests in `tests/`.
+- **Automated Verification**: 48 requirements verified by 78 automated integration tests in `tests/` (107 automated tests across `tests/` and `src/`).
 - **Manual Verification**: 5 desktop-interaction requirements verified manually on real Linux desktop environments.
 - **Parity Verdict**: The Rust implementation matches or strictly exceeds 100% of the functional hardware capabilities previously provided by the Python `openomen` CLI. The legacy Python script (`openomen`), PyInstaller specification (`openomen.spec`), and manual release notes (`how-to-release.txt`) have zero remaining unique functionality and are approved for deletion.

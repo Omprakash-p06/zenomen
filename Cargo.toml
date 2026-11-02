@@ -54,11 +54,12 @@ icons = [
   "data/icons/hicolor/scalable/apps/zenomen.svg",
 ]
 out-dir = "dist"
+binaries-dir = "target/release"
 binaries = [
   { path = "zenomen", main = true },
   { path = "zenomen-hw", main = false },
 ]
-before-packaging-command = "cargo build --release --bins"
+before-packaging-command = "cargo build --release --bins --locked"
 
 [package.metadata.packager.deb]
 depends = ["libxkbcommon0", "libfontconfig1", "libgl1", "libdbus-1-3"]
@@ -66,10 +67,9 @@ depends = ["libxkbcommon0", "libfontconfig1", "libgl1", "libdbus-1-3"]
 [package.metadata.packager.deb.files]
 "data/applications/zenomen.desktop" = "/usr/share/applications/zenomen.desktop"
 "data/systemd/zenomen-hw.service" = "/usr/lib/systemd/system/zenomen-hw.service"
+"data/dbus/com.zenomen.Hardware1.service" = "/usr/share/dbus-1/system-services/com.zenomen.Hardware1.service"
 "data/dbus/com.zenomen.Hardware1.conf" = "/usr/share/dbus-1/system.d/com.zenomen.Hardware1.conf"
 "data/polkit/com.zenomen.hardware.policy" = "/usr/share/polkit-1/actions/com.zenomen.hardware.policy"
 "README.md" = "/usr/share/doc/zenomen/README.md"
 "LICENSE" = "/usr/share/doc/zenomen/LICENSE"
-
-[package.metadata.packager.appimage]
-bins = ["dist/zenomen", "dist/zenomen-hw"]
+"NOTICE" = "/usr/share/doc/zenomen/NOTICE"

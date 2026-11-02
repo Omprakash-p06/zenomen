@@ -231,7 +231,7 @@ impl ZenOmenApp {
                             crate::core::collect_diagnostics(&current_state, reg.as_deref());
 
                         let export_dir =
-                            directories::ProjectDirs::from("com", "zenomen", "zenomen")
+                            crate::config::project_dirs()
                                 .map(|dirs| dirs.config_dir().join("diagnostics"))
                                 .unwrap_or_else(|| std::path::PathBuf::from("diagnostics"));
 
@@ -269,6 +269,16 @@ impl ZenOmenApp {
                     tracing::warn!(error = %e, "could not open the releases page");
                 }
             });
+        }
+    }
+
+    /// Set the human-readable provider label (e.g. "Linux provider", "Mock provider").
+    pub fn set_provider_label(&self, label: impl Into<String>) {
+        let label = label.into();
+        let mut state = lock_state(&self.state);
+        state.provider_label = label;
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_status_text(state.status_text().into());
         }
     }
 

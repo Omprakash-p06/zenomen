@@ -168,29 +168,12 @@ fn test_releases_url_format_and_safety() {
 }
 
 #[test]
-fn test_open_releases_page_failure_when_xdg_open_missing() {
-    use zenomen::desktop::releases::open_releases_page;
+fn test_open_releases_page_failure_when_launcher_missing() {
+    use zenomen::desktop::releases::open_releases_page_with;
 
-    let temp_empty =
-        std::env::temp_dir().join(format!("zenomen_empty_path_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_empty);
-
-    let old_path = std::env::var_os("PATH");
-    unsafe {
-        std::env::set_var("PATH", &temp_empty);
-    }
-    let res = open_releases_page();
-    unsafe {
-        if let Some(old) = old_path {
-            std::env::set_var("PATH", old);
-        } else {
-            std::env::remove_var("PATH");
-        }
-    }
-    let _ = std::fs::remove_dir_all(&temp_empty);
-
+    let res = open_releases_page_with("nonexistent-xdg-open-command-for-testing");
     assert!(
         res.is_err(),
-        "open_releases_page must return Err when xdg-open cannot be found"
+        "open_releases_page_with must return Err when launcher cannot be found"
     );
 }

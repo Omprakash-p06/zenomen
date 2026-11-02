@@ -72,6 +72,8 @@ pub struct AppState {
     pub rgb_power_enabled: bool,
     /// Detected RGB keyboard interface variant (RGB-01).
     pub rgb_variant: Option<crate::hardware::rgb::RgbInterfaceVariant>,
+    /// Provider label displayed in status strip ("Linux provider", "Mock provider") (WR-02).
+    pub provider_label: String,
 }
 
 impl Default for AppState {
@@ -97,6 +99,7 @@ impl Default for AppState {
             active_rgb_profile: Some(crate::rgb::builtin_presets().swap_remove(0)),
             rgb_power_enabled: true,
             rgb_variant: None,
+            provider_label: "Mock provider".to_string(),
         }
     }
 }
@@ -247,19 +250,20 @@ impl AppState {
     /// Before the first sample it says so rather than claiming a count: the
     /// project's core value forbids a number the app has not measured.
     pub fn status_text(&self) -> String {
+        let label = &self.provider_label;
         if let Some(error) = &self.last_sampling_error {
-            return format!("Mock provider · sampling error: {error}");
+            return format!("{label} · sampling error: {error}");
         }
 
         match &self.latest_snapshot {
             Some(snapshot) if snapshot.has_any_reading() => format!(
-                "Mock provider · {} of {} sensors reported",
+                "{label} · {} of {} sensors reported",
                 snapshot.reported_sensor_count(),
                 TelemetrySnapshot::EXPECTED_SENSOR_COUNT
             ),
             // No sample yet, or a sample that carried nothing: both are "not
             // measured", and neither may be rendered as "0 of 12".
-            _ => "Mock provider · waiting for first reading".to_string(),
+            _ => format!("{label} · waiting for first reading"),
         }
     }
 
@@ -396,6 +400,31 @@ mod tests {
         state.apply(&AppEvent::HistoryWindowChanged(60));
         assert_eq!(state.history_window, 60);
         assert_eq!(state.history.capacity(), 60);
+    }
+
+    #[test]
+    fn status_text_honors_configured_provider_label() {
+        let mut state = AppState {
+            provider_label: "Linux provider".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            state.status_text(),
+            "Linux provider · waiting for first reading"
+        );
+
+        state.apply(&AppEvent::CapabilitiesLoaded(fully_capable()));
+        state.apply(&AppEvent::TelemetryUpdated(full_snapshot()));
+        assert_eq!(
+            state.status_text(),
+            "Linux provider · 12 of 12 sensors reported"
+        );
+
+        state.apply(&AppEvent::TelemetrySamplingFailed("sysfs offline".into()));
+        assert_eq!(
+            state.status_text(),
+            "Linux provider · sampling error: sysfs offline"
+        );
     }
 
     fn full_snapshot() -> TelemetrySnapshot {

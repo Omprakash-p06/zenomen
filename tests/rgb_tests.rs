@@ -188,6 +188,13 @@ fn openomen_migration_is_strictly_non_destructive() {
         "Corrupted source file must remain completely untouched"
     );
 
+    // WR-10: On re-run when targets already exist, profiles are reported as preserved, not imported
+    let report2 = migrate_openomen_profiles(&source_dir, &target_dir);
+    assert_eq!(report2.total_scanned, 3);
+    assert_eq!(report2.imported.len(), 0);
+    assert_eq!(report2.preserved.len(), 2);
+    assert_eq!(report2.skipped.len(), 1);
+
     let _ = fs::remove_dir_all(&base_dir);
 }
 

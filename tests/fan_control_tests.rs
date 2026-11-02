@@ -67,8 +67,15 @@ fn test_service_status_state_transitions() {
 fn test_client_handles_offline_daemon_gracefully() {
     let client = HardwareServiceClient::new();
 
-    // When zenomen-hw daemon is offline in unit test environment:
+    // Guard against running against an active production daemon on host system (WR-11)
     let status = client.status();
+    if status.is_connected() {
+        eprintln!(
+            "skipping test_client_handles_offline_daemon_gracefully: production service is active on host"
+        );
+        return;
+    }
+
     assert!(!status.is_connected());
 
     // Calling fan mode when offline returns an Err without panicking
