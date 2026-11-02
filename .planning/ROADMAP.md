@@ -122,11 +122,11 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 05-01: Packaging — DEB, AppImage, desktop entry, systemd unit, D-Bus/polkit policy, CI/release workflows with checksums and audit gate
+- [x] 05-01: Packaging — DEB, AppImage, desktop entry, systemd unit, D-Bus/polkit policy, CI/release workflows with checksums and audit gate
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 05-02: Resource budget measurement — empirical cold start, warm dashboard, minimized tray, and peak RSS profiling, degradation matrix
-- [ ] 05-03: Rebrand and cleanup — README/docs, update link, remove the Python CLI after full parity verification
+- [x] 05-02: Resource budget measurement — empirical cold start, warm dashboard, minimized tray, and peak RSS profiling, degradation matrix
+- [x] 05-03: Rebrand and cleanup — README/docs, update link, remove the Python CLI after full parity verification
 
 ## Progress
 
@@ -139,4 +139,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Linux Telemetry | 3/3 | Complete | 2026-11-01 |
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
-| 5. Distribution | 0/3 | Not started | - |
+| 5. Distribution | 3/3 | Complete | 2026-11-02 |

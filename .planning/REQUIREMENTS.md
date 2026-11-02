@@ -90,23 +90,23 @@ Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
 
 ### Distribution
 
-- [ ] **REL-01**: A DEB package installs on a clean Ubuntu-based system and the app launches from the application menu
-- [ ] **REL-02**: An AppImage runs on a machine that has none of the build toolchain
-- [ ] **REL-03**: Packages install the desktop entry, the systemd unit, and the D-Bus and polkit policy files in their correct locations
-- [ ] **REL-04**: CI runs formatting, clippy (warnings as errors), tests and a dependency advisory audit (`cargo audit`), failing the build on any violation
-- [ ] **REL-05**: Tagging a release publishes the DEB, the AppImage and a checksum file automatically
-- [ ] **REL-06**: A "Check for updates" action opens the GitHub Releases page without downloading or executing anything
-- [ ] **REL-07**: The repository is presented as ZenOmen, with GPL-3.0 notices, upstream attribution and the HP trademark disclaimer preserved
-- [ ] **REL-08**: The Python `openomen` CLI is removed from the repository once Rust parity is verified
+- [x] **REL-01**: A DEB package installs on a clean Ubuntu-based system and the app launches from the application menu
+- [x] **REL-02**: An AppImage runs on a machine that has none of the build toolchain
+- [x] **REL-03**: Packages install the desktop entry, the systemd unit, and the D-Bus and polkit policy files in their correct locations
+- [x] **REL-04**: CI runs formatting, clippy (warnings as errors), tests and a dependency advisory audit (`cargo audit`), failing the build on any violation
+- [x] **REL-05**: Tagging a release publishes the DEB, the AppImage and a checksum file automatically
+- [x] **REL-06**: A "Check for updates" action opens the GitHub Releases page without downloading or executing anything
+- [x] **REL-07**: The repository is presented as ZenOmen, with GPL-3.0 notices, upstream attribution and the HP trademark disclaimer preserved
+- [x] **REL-08**: The Python `openomen` CLI is removed from the repository once Rust parity is verified
 
 ### Resource & Reliability
 
 - [ ] **PERF-01**: Peak RSS of the desktop UI process stays at or below 40 MB over a two-hour tray session (distinguishing cold start <30 MB, warm dashboard <38 MB, minimized tray <25 MB, and peak load ≤40 MB)
-- [ ] **PERF-02**: Idle CPU stays at or below 0.1% of one core while the dashboard is open, and ≤0.02% when minimized to tray
+- [x] **PERF-02**: Idle CPU stays at or below 0.1% of one core while the dashboard is open, and ≤0.02% when minimized to tray
 - [x] **PERF-03**: Hardware sampling never blocks the UI thread; window frame time stays stable while telemetry refreshes
-- [ ] **PERF-04**: Telemetry memory is bounded and RSS stays flat across long sessions rather than growing
-- [ ] **PERF-05**: No combination of missing sensors, missing external tools or missing service causes a crash — every absence degrades gracefully
-- [ ] **PERF-06**: The hardware service process has its own measured budget (≤15 MB RSS), reported separately from the UI process and never summed into the 40 MB figure
+- [x] **PERF-04**: Telemetry memory is bounded and RSS stays flat across long sessions rather than growing
+- [x] **PERF-05**: No combination of missing sensors, missing external tools or missing service causes a crash — every absence degrades gracefully
+- [x] **PERF-06**: The hardware service process has its own measured budget (≤15 MB RSS), reported separately from the UI process and never summed into the 40 MB figure
 
 ## v2 Requirements
 
