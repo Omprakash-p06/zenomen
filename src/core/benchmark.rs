@@ -139,17 +139,131 @@ impl BenchmarkTimer {
     }
 }
 
+/// Standard Linux USER_HZ default (100 ticks per second).
+pub const USER_HZ: u64 = 100;
+
+/// CPU timing sample taken from `/proc/self/stat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuSample {
+    /// Combined user and system CPU ticks (utime + stime).
+    pub jiffies: u64,
+    /// Exact moment the sample was taken.
+    pub at: Instant,
+}
+
+/// Read CPU ticks for the current process from `/proc/self/stat`.
+///
+/// Handles process names (`comm`) that contain spaces and parentheses by
+/// splitting after the closing parenthesis `)`.
+pub fn read_cpu_sample() -> Result<CpuSample, io::Error> {
+    let stat = fs::read_to_string("/proc/self/stat")?;
+    let rparen_idx = stat.rfind(')').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Malformed /proc/self/stat: closing parenthesis missing",
+        )
+    })?;
+
+    // Fields after ')' start from field 3 (state)
+    let rest = &stat[rparen_idx + 1..];
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+
+    // utime is field 14 (index 11 in post-comm fields)
+    // stime is field 15 (index 12 in post-comm fields)
+    if fields.len() < 13 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Malformed /proc/self/stat: expected >= 13 post-comm fields, found {}",
+                fields.len()
+            ),
+        ));
+    }
+
+    let utime: u64 = fields[11].parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid utime field: {e}"),
+        )
+    })?;
+    let stime: u64 = fields[12].parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid stime field: {e}"),
+        )
+    })?;
+
+    Ok(CpuSample {
+        jiffies: utime + stime,
+        at: Instant::now(),
+    })
+}
+
+/// Calculate average CPU utilization percentage between two samples.
+pub fn cpu_percent_between(start: &CpuSample, end: &CpuSample, clock_ticks: u64) -> f64 {
+    let elapsed = end.at.duration_since(start.at).as_secs_f64();
+    if elapsed <= 0.0 || clock_ticks == 0 {
+        return 0.0;
+    }
+
+    let delta_jiffies = end.jiffies.saturating_sub(start.jiffies);
+    let cpu_seconds = delta_jiffies as f64 / clock_ticks as f64;
+    let percent = (cpu_seconds / elapsed) * 100.0;
+    percent.max(0.0)
+}
+
+/// Combined performance stage report.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StageReport {
+    pub stage: &'static str,
+    pub rss_mb: f64,
+    pub cpu_percent: f64,
+}
+
+/// Measure CPU and RSS over a specified time window.
+///
+/// NOTE: Blocks for `window` duration. MUST NEVER be called from Slint UI thread.
+pub fn measure_stage(stage: &'static str, window: Duration) -> Result<StageReport, io::Error> {
+    let cpu_start = read_cpu_sample()?;
+    std::thread::sleep(window);
+    let cpu_end = read_cpu_sample()?;
+
+    let memory = read_memory_metrics()?;
+    let cpu_percent = cpu_percent_between(&cpu_start, &cpu_end, USER_HZ);
+
+    Ok(StageReport {
+        stage,
+        rss_mb: memory.rss_mb(),
+        cpu_percent,
+    })
+}
+
 /// Helper to log current RSS at a given execution stage.
 pub fn log_benchmark(stage: &str) {
     match read_memory_metrics() {
         Ok(metrics) => {
-            tracing::info!(
-                stage,
-                rss_mb = format!("{:.2}", metrics.rss_mb()),
-                pss_mb = format!("{:.2}", metrics.pss_mb()),
-                private_dirty_mb = format!("{:.2}", metrics.private_dirty_mb()),
-                "memory benchmark"
-            );
+            let is_benchmark_env = std::env::var("ZENOMEN_BENCHMARK").as_deref() == Ok("1");
+            if is_benchmark_env {
+                println!(
+                    "zenomen-benchmark stage={stage} rss_mb={:.2}",
+                    metrics.rss_mb()
+                );
+                tracing::info!(
+                    stage,
+                    rss_mb = format!("{:.2}", metrics.rss_mb()),
+                    pss_mb = format!("{:.2}", metrics.pss_mb()),
+                    private_dirty_mb = format!("{:.2}", metrics.private_dirty_mb()),
+                    "memory benchmark"
+                );
+            } else {
+                tracing::debug!(
+                    stage,
+                    rss_mb = format!("{:.2}", metrics.rss_mb()),
+                    pss_mb = format!("{:.2}", metrics.pss_mb()),
+                    private_dirty_mb = format!("{:.2}", metrics.private_dirty_mb()),
+                    "memory benchmark"
+                );
+            }
         }
         Err(err) => {
             tracing::warn!(stage, %err, "could not read memory metrics");

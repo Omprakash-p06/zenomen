@@ -97,6 +97,8 @@ pub enum AppCommand {
     ApplyRgbProfile(crate::rgb::RgbProfile),
     /// Set RGB lighting power state on/off (RGB-04).
     SetRgbPower(bool),
+    /// Notify worker of window visibility to pause/resume sampling (PERF-02).
+    SetUiVisible(bool),
 }
 
 /// Something the core wants the UI to show.

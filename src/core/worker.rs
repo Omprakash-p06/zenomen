@@ -90,13 +90,45 @@ pub fn spawn_monitoring_worker(
             );
             let mut deadline = Instant::now() + sampling_interval;
             let mut status_check_tick: u32 = 0;
+            let mut ui_visible = true;
 
             loop {
-                let now = Instant::now();
-                let timeout = deadline.saturating_duration_since(now);
+                let command_opt = if ui_visible {
+                    let now = Instant::now();
+                    let timeout = deadline.saturating_duration_since(now);
+                    match command_receiver.recv_timeout(timeout) {
+                        Ok(cmd) => Some(cmd),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => {
+                            tracing::debug!("command channel disconnected; exiting worker");
+                            break;
+                        }
+                    }
+                } else {
+                    match command_receiver.recv() {
+                        Ok(cmd) => Some(cmd),
+                        Err(_) => {
+                            tracing::debug!("command channel disconnected; exiting worker");
+                            break;
+                        }
+                    }
+                };
 
-                match command_receiver.recv_timeout(timeout) {
-                    Ok(command) => match command {
+                if let Some(command) = command_opt {
+                    match command {
+                        AppCommand::SetUiVisible(visible) => {
+                            tracing::debug!(visible, "worker UI visibility changed");
+                            let was_hidden = !ui_visible;
+                            ui_visible = visible;
+                            if ui_visible && was_hidden {
+                                // Immediate sample upon restoring window so UI frame is fresh
+                                if !sample_and_dispatch(&provider, &event_sender) {
+                                    tracing::debug!("event receiver disconnected; exiting worker");
+                                    break;
+                                }
+                                deadline = Instant::now() + sampling_interval;
+                            }
+                        }
                         AppCommand::RefreshTelemetry => {
                             tracing::debug!("immediate telemetry refresh triggered");
                             if !sample_and_dispatch(&provider, &event_sender) {
@@ -216,40 +248,35 @@ pub fn spawn_monitoring_worker(
                         AppCommand::DismissControlError => {
                             let _ = event_sender.send(AppEvent::ControlErrorDismissed);
                         }
-                    },
-                    Err(RecvTimeoutError::Timeout) => {
-                        // Periodic sample
-                        if !sample_and_dispatch(&provider, &event_sender) {
-                            tracing::debug!("event receiver disconnected; exiting worker");
-                            break;
-                        }
+                    }
+                } else {
+                    // Periodic sample (reached only via timeout when ui_visible is true)
+                    if !sample_and_dispatch(&provider, &event_sender) {
+                        tracing::debug!("event receiver disconnected; exiting worker");
+                        break;
+                    }
 
-                        // Check service status every 5 seconds
-                        status_check_tick = status_check_tick.wrapping_add(1);
-                        if status_check_tick.is_multiple_of(5) {
-                            let status = client.status();
-                            let _ = event_sender.send(AppEvent::ServiceStatusChanged(status.clone()));
-                            if status.is_connected() {
-                                let polkit = client
-                                    .check_polkit_status()
-                                    .unwrap_or_else(|e| format!("Check failed: {e}"));
-                                let _ = event_sender.send(AppEvent::PolkitStatusChanged(polkit));
-                            } else {
-                                let _ = event_sender.send(AppEvent::PolkitStatusChanged(
-                                    "Service disconnected".to_string(),
-                                ));
-                            }
-                        }
-
-                        deadline += sampling_interval;
-                        // Avoid deadline drift if stalled or suspended
-                        if deadline <= Instant::now() {
-                            deadline = Instant::now() + sampling_interval;
+                    // Check service status every 5 ticks
+                    status_check_tick = status_check_tick.wrapping_add(1);
+                    if status_check_tick.is_multiple_of(5) {
+                        let status = client.status();
+                        let _ = event_sender.send(AppEvent::ServiceStatusChanged(status.clone()));
+                        if status.is_connected() {
+                            let polkit = client
+                                .check_polkit_status()
+                                .unwrap_or_else(|e| format!("Check failed: {e}"));
+                            let _ = event_sender.send(AppEvent::PolkitStatusChanged(polkit));
+                        } else {
+                            let _ = event_sender.send(AppEvent::PolkitStatusChanged(
+                                "Service disconnected".to_string(),
+                            ));
                         }
                     }
-                    Err(RecvTimeoutError::Disconnected) => {
-                        tracing::debug!("command channel disconnected; exiting worker");
-                        break;
+
+                    deadline += sampling_interval;
+                    // Avoid deadline drift if stalled or suspended
+                    if deadline <= Instant::now() {
+                        deadline = Instant::now() + sampling_interval;
                     }
                 }
             }

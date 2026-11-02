@@ -20,7 +20,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     zbus::block_on(async {
         let backend = HardwareBackend::default();
 
-        let conn_builder = zbus::connection::Builder::system()?;
+        let conn_builder = if std::env::var("ZENOMEN_HW_SESSION").is_ok() {
+            zbus::connection::Builder::session()?
+        } else {
+            zbus::connection::Builder::system()?
+        };
         let service = HardwareService::new(backend);
 
         let conn = conn_builder

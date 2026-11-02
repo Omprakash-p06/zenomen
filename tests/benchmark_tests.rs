@@ -110,3 +110,89 @@ fn worker_thread_samples_and_dispatches_headlessly() {
 
     timer.stop_and_log();
 }
+
+#[test]
+fn test_read_cpu_sample_and_calculation() {
+    use zenomen::core::benchmark::{
+        cpu_percent_between, measure_stage, read_cpu_sample, CpuSample, USER_HZ,
+    };
+
+    let sample1 = read_cpu_sample().expect("read_cpu_sample must succeed on Linux");
+    std::thread::sleep(Duration::from_millis(20));
+    let sample2 = read_cpu_sample().expect("second read_cpu_sample must succeed");
+
+    assert!(sample2.jiffies >= sample1.jiffies);
+
+    // Test calculation with synthetic samples
+    let t0 = Instant::now();
+    let s_start = CpuSample {
+        jiffies: 1000,
+        at: t0,
+    };
+    let s_end = CpuSample {
+        jiffies: 1100, // +100 jiffies = 1.0 second of CPU time at USER_HZ=100
+        at: t0 + Duration::from_secs(2), // over 2 seconds = 50% CPU
+    };
+    let pct = cpu_percent_between(&s_start, &s_end, USER_HZ);
+    assert!((pct - 50.0).abs() < 0.1, "Expected ~50% CPU, got {pct}");
+
+    // Test zero elapsed time edge case
+    let zero_elapsed = cpu_percent_between(&s_start, &s_start, USER_HZ);
+    assert_eq!(zero_elapsed, 0.0);
+
+    // Test measure_stage
+    let report = measure_stage("test-stage", Duration::from_millis(50))
+        .expect("measure_stage must succeed");
+    assert_eq!(report.stage, "test-stage");
+    assert!(report.rss_mb > 0.0);
+    assert!(report.cpu_percent >= 0.0);
+}
+
+#[test]
+fn test_visibility_gated_sampling_pauses_and_resumes() {
+    let provider = Arc::new(MockHardware::new(MockScenario::Nominal));
+    let (event_sender, event_receiver) = mpsc::channel();
+    let (command_sender, command_receiver) = mpsc::sync_channel(8);
+
+    let worker = spawn_monitoring_worker(provider, event_sender, command_receiver);
+
+    // Drain initial capabilities and initial sample
+    let _ = event_receiver.recv_timeout(Duration::from_millis(500));
+    let _ = event_receiver.recv_timeout(Duration::from_millis(500));
+
+    // 1. Hide UI
+    command_sender
+        .try_send(zenomen::core::AppCommand::SetUiVisible(false))
+        .expect("Sending SetUiVisible(false) must succeed");
+
+    // Clear any pending events (e.g. initial service status)
+    while event_receiver.recv_timeout(Duration::from_millis(100)).is_ok() {}
+
+    // Wait 1.5 seconds (interval is 1000ms). While hidden, no periodic sample must arrive!
+    let hidden_res = event_receiver.recv_timeout(Duration::from_millis(1500));
+    assert!(
+        hidden_res.is_err(),
+        "Expected no telemetry events while window is hidden, got: {:?}",
+        hidden_res
+    );
+
+    // 2. Restore UI
+    command_sender
+        .try_send(zenomen::core::AppCommand::SetUiVisible(true))
+        .expect("Sending SetUiVisible(true) must succeed");
+
+    // An immediate sample must arrive upon restoring UI
+    let restore_res = event_receiver
+        .recv_timeout(Duration::from_millis(200))
+        .expect("Immediate sample must arrive when UI is restored");
+
+    match restore_res {
+        AppEvent::TelemetryUpdated(snapshot) => {
+            assert!(!snapshot.cpu_name.is_empty());
+        }
+        other => panic!("Expected TelemetryUpdated immediately on restore, got: {:?}", other),
+    }
+
+    drop(command_sender);
+    let _ = worker.join();
+}

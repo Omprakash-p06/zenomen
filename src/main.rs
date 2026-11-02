@@ -97,14 +97,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
 
     let (app, commands) = ZenOmenApp::new(&ui);
+    let command_sender = app.command_sender();
     app.install_callbacks();
 
     // 3. Close-to-tray lifecycle management (SYS-04)
     let close_to_tray_flag = app.close_to_tray_flag();
     close_to_tray_flag.store(config.general.close_to_tray, Ordering::Relaxed);
+    let close_commands = command_sender.clone();
     ui.window().on_close_requested(move || {
         if close_to_tray_flag.load(Ordering::Relaxed) {
             tracing::info!("window close requested; minimizing to tray");
+            let _ = close_commands.try_send(zenomen::core::AppCommand::SetUiVisible(false));
+            log_benchmark("tray-minimized");
             slint::CloseRequestResponse::HideWindow
         } else {
             tracing::info!("window close requested; quitting application");
@@ -115,17 +119,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Handle desktop actions (PresentWindow / Quit from D-Bus or Tray)
     let ui_weak = ui.as_weak();
+    let present_commands = command_sender.clone();
     let desktop_action_thread = std::thread::Builder::new()
         .name("zenomen-desktop-actions".to_string())
         .spawn(move || {
             for action in action_receiver {
                 let ui_weak = ui_weak.clone();
+                let present_commands = present_commands.clone();
                 match action {
                     DesktopAction::PresentWindow => {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak.upgrade() {
                                 let _ = ui.show();
                                 ui.window().set_minimized(false);
+                                let _ = present_commands
+                                    .try_send(zenomen::core::AppCommand::SetUiVisible(true));
+                                log_benchmark("dashboard-restored");
                             }
                         });
                     }
@@ -193,6 +202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Run event loop (start minimized or visible)
     if start_minimized {
         tracing::info!("starting minimized in system tray");
+        let _ = command_sender.try_send(zenomen::core::AppCommand::SetUiVisible(false));
+        log_benchmark("tray-minimized");
         slint::run_event_loop_until_quit()?;
     } else {
         ui.show()?;

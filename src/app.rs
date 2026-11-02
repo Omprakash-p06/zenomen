@@ -60,6 +60,16 @@ impl ZenOmenApp {
         (app, command_receiver)
     }
 
+    /// Access the command sender for queueing commands to the worker.
+    pub fn command_sender(&self) -> SyncSender<AppCommand> {
+        self.commands.clone()
+    }
+
+    /// Queue a command for the core worker.
+    pub fn send_command(&self, cmd: AppCommand) {
+        send_command(&self.commands, cmd);
+    }
+
     /// Access the shared close-to-tray boolean flag for window close interceptors.
     pub fn close_to_tray_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
         self.close_to_tray_flag.clone()
