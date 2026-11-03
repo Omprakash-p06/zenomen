@@ -46,26 +46,36 @@ export component StatusPill inherits Rectangle {
         spacing: ThemeMetrics.xs;
         alignment: center;
 
-        if root.glyph != "" : Icon {
-            name: root.glyph;
-            tint: root.ink;
-            size: 12px;
-            vertical-stretch: 0;
+        if root.glyph != "" : VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.glyph;
+                tint: root.ink;
+                size: 12px;
+                vertical-stretch: 0;
+            }
         }
-        if root.glyph == "" : Rectangle {
-            width: 6px;
-            height: 6px;
-            border-radius: 3px;
-            background: root.ink;
-            vertical-stretch: 0;
+        if root.glyph == "" : VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.ink;
+                vertical-stretch: 0;
+            }
         }
-        Text {
-            text: root.label;
-            color: root.ink;
-            font-family: ThemeTypography.font-prose;
-            font-size: ThemeTypography.label;
-            vertical-alignment: center;
-            overflow: elide;
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.label;
+                color: root.ink;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.label;
+                vertical-alignment: center;
+                overflow: elide;
+            }
         }
     }
 }
+

@@ -129,6 +129,7 @@ export component Diagnostics inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: ThemeMetrics.md;
+                    alignment: start;
                     Text {
                         text: "Service Status:";
                         color: ThemeColors.text-secondary;
@@ -136,6 +137,7 @@ export component Diagnostics inherits Rectangle {
                         font-size: ThemeTypography.label;
                         letter-spacing: 0.5px;
                         width: 140px;
+                        vertical-alignment: center;
                     }
                     StatusPill {
                         status: root.service-status == "Connected" ? "ok" : "unavailable";
