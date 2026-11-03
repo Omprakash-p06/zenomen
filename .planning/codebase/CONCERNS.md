@@ -225,11 +225,8 @@ last_mapped_at: 2026-11-02
 - Risk: Double-launch leaves no window; the failure is timing-dependent and reproducible only by hand.
 - Priority: Medium
 
-**Polkit refusal and challenge paths:**
-- What's not tested: `src/service/polkit.rs` relies on a live `PolicyKit1.Authority`; `check_authorization`'s deserialisation of `(bool, bool, details)` and its error mapping are untested. Most contract tests construct the service with `with_polkit_required(false)`.
-- Files: `src/service/polkit.rs`, `src/service/contract.rs:44`–`59`
-- Risk: An `owns`-style authorisation regression, or a malformed reply mapping, would only surface on a real desktop.
-- Priority: Medium
+**Polkit refusal and challenge paths: [RESOLVED]**
+- Resolution: Fixed D-Bus response deserialization in `src/service/polkit.rs` and `src/service/client.rs`. PolicyKit1 `CheckAuthorization` returns `(bba{ss})` (dict of string to string), whereas code previously expected `(bba{sv})` (`HashMap<String, OwnedValue>`), causing every hardware authorization check on live systems to fail with signature mismatch. Added automated unit test `test_polkit_response_signature_matches_spec` verifying `(bba{ss})` wire deserialization.
 
 **Documented invariants:**
 - What's not tested: Nothing verifies that file paths and test counts quoted in `docs/PARITY.md` and `docs/RESOURCE-BUDGET.md` match the tree.

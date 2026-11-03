@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use zbus::Connection;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::Value;
 
 use crate::service::types::HardwareControlError;
 
@@ -54,7 +54,7 @@ impl PolkitVerifier {
                 ))
             })?;
 
-        let (is_authorized, _is_challenge, _details): (bool, bool, HashMap<String, OwnedValue>) =
+        let (is_authorized, _is_challenge, _details): (bool, bool, HashMap<String, String>) =
             reply.body().deserialize().map_err(|e| {
                 HardwareControlError::PolkitDenied(format!(
                     "Invalid response body from PolicyKit1: {e}"
@@ -68,5 +68,38 @@ impl PolkitVerifier {
                 "Action '{action_id}' was not authorized for caller '{caller_bus_name}'"
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_polkit_response_signature_matches_spec() {
+        use zbus::zvariant::serialized::Context;
+        use zbus::zvariant::to_bytes;
+
+        let mut details = HashMap::new();
+        details.insert(
+            "polkit.message".to_string(),
+            "Authentication required".to_string(),
+        );
+
+        let tuple: (bool, bool, HashMap<String, String>) = (true, false, details);
+        let ctxt = Context::new_dbus(zbus::zvariant::Endian::Little, 0);
+        let bytes = to_bytes(ctxt, &tuple).expect("serialization of (bba{ss}) should succeed");
+
+        let (authorized, challenge, map): (bool, bool, HashMap<String, String>) = bytes
+            .deserialize()
+            .expect("deserialization of (bba{ss}) should succeed")
+            .0;
+
+        assert!(authorized);
+        assert!(!challenge);
+        assert_eq!(
+            map.get("polkit.message").map(|s| s.as_str()),
+            Some("Authentication required")
+        );
     }
 }

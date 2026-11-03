@@ -80,6 +80,6 @@ The following behaviors implemented in the Python `openomen` CLI are intentional
 ## 3. Summary & Parity Certification
 
 - **Total Functional Requirements Mapped**: 53 requirements across Cooling/Fans, Power Profiles, Monitoring, RGB Lighting, Hardware Service, System Integration, and Diagnostics.
-- **Automated Verification**: 48 requirements verified by 79 automated integration tests in `tests/` (108 automated tests across `tests/` and `src/`).
+- **Automated Verification**: 48 requirements verified by 79 automated integration tests in `tests/` (109 automated tests across `tests/` and `src/`).
 - **Manual Verification**: 5 desktop-interaction requirements verified manually on real Linux desktop environments.
 - **Parity Verdict**: The Rust implementation matches or strictly exceeds 100% of the functional hardware capabilities previously provided by the Python `openomen` CLI. The legacy Python script (`openomen`), PyInstaller specification (`openomen.spec`), and manual release notes (`how-to-release.txt`) have zero remaining unique functionality and are approved for deletion.

@@ -283,7 +283,7 @@ impl HardwareServiceClient {
         let (is_authorized, is_challenge, _): (
             bool,
             bool,
-            std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+            std::collections::HashMap<String, String>,
         ) = reply
             .body()
             .deserialize()
