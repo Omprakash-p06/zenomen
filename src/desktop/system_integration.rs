@@ -76,14 +76,19 @@ pub fn atomic_write_file(target: &Path, content: &str) -> Result<(), std::io::Er
 
 /// Ensure the daemon binary is present in system path (CR-02).
 pub fn install_daemon_binary(target_bin: &Path) -> Result<(), SystemIntegrationError> {
-    if target_bin.exists() {
-        return Ok(());
-    }
+    let current_exe = std::env::current_exe().ok();
+    let candidate = current_exe
+        .as_ref()
+        .map(|exe| exe.with_file_name("zenomen-hw"));
+    install_daemon_binary_from(candidate.as_deref(), target_bin)
+}
 
-    let current_exe = std::env::current_exe()?;
-    let candidate = current_exe.with_file_name("zenomen-hw");
-
-    if candidate.is_file() {
+/// Core installation logic decoupled from current executable discovery for testability.
+pub fn install_daemon_binary_from(
+    candidate: Option<&Path>,
+    target_bin: &Path,
+) -> Result<(), SystemIntegrationError> {
+    if let Some(candidate) = candidate.filter(|p| p.is_file()) {
         tracing::info!(
             src = %candidate.display(),
             dst = %target_bin.display(),
@@ -93,7 +98,7 @@ pub fn install_daemon_binary(target_bin: &Path) -> Result<(), SystemIntegrationE
             fs::create_dir_all(parent)?;
         }
         let temp_bin = target_bin.with_extension(format!("tmp.{}", std::process::id()));
-        fs::copy(&candidate, &temp_bin)?;
+        fs::copy(candidate, &temp_bin)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -103,12 +108,12 @@ pub fn install_daemon_binary(target_bin: &Path) -> Result<(), SystemIntegrationE
         }
         fs::rename(&temp_bin, target_bin)?;
         Ok(())
+    } else if target_bin.exists() {
+        Ok(())
     } else {
         Err(SystemIntegrationError::Command(format!(
-            "zenomen-hw binary not found at {} or {}; install the .deb package or place zenomen-hw in {}",
+            "zenomen-hw binary not found at {}; install the .deb package or place zenomen-hw alongside zenomen",
             target_bin.display(),
-            candidate.display(),
-            target_bin.display()
         )))
     }
 }
@@ -212,4 +217,41 @@ fn run_systemctl(args: &[&str]) -> Result<(), SystemIntegrationError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_install_daemon_binary_from_copies_and_overwrites() {
+        let base_dir =
+            std::env::temp_dir().join(format!("zenomen_test_install_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base_dir);
+        fs::create_dir_all(&base_dir).unwrap();
+
+        let candidate = base_dir.join("zenomen-hw");
+        let target = base_dir.join("bin").join("zenomen-hw");
+
+        fs::write(&candidate, b"new-daemon-content").unwrap();
+
+        // 1. Installs when target does not exist
+        assert!(install_daemon_binary_from(Some(&candidate), &target).is_ok());
+        assert_eq!(fs::read(&target).unwrap(), b"new-daemon-content");
+
+        // 2. Overwrites when target already exists
+        fs::write(&candidate, b"upgraded-daemon-content").unwrap();
+        assert!(install_daemon_binary_from(Some(&candidate), &target).is_ok());
+        assert_eq!(fs::read(&target).unwrap(), b"upgraded-daemon-content");
+
+        // 3. Succeeds if candidate is None but target already exists
+        assert!(install_daemon_binary_from(None, &target).is_ok());
+
+        // 4. Fails if candidate is None and target does not exist
+        let non_existent = base_dir.join("bin").join("non_existent");
+        assert!(install_daemon_binary_from(None, &non_existent).is_err());
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
 }
