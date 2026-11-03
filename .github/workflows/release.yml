@@ -17,8 +17,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Build & Publish Release
+  build-linux:
+    name: Build Linux Packages (DEB & AppImage)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -63,7 +63,7 @@ jobs:
         run: xvfb-run --auto-servernum cargo test --locked --all
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@51c68eec2f87cf80a8276f57ee92a2a7a8d569cc # v2.49.18
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2
         with:
           tool: cargo-audit
 
@@ -71,7 +71,7 @@ jobs:
         run: cargo audit
 
       - name: Install cargo-packager
-        uses: taiki-e/install-action@51c68eec2f87cf80a8276f57ee92a2a7a8d569cc # v2.49.18
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2
         with:
           tool: cargo-packager
 
@@ -83,22 +83,79 @@ jobs:
         run: |
           ver=$(cargo metadata --no-deps --format-version 1 --manifest-path ../Cargo.toml \
             | jq -r '.packages[] | select(.name == "zenomen") | .version')
-          ls *"$ver"*.deb
-          ls *"$ver"*.AppImage
+          ls *"${ver}"*.deb
+          ls *"${ver}"*.AppImage
+
+      - name: Upload Linux Packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.1
+        with:
+          name: linux-dist
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+
+  build-windows:
+    name: Build Windows Binary (.exe)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build release binary
+        run: cargo build --release --bin zenomen
+
+      - name: Stage Windows artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "zenomen") | .version')
+          cp target/release/zenomen.exe "dist/zenomen-v${ver}-windows-x86_64.exe"
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.1
+        with:
+          name: windows-dist
+          path: dist/*.exe
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.9
+        with:
+          name: linux-dist
+          path: dist
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.9
+        with:
+          name: windows-dist
+          path: dist
 
       - name: Generate SHA-256 checksums
         working-directory: dist
         run: |
-          sha256sum *.deb *.AppImage > SHA256SUMS
+          sha256sum *.deb *.AppImage *.exe > SHA256SUMS
           cat SHA256SUMS
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@c95c14d83b5ac94360644342dd3080ff559f6d48 # v2.2.1
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/*.deb
             dist/*.AppImage
+            dist/*.exe
             dist/SHA256SUMS
           draft: false
           prerelease: false
