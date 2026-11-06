@@ -1,309 +1,287 @@
 ---
-last_mapped_commit: e50af8f9ea61300a1c10d36dc6954e319da7b6e2
-last_mapped_at: 2026-11-02
+last_mapped_commit: 30d62de2cdf6f507822944e5602bdd907539ce38
+last_mapped_at: 2026-11-06
 ---
 # Codebase Structure
 
-**Analysis Date:** 2026-11-02
+**Analysis Date:** 2026-11-06
 
 ## Directory Layout
 
 ```text
 zenomen/
+├── Cargo.toml              # Package, deps, release profile, Cargo Packager metadata
+├── Cargo.lock              # Committed on purpose (application, not library)
+├── build.rs                # Compiles ui/app.slint; Windows icon resource
+├── HEADERS/NOTICE/LICENSE  # GPL-3.0, HP trademark disclaimer
+├── README.md               # Overview, security model, install/build instructions
+├── AGENTS.md               # Agent guide (contains embedded legacy Python context — not source of truth)
+│
 ├── src/
-│   ├── main.rs                 # GUI binary entry: flags, config, threads, event loop
-│   ├── lib.rs                  # Library facade + slint::include_modules!()
-│   ├── app.rs                  # The only UI <-> core bridge (ZenOmenApp)
-│   ├── core/                   # Commands, events, state, worker, history, diagnostics
-│   ├── hardware/               # Read boundary: provider trait, Linux + mock backends
-│   │   └── linux/              # procfs/sysfs parsers (cpu, memory, hwmon, gpu)
-│   ├── service/                # Write boundary: D-Bus client, contract, backend, polkit
-│   ├── desktop/                # Tray, single instance, autostart, releases, installer
-│   ├── config/                 # TOML schema + atomic persistence
-│   ├── rgb/                    # RGB schema, presets, OpenOMEN migration
-│   └── bin/
-│       └── zenomen-hw.rs       # Privileged D-Bus daemon entry point
+│   ├── main.rs             # `zenomen` GUI process entry point
+│   ├── lib.rs              # Library module tree + `slint::include_modules!()`
+│   ├── app.rs              # Slint bridge (callbacks → commands, events → properties)
+│   ├── bin/
+│   │   └── zenomen-hw.rs   # `zenomen-hw` privileged D-Bus daemon entry point
+│   ├── core/               # State, events, worker, history, diagnostics, benchmark
+│   ├── config/             # TOML schema + atomic persistence
+│   ├── hardware/           # Provider boundary, sensor registry, mock, Linux adapters
+│   │   └── linux/          # cpu.rs, gpu.rs, hwmon.rs, memory.rs, provider.rs
+│   ├── service/            # D-Bus contract, daemon backend, blocking client, polkit
+│   ├── desktop/            # Single instance, SNI tray, autostart, releases, installer
+│   └── rgb/                # Color/profile schema, OpenOMEN migration
+│
 ├── ui/
-│   ├── app.slint               # Window shell, properties, screen router
-│   ├── screens/                # One file per screen (6)
-│   ├── components/             # Reusable presentation components
-│   └── theme/                  # Colors, typography, metrics, bundled fonts
-├── tests/                      # Integration tests (one file per subsystem)
-├── data/                       # Packaged system assets (desktop, D-Bus, systemd, polkit, icons)
-├── docs/                       # Packaging, parity and resource-budget documentation
-├── scripts/                    # Operational tooling (resource budget harness)
-├── dist/                       # Packaging output + budget CSVs (gitignored)
-├── logo/                       # Source logo assets
-├── build.rs                    # Compiles ui/app.slint at build time
-├── Cargo.toml                  # Deps, release profile, Cargo Packager metadata
-├── Cargo.lock                  # Committed: application, audited in CI
-└── .github/workflows/          # ci.yml (fmt, clippy, xvfb tests, audit), release.yml
+│   ├── app.slint           # Window shell, sidebar/header/status strip, screen router
+│   ├── screens/            # overview, cooling, performance, lighting, settings, diagnostics
+│   ├── components/         # Reusable Slint components (cards, charts, buttons, pills)
+│   └── theme/              # colors.slint, typography.slint, metrics.slint, fonts/
+│
+├── tests/                  # Integration tests, one file per subsystem (15 files)
+├── data/                   # Installed assets: desktop entry, D-Bus, systemd, polkit, icons
+│   ├── applications/
+│   ├── dbus/
+│   ├── polkit/
+│   ├── systemd/
+│   └── icons/hicolor/
+├── scripts/                # measure-budget.sh (RSS/CPU measurement harness)
+├── docs/                   # PACKAGING.md, PARITY.md, RESOURCE-BUDGET.md
+├── .github/workflows/      # ci.yml (quality gates), release.yml (tagged builds)
+├── .planning/              # GSD project artifacts (PROJECT, ROADMAP, phases, codebase)
+├── logo/                   # Source brand art
+├── dist/                   # Generated packages + budget CSVs (gitignored)
+└── target/                 # Cargo build output (gitignored)
 ```
 
 ## Directory Purposes
 
-**`src/` (library + GUI binary):**
-- Purpose: All Rust application code. The crate is both a library (`zenomen`) and two binaries.
-- Contains: Module roots with `mod.rs` re-exports, one concern per file.
-- Key files: `src/lib.rs`, `src/main.rs`, `src/app.rs`, `src/bin/zenomen-hw.rs`.
+**`src/` (root files):**
+- Purpose: The two process entry points and the single UI bridge.
+- Contains: `main.rs` (GUI orchestration), `bin/zenomen-hw.rs` (daemon), `lib.rs` (module tree), `app.rs` (bridge).
+- Key files: `src/main.rs:19`, `src/bin/zenomen-hw.rs:11`, `src/app.rs:36`.
 
 **`src/core/`:**
-- Purpose: Everything between the UI bridge and the hardware boundary.
-- Contains: `events.rs` (typed contract), `state.rs` (single source of truth), `worker.rs` (1 Hz loop), `telemetry.rs` (bounded history + SVG paths), `diagnostics.rs` (JSON report), `benchmark.rs` (RSS instrumentation).
-- Key files: `src/core/events.rs`, `src/core/worker.rs`, `src/core/state.rs`.
-
-**`src/hardware/`:**
-- Purpose: The read-only telemetry boundary.
-- Contains: `provider.rs` (trait + data types), `registry.rs` (canonical sensor bindings), `mock.rs` (deterministic scenarios), `rgb.rs` (interface variant detection), `linux/` (kernel parsers).
-- Key files: `src/hardware/provider.rs`, `src/hardware/registry.rs`, `src/hardware/linux/provider.rs`.
-
-**`src/hardware/linux/`:**
-- Purpose: Pure(ish) parsers for kernel interfaces, each testable against a temp root or fixture string.
-- Contains: `cpu.rs`, `memory.rs`, `hwmon.rs`, `gpu.rs`, `provider.rs` (assembly), `mod.rs`.
-- Key files: `src/hardware/linux/gpu.rs` (DRM enumeration + `nvidia-smi` timeout), `src/hardware/linux/hwmon.rs` (device scan + descriptors).
-
-**`src/service/`:**
-- Purpose: The privileged write boundary and its client.
-- Contains: `client.rs` (blocking zbus client), `contract.rs` (`#[zbus::interface]` + polkit gate), `backend.rs` (verified sysfs writes), `polkit.rs` (authority calls), `types.rs` (`FanMode`, `PresetResult`, errors).
-- Key files: `src/service/contract.rs`, `src/service/backend.rs`, `src/service/client.rs`.
-
-**`src/desktop/`:**
-- Purpose: Desktop-session integration without GTK/Qt.
-- Contains: `single_instance.rs` (`com.zenomen.App`), `tray.rs` (StatusNotifierItem + dbusmenu), `autostart.rs` (XDG), `releases.rs` (`xdg-open`), `system_integration.rs` (root installer with `include_str!` assets).
-- Key files: `src/desktop/tray.rs`, `src/desktop/system_integration.rs`.
+- Purpose: The contract between UI and hardware, plus state and derived views.
+- Contains: `events.rs` (`ScreenId`, `AppCommand`, `AppEvent`), `state.rs` (`AppState::apply`), `worker.rs` (1 Hz loop + mutation offload), `telemetry.rs` (ring buffer + SVG paths), `diagnostics.rs` (report/export), `benchmark.rs` (RSS/CPU metrics), `mod.rs` (re-exports).
+- Key files: `src/core/worker.rs:33`, `src/core/state.rs:31`, `src/core/telemetry.rs:93`.
 
 **`src/config/`:**
-- Purpose: Persistent preferences with corruption recovery.
-- Contains: `schema.rs` (`AppConfig`, bounds, `sanitize()`), `mod.rs` (`project_dirs`, `load_or_default`, `save_atomic`).
-- Key files: `src/config/schema.rs`, `src/config/mod.rs`.
+- Purpose: Durable user preferences.
+- Contains: `schema.rs` (`AppConfig`, `GeneralConfig`, `TelemetryConfig`, bounds), `mod.rs` (ProjectDirs path, load with corruption backup, atomic save).
+- Key files: `src/config/schema.rs:17`, `src/config/mod.rs:34`, `src/config/mod.rs:85`.
+
+**`src/hardware/`:**
+- Purpose: Everything that touches a sensor or kernel interface on the **read** path.
+- Contains: `provider.rs` (trait + data types), `registry.rs` (canonical sensor scan), `mock.rs` (scenarios), `rgb.rs` (variant detection), `linux/` (CPU, GPU, hwmon, memory, provider), `mod.rs` (re-exports).
+- Key files: `src/hardware/provider.rs:232`, `src/hardware/registry.rs:34`, `src/hardware/linux/provider.rs:35`.
+
+**`src/hardware/linux/`:**
+- Purpose: Concrete Linux telemetry parsers.
+- Contains: `cpu.rs` (jiffies deltas, model, frequency), `gpu.rs` (DRM enumeration, `nvidia-smi` with timeout), `hwmon.rs` (device scan, temp/fan/label readers), `memory.rs` (`/proc/meminfo`), `provider.rs` (assembly + capabilities).
+- Key files: `src/hardware/linux/cpu.rs:9`, `src/hardware/linux/gpu.rs:66`, `src/hardware/linux/hwmon.rs:33`, `src/hardware/linux/memory.rs:30`.
+
+**`src/service/`:**
+- Purpose: The **write** path and the privilege boundary.
+- Contains: `contract.rs` (`HardwareService`, `#[interface(name = "com.zenomen.Hardware1")]`, `authorize`), `backend.rs` (`HardwareBackend`, `write_and_verify`, presets, RGB writes), `client.rs` (blocking GUI-side proxy, status/polkit probes), `polkit.rs` (`CheckAuthorization`), `types.rs` (`FanMode`, `PresetResult`, `HardwareControlError`).
+- Key files: `src/service/contract.rs:83`, `src/service/backend.rs:12`, `src/service/client.rs:34`, `src/service/polkit.rs:10`.
+
+**`src/desktop/`:**
+- Purpose: Desktop-environment integration on the session bus and XDG paths.
+- Contains: `single_instance.rs` (`com.zenomen.App`), `tray.rs` (StatusNotifierItem + DBusMenu), `autostart.rs` (`~/.config/autostart/zenomen.desktop`), `releases.rs` (`xdg-open` releases page), `system_integration.rs` (root installer with embedded assets).
+- Key files: `src/desktop/single_instance.rs:67`, `src/desktop/tray.rs:186`, `src/desktop/system_integration.rs:122`.
 
 **`src/rgb/`:**
-- Purpose: Lighting domain model and legacy import.
-- Contains: `schema.rs` (`RgbColor`, `RgbProfile`, strict hex), `migration.rs` (presets, OpenOMEN import, default dirs).
-- Key files: `src/rgb/schema.rs`, `src/rgb/migration.rs`.
+- Purpose: RGB profile model and legacy-data import.
+- Contains: `schema.rs` (`RgbColor`, `RgbProfile`, strict hex parsing), `migration.rs` (built-in presets, OpenOMEN profile parsing, non-destructive copy).
+- Key files: `src/rgb/schema.rs:32`, `src/rgb/migration.rs:52`, `src/rgb/migration.rs:185`.
 
 **`ui/`:**
-- Purpose: The compiled Slint interface. No hardware access, no numeric interpretation.
-- Contains: `app.slint` (shell/router), `screens/`, `components/`, `theme/`.
-- Key files: `ui/app.slint`, `ui/components/sidebar.slint`, `ui/theme/metrics.slint`.
-
-**`ui/screens/`:**
-- Purpose: One exported component per screen, matching `ScreenId` order.
-- Contains: `overview.slint`, `cooling.slint`, `performance.slint`, `lighting.slint`, `settings.slint`, `diagnostics.slint`.
-- Key files: `ui/screens/overview.slint` (grid reflow), `ui/screens/settings.slint` (local `ToggleSwitch`).
-
-**`ui/components/`:**
-- Purpose: Shared visual primitives.
-- Contains: `metric-card`, `value-readout`, `status-pill`, `status-strip`, `screen-header`, `section-card`, `unavailable-panel`, `capability-notice`, `action-button`, `telemetry-chart`, `sparkline`, `sidebar`, `icons`.
-- Key files: `ui/components/unavailable-panel.slint` (the "Unavailable" contract), `ui/components/telemetry-chart.slint` (consumes SVG path strings).
-
-**`ui/theme/`:**
-- Purpose: Design tokens and bundled fonts (Inter, JetBrains Mono) so rendering is deterministic offline.
-- Contains: `colors.slint`, `typography.slint`, `metrics.slint`, `fonts/`.
+- Purpose: Declarative presentation only; no hardware access, no formatting of raw values.
+- Contains: `app.slint` (shell/router), `screens/` (six screens), `components/` (13 reusable components), `theme/` (color/type/metric tokens + vendored fonts).
+- Key files: `ui/app.slint:29`, `ui/screens/overview.slint`, `ui/components/status-strip.slint`, `ui/theme/colors.slint`.
 
 **`tests/`:**
-- Purpose: Integration tests that exercise the public library API against temp roots and in-memory data.
-- Contains: 15 `*_tests.rs` files grouped by subsystem.
-- Key files: `tests/hardware_service_tests.rs`, `tests/sensor_registry_tests.rs`, `tests/degradation_tests.rs`.
+- Purpose: Integration and contract tests against the public library API.
+- Contains: 15 `*_tests.rs` files covering config, degradation, diagnostics, fans, service, GPU, procfs, mock, packaging, presets, RGB, registry, telemetry history, benchmark, desktop integration.
+- Key files: `tests/sensor_registry_tests.rs`, `tests/hardware_service_tests.rs`, `tests/degradation_tests.rs`.
 
 **`data/`:**
-- Purpose: System files shipped by the `.deb` and embedded for the AppImage installer.
-- Contains: `applications/zenomen.desktop`, `dbus/` (service + policy conf), `polkit/com.zenomen.hardware.policy`, `systemd/zenomen-hw.service`, `icons/`.
-- Key files: `data/systemd/zenomen-hw.service` (sandboxing), `data/polkit/com.zenomen.hardware.policy`.
-
-**`docs/`:**
-- Purpose: Human-facing operational documentation.
-- Contains: `PACKAGING.md`, `PARITY.md`, `RESOURCE-BUDGET.md`.
+- Purpose: Assets installed by Cargo Packager and by `--install-system-integration`.
+- Contains: `applications/zenomen.desktop`, `dbus/com.zenomen.Hardware1.{conf,service}`, `polkit/com.zenomen.hardware.policy`, `systemd/zenomen-hw.service`, `icons/hicolor/*/apps/zenomen.*`, `icons/zenomen.{png,svg,ico}`.
+- Key files: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.conf`, `data/polkit/com.zenomen.hardware.policy`.
 
 **`scripts/`:**
-- Purpose: Reproducible measurement and maintenance helpers.
-- Contains: `measure-budget.sh` (RSS + CPU sampling harness for `PERF-01/02/06`).
+- Purpose: Reproducible measurement of the resource budget.
+- Contains: `measure-budget.sh` (RSS from `/proc/<pid>/status`, CPU from `/proc/<pid>/stat`, `--soak` mode).
 
-**`dist/`:**
-- Purpose: Local packaging output and budget measurement CSVs.
-- Generated: Yes. Committed: No (gitignored).
-
-**`target/`:**
-- Purpose: Cargo build artifacts.
-- Generated: Yes. Committed: No.
-
-**`.planning/`:**
-- Purpose: GSD planning artifacts (PROJECT, ROADMAP, REQUIREMENTS, phases, research, this codebase map).
-- Generated: Yes (by GSD). Committed: Yes.
+**`docs/`:**
+- Purpose: Human documentation for packaging, feature parity, and resource budgets.
 
 **`.github/workflows/`:**
-- Purpose: CI gates and release automation.
-- Contains: `ci.yml` (fmt check, clippy `-D warnings`, `xvfb-run cargo test --all`, `cargo audit`), `release.yml`.
+- Purpose: CI and release automation.
+- Contains: `ci.yml` (fmt, clippy `-D warnings`, tests, `cargo audit`), `release.yml` (tag/version check, DEB + AppImage, checksums).
+
+**`.planning/`:**
+- Purpose: GSD project memory (requirements, roadmap, phases, research, codebase maps).
+- Generated: partly (by GSD commands); committed: yes.
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/main.rs`: GUI process (`fn main`, flags, thread orchestration, teardown).
-- `src/bin/zenomen-hw.rs`: privileged D-Bus daemon (`HardwareService` on the system bus).
-- `ui/app.slint`: `AppWindow` component compiled by `build.rs`.
-- `src/desktop/system_integration.rs`: `--install-system-integration` implementation.
+- `src/main.rs`: GUI startup, flags, threading, teardown.
+- `src/bin/zenomen-hw.rs`: daemon startup and D-Bus name ownership.
+- `build.rs`: Slint compilation (`ui/app.slint`, style `fluent`).
+- `src/lib.rs`: module tree and `slint::include_modules!()`.
+- `ui/app.slint`: window shell and screen router.
 
 **Configuration:**
-- `Cargo.toml`: dependencies, Slint feature pinning, release profile, Cargo Packager metadata.
-- `build.rs`: Slint compilation with `fluent` style pinned.
-- `src/config/schema.rs`: config structure, bounds, defaults.
-- `src/config/mod.rs`: config path (`~/.config/zenomen/config.toml`), atomic save, corruption backup.
-- `data/polkit/com.zenomen.hardware.policy`: action `com.zenomen.hardware.control`.
-- `data/systemd/zenomen-hw.service`: daemon sandboxing and lifecycle.
-- `.github/workflows/ci.yml`: required checks.
+- `Cargo.toml`: dependencies, release profile, packager metadata, DEB files/depends.
+- `build.rs`: build-time Slint configuration.
+- `src/config/schema.rs`: user-facing config schema and bounds.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml`: automation gates.
+- `.gitignore`: ignores `/target` and `dist/`; keeps `Cargo.lock`.
 
 **Core Logic:**
-- `src/core/worker.rs`: sampling cadence, visibility gating, mutation offload.
-- `src/core/state.rs`: every event folded into authoritative state.
-- `src/core/events.rs`: command/event/screen contract.
-- `src/hardware/provider.rs`: `HardwareProvider`, `TelemetrySnapshot`, `HardwareCapabilities`.
-- `src/hardware/registry.rs`: sensor priority resolution.
-- `src/service/backend.rs`: `write_and_verify` and sysfs operations.
-- `src/service/contract.rs`: D-Bus method surface + polkit gate.
+- `src/core/worker.rs`: sampling cadence, visibility gating, command handling.
+- `src/core/state.rs`: authoritative view state and degradation logic.
+- `src/core/events.rs`: command/event vocabulary and screen enum.
+- `src/core/telemetry.rs`: bounded history and chart geometry.
+- `src/hardware/registry.rs`: canonical sensor selection.
+- `src/service/backend.rs`: all verified writes.
 
 **UI:**
-- `ui/app.slint`: property declarations, router, global callbacks.
-- `ui/components/sidebar.slint`: screen order, labels and icons (must match `ScreenId`).
-- `ui/screens/*.slint`: per-screen property inputs and callbacks.
+- `ui/screens/*.slint`: one file per screen.
+- `ui/components/sidebar.slint`: nav model (`row-count: 6`).
+- `ui/components/status-strip.slint`: global status/degradation line.
+- `ui/theme/colors.slint`, `typography.slint`, `metrics.slint`: all design tokens.
 
 **Testing:**
-- `tests/`: 15 integration suites.
-- Inline unit tests: `#[cfg(test)] mod tests` at the bottom of modules that need private access (e.g. `src/core/state.rs:293-448`).
-- No dev-dependencies, no mock framework, no test config file.
-
-**Assets:**
-- `data/icons/`: PNG sizes + SVG + Windows `.ico`.
-- `ui/theme/fonts/`: Inter Regular/SemiBold, JetBrains Mono Regular + OFL licenses.
-- `logo/`: source logo SVGs.
+- `tests/*_tests.rs`: integration tests linked against the `zenomen` library.
+- Inline `#[cfg(test)] mod tests` in `src/core/state.rs`, `src/core/telemetry.rs`, `src/hardware/linux/*`, `src/service/polkit.rs`, etc.
 
 ## Naming Conventions
 
-**Rust files:**
-- `snake_case.rs`, one concern per file: `worker.rs`, `single_instance.rs`, `system_integration.rs`.
-- Module folders use `mod.rs` with `pub mod` declarations and `pub use` re-exports (`src/core/mod.rs`, `src/service/mod.rs`, `src/hardware/mod.rs`).
-- Binary entry is `src/bin/<binary-name>.rs` → `zenomen-hw` (hyphen in the binary name, underscore not used here).
+**Files (Rust):**
+- `snake_case.rs`; module name equals file name (`src/core/worker.rs` → `core::worker`).
+- Binary targets in `src/bin/` use kebab-case matching the installed command: `zenomen-hw.rs` → binary `zenomen-hw`.
+- Test files: `<subsystem>_tests.rs` at the `tests/` root (e.g. `sensor_registry_tests.rs`, `linux_gpu_tests.rs`).
 
-**Rust symbols:**
-- Types/traits/enums: `PascalCase` (`HardwareProvider`, `TelemetrySnapshot`, `HardwareControlError`, `RgbInterfaceVariant`).
-- Functions/methods/variables: `snake_case`, verb-first (`sample_telemetry`, `write_and_verify`, `find_fan_control_path`, `detect_capabilities`).
-- Constants: `UPPER_SNAKE` (`SAMPLING_INTERVAL`, `HISTORY_WINDOW`, `EXPECTED_SENSOR_COUNT`, `POLKIT_ACTION_CONTROL`, `SNI_OBJECT_PATH`).
-- Threads: `kebab-case` names prefixed `zenomen-`: `zenomen-monitor-worker`, `zenomen-event-pump`, `zenomen-desktop-actions`, `zenomen-ctrl-<op>`, `zenomen-rpc-<op>`, `zenomen-diag-export`.
-- Enum variants: `PascalCase`; `AppCommand` variants are imperative (`SetFanMode`, `RefreshTelemetry`, `UpdateConfig`); `AppEvent` variants are past-tense (`TelemetryUpdated`, `FanModeChanged`, `ConfigLoaded`).
-- Error enums use `thiserror` with `#[derive(Debug, Error)]` and explicit `#[error("…")]` messages (`src/service/types.rs`, `src/rgb/schema.rs`, `src/desktop/system_integration.rs`).
+**Files (Slint):**
+- kebab-case for multiword components: `metric-card.slint`, `status-strip.slint`, `telemetry-chart.slint`, `screen-header.slint`.
+- Single-word screens are lowercase: `overview.slint`, `cooling.slint`, `settings.slint`.
+- Exported component names are PascalCase and match the file's role: `MetricCard`, `StatusStrip`, `TelemetryChart`, `Overview`.
 
-**Slint files:**
-- File names `kebab-case.slint`, matching the exported component concept: `metric-card.slint` → `MetricCard`, `unavailable-panel.slint` → `UnavailablePanel`, `screen-header.slint` → `ScreenHeader`.
-- Exported components: `PascalCase` (`AppWindow`, `Overview`, `Cooling`, `StatusStrip`).
-- Properties and callbacks: `kebab-case` (`has-fan-control`, `active-screen`, `set-fan-mode`, `open-diagnostics`).
-- Private helpers: `private property`, `public function` for cross-component calls (`focus-active-row`).
-- Imports are relative paths with `.slint` extension: `import { ThemeColors } from "theme/colors.slint";` (shell) and `"../theme/colors.slint"` (screens/components).
+**Rust Identifiers:**
+- Types/traits/enums: PascalCase (`HardwareProvider`, `TelemetrySnapshot`, `AppCommand`).
+- Functions/methods/modules: snake_case, verb-first for actions (`sample_telemetry`, `write_and_verify`, `collect_diagnostics`).
+- Constants: SCREAMING_SNAKE_CASE (`MAX_SAMPLES`, `SAMPLING_INTERVAL`, `COMMAND_QUEUE_DEPTH`, `POLKIT_ACTION_CONTROL`).
+- Struct fields mirror the domain concept, not the UI label (`cpu_temperature_c`, `ram_used_mb`, `fan_rpms`, `pending_fan_mode`).
+- Test functions describe behavior: `starts_waiting_for_a_reading_and_reports_nothing_supported`, `history_strictly_bounds_samples_to_120_on_overflow`.
 
-**Tests:**
-- Files: `tests/<subsystem>_tests.rs` (`fan_control_tests.rs`, `linux_procfs_tests.rs`, `hardware_service_tests.rs`).
-- Test functions: `test_*` or behaviour sentences (`history_strictly_bounds_samples_to_120_on_overflow`, `capabilities_loaded_clears_degradation`).
-- Helpers: a local struct with `Drop` cleanup (`struct MockSysfs { root: PathBuf }` in `tests/hardware_service_tests.rs:8-52`) or a `temp_test_dir(name)` function (`tests/config_tests.rs:16-22`).
+**Slint Identifiers:**
+- Properties and callbacks: kebab-case (`has-cpu-metrics`, `status-degraded`, `set-fan-mode`, `export-diagnostics`).
+- Globals: `ThemeColors`, `ThemeTypography`, `ThemeMetrics`.
+- Component instances use lowercase names (`sidebar`, `root`, `shell-focus`).
 
-**Assets:**
-- `data/` mirrors installed system paths: `data/dbus/`, `data/polkit/`, `data/systemd/`, `data/applications/`.
-- Icons use freedesktop size folders: `data/icons/hicolor/<size>/apps/zenomen.png`.
+**Files (data/packaging):**
+- D-Bus/polkit names use reverse-DNS: `com.zenomen.Hardware1`, `com.zenomen.Hardware1.conf`, `com.zenomen.hardware.policy`.
+- systemd unit: `zenomen-hw.service`.
+- Desktop entry: `zenomen.desktop`.
+
+**Environment variables:**
+- `ZENOMEN_*` prefix: `ZENOMEN_MOCK_SCENARIO`, `ZENOMEN_HW_SESSION`, `ZENOMEN_BENCHMARK`; standard `RUST_LOG`.
 
 ## Where to Add New Code
 
-### Adding a new sensor (read-only telemetry)
+**New telemetry sensor (read-only):**
+1. Parser/reader: new or existing module under `src/hardware/linux/` returning `Option<T>` when absent.
+2. Sampling: add the field to `TelemetrySnapshot` in `src/hardware/provider.rs:152` and populate it in `LinuxHardwareProvider::sample_telemetry` (`src/hardware/linux/provider.rs:115`).
+3. Mock parity: populate it in `src/hardware/mock.rs` so scenarios remain representative.
+4. Capability: add a flag to `HardwareCapabilities` (`src/hardware/provider.rs:28`) and set it in `SensorRegistry::detect_capabilities` (`src/hardware/registry.rs:117`).
+5. Bridge: add a Slint property in `ui/app.slint` and write it in `apply_to_ui` (`src/app.rs:386`); empty string means unavailable.
+6. Tests: `tests/<subsystem>_tests.rs` plus a slice in `tests/degradation_tests.rs` for the absent case.
 
-1. **Parse/read it:** add a function in the relevant `src/hardware/linux/*.rs` module (`cpu.rs` for `/proc`, `memory.rs`, `hwmon.rs`, `gpu.rs`), or a new `src/hardware/linux/<subsystem>.rs` declared in `src/hardware/linux/mod.rs`.
-2. **Register canonical binding:** if it is a hwmon device, extend `SensorRegistry` (`src/hardware/registry.rs`): add the descriptor field, resolve it in `scan_roots`, add a `read_*` method.
-3. **Extend the snapshot:** add the field to `TelemetrySnapshot` (`src/hardware/provider.rs`) using `Option`/empty semantics, and add it to the `reported_sensor_count()` array. Bump `EXPECTED_SENSOR_COUNT` if it is a new user-visible sensor.
-4. **Populate it:** set the field in `LinuxHardwareProvider::sample_telemetry` (`src/hardware/linux/provider.rs`) and in `MockHardware` (`src/hardware/mock.rs`) for all three scenarios.
-5. **Capability flag (if a new subsystem):** add to `HardwareCapabilities` + `has_*()` + `none()` + `all_supported()` in `src/hardware/provider.rs`, map it in `SensorRegistry::detect_capabilities`, and bump `SUBSYSTEM_COUNT` in `src/core/state.rs`.
-6. **Chart it (optional):** add a series to `TelemetryPoint` and `TelemetryPaths` in `src/core/telemetry.rs`, then generate it in `AppState::apply` (`src/core/state.rs`).
-7. **Expose it:** add an `in-out property` to `ui/app.slint` and set it in `apply_to_ui` (`src/app.rs:386-519`) — format to a string in Rust, never in Slint.
-8. **Render it:** pass the property to the screen(s) in `ui/app.slint` and consume it in `ui/screens/*.slint`; use `UnavailablePanel` / `CapabilityNotice` when the value is empty.
-9. **Test it:** fixture parser test in `tests/linux_procfs_tests.rs` / `tests/linux_gpu_tests.rs`; registry priority test in `tests/sensor_registry_tests.rs`; mock scenario test in `tests/mock_hardware_tests.rs`; degradation test in `tests/degradation_tests.rs`.
+**New hardware control operation (write path):**
+1. Backend: method on `HardwareBackend` using `write_and_verify` (`src/service/backend.rs:12`), with validation before writing.
+2. Contract: `#[interface]` method in `src/service/contract.rs:83` taking `#[zbus(header)]` and calling `self.authorize(&hdr).await?` first.
+3. Client: blocking method in `src/service/client.rs:34`; wrap errors with `format_service_error` guidance.
+4. Command: new `AppCommand` variant (`src/core/events.rs:71`) and a worker arm (`src/core/worker.rs:120`) using `execute_mutating_action`.
+5. Event: new `AppEvent` variant (`src/core/events.rs:115`), handled in `AppState::apply` (`src/core/state.rs:109`).
+6. UI: callback in `ui/app.slint`, screen wiring in `ui/screens/<screen>.slint`, property publication in `apply_to_ui` (`src/app.rs:386`).
+7. Tests: `tests/hardware_service_tests.rs` for backend/contract, `tests/fan_control_tests.rs`-style state tests.
 
-If the sensor also needs a **write**, follow "Adding a new D-Bus operation" instead and keep reads local.
+**New screen:**
+1. `ui/screens/<name>.slint` exporting a PascalCase component.
+2. `ScreenId` variant + `ALL` + `index()` + `from_index()` + `title()` (`src/core/events.rs:16-67`).
+3. Router: import, property plumbing, and `if root.current-screen == N` block in `ui/app.slint`; update the `<= 5` guard (`ui/app.slint:191-192`).
+4. Sidebar: row model and `row-count` in `ui/components/sidebar.slint:52`.
+5. Bridge: any new callbacks in `ZenOmenApp::install_callbacks` (`src/app.rs:94`).
 
-### Adding a new D-Bus operation (hardware write)
+**New reusable component:**
+- Implementation: `ui/components/<kebab-name>.slint`; export PascalCase; take all data as `in property`, emit `callback`.
+- Reuse: import relatively from screens (`../components/...`) and from the shell (`components/...`).
+- No literal colors or sizes: use `ui/theme/colors.slint`, `typography.slint`, `metrics.slint`.
 
-1. **Backend:** implement the operation in `src/service/backend.rs` on `HardwareBackend`. Resolve paths via `self.resolve_path(...)`; validate every argument; write with `write_and_verify()`; re-read and return the confirmed state. Add any new error shape to `HardwareControlError` in `src/service/types.rs` and map it in `impl From<HardwareControlError> for zbus::fdo::Error`.
-2. **Contract:** add an `async fn` inside the existing `#[interface(name = "com.zenomen.Hardware1")] impl HardwareService` block in `src/service/contract.rs`. Mutating methods MUST take `#[zbus(header)] hdr: Header<'_>` and call `self.authorize(&hdr).await?` first. Return `zbus::fdo::Result<T>`; never accept a filesystem path or a command string.
-3. **Client:** add a blocking wrapper in `src/service/client.rs` using `conn.call_method(Some(destination), path, Some(interface), "MethodName", &(args,))` and `reply.body().deserialize()`.
-4. **Command/event:** add `AppCommand::<Verb><Noun>` to `src/core/events.rs` and a matching `AppEvent::<Noun>Changed(Result<T, String>)`.
-5. **Worker:** handle the command in `src/core/worker.rs`, using `execute_mutating_action("<short-name>", sender, || client.method(...), AppEvent::...)` so polkit cannot block sampling.
-6. **State:** fold the event in `AppState::apply` (`src/core/state.rs`) — clear pending flags, store confirmed value, set/clear `last_control_error`.
-7. **Bridge:** install the Slint callback in `src/app.rs::install_callbacks` (`send_command(...)`) and publish the result in `apply_to_ui`.
-8. **UI:** declare the callback and properties in `ui/app.slint`, wire them in the relevant `ui/screens/*.slint`.
-9. **Policy:** only if a genuinely different privilege class is needed, add an action ID to `data/polkit/com.zenomen.hardware.policy` and a constant in `src/service/polkit.rs`; otherwise reuse `com.zenomen.hardware.control`.
-10. **Test:** extend `tests/hardware_service_tests.rs` with a `MockSysfs` tree asserting success, verification failure, and invalid-argument rejection; extend state transition tests (pattern: `tests/fan_control_tests.rs`) for the event → UI mapping.
+**New configuration setting:**
+1. Field in `src/config/schema.rs` with `#[serde(default = "...")]`.
+2. Bounds/validation in `AppConfig::sanitize` (`src/config/schema.rs:90`).
+3. `AppCommand` (or `UpdateConfig`) handling in `src/core/worker.rs:151-221`.
+4. `AppState` field (`src/core/state.rs:31`) and `ConfigLoaded` publishing in `apply_to_ui` (`src/app.rs:397`).
+5. Settings UI property + callback (`ui/screens/settings.slint`, `ui/app.slint`).
+6. Round-trip test in `tests/config_tests.rs`.
 
-### Adding a new UI screen
+**New diagnostics field:**
+1. Add to `DiagnosticsReport` (`src/core/diagnostics.rs:29`).
+2. Populate in `collect_diagnostics_from_roots` (`src/core/diagnostics.rs:74`) using an injectable path for tests.
+3. Surface in `ui/screens/diagnostics.slint` only if it is user-facing.
+4. Test in `tests/diagnostics_tests.rs`.
 
-1. **Create the component:** `ui/screens/<kebab-name>.slint`, exporting `export component <PascalName> inherits Rectangle` with `in property` inputs and `callback` outputs only. Import theme + components from `../theme/…` and `../components/…`. Never read a sensor or call Rust.
-2. **Router:** in `ui/app.slint` add the import, extend `screen-titles`, add `if root.current-screen == N : <PascalName> { ... }` inside the content `VerticalLayout`, and map properties/callbacks.
-3. **Screen identity (all four places, same change):** in `src/core/events.rs` add a `ScreenId` variant, then update `ScreenId::ALL`, `index()`, `from_index()` (via `ALL`) and `title()`.
-4. **Sidebar:** in `ui/components/sidebar.slint` add the label and icon at the same index and bump `row-count`.
-5. **Bridge:** declare `in-out property`s on `AppWindow` (`ui/app.slint`), add callbacks there, install them in `src/app.rs::install_callbacks`, and publish any new state from `apply_to_ui`.
-6. **State (optional):** only add `AppState` fields if the screen needs derived status (follow the `status_text()` / `is_degraded()` pattern in `src/core/state.rs`).
-7. **Test:** there is no Slint test harness; assert the Rust-side invariant instead (screen index/`from_index` round-trip, event → state changes) in a `tests/*_tests.rs` suite, and keep every screen instantiated in `ui/app.slint` so the compiler type-checks it.
+**New desktop integration or installed asset:**
+1. Asset under `data/` in the correct subdirectory.
+2. Embed with `include_str!` and add install/uninstall targets in `src/desktop/system_integration.rs:12-26`, `:122-176`.
+3. Add the mapping to `[package.metadata.packager.deb.files]` in `Cargo.toml:67-75`.
+4. Assert presence/content in `tests/packaging_tests.rs`.
 
-### Adding a new test
-
-- **Location:** `tests/<subsystem>_tests.rs` for anything using the public `zenomen::…` API; inline `#[cfg(test)] mod tests` at the bottom of a module for private functions (pattern: `src/core/state.rs:293`).
-- **Naming:** `<area>_tests.rs`; snake_case test names describing the guarantee.
-- **Filesystem isolation:** build a temp root under `std::env::temp_dir().join(format!("zenomen_test_<name>_{pid}"))`, create the `sys/...` tree the backend expects, and clean up with a `Drop` impl (`tests/hardware_service_tests.rs:8-52`) or at the end of the test.
-- **Hardware:** use `MockHardware` / `MockScenario` (`src/hardware/mock.rs`) or `HardwareBackend::new(temp_root)`; never touch real `/sys` in a test.
-- **Worker:** use `spawn_monitoring_worker` with a channel and a `MockHardware` (pattern: `tests/benchmark_tests.rs`); always send `AppCommand::Shutdown` and join.
-- **Run:** `cargo test --all`; CI runs it under `xvfb-run --auto-servernum` because Slint needs a display (` .github/workflows/ci.yml`).
-- **No new dev-dependencies** unless unavoidable; the crate currently has none.
-
-### Adding a new configuration option
-
-1. Add the field with `#[serde(default = "...")]` to `src/config/schema.rs`, plus a default function and bounds.
-2. Clamp/validate it in `AppConfig::sanitize()`.
-3. Consume it where it belongs (worker for cadence, `src/main.rs` for startup behavior, `src/app.rs` for UI defaults).
-4. Add persistence via `AppCommand::UpdateConfig` and an `AppEvent::ConfigLoaded` publish if it is user-editable.
-5. Add a test in `tests/config_tests.rs` (roundtrip + clamping + corrupt fallback).
-
-### Adding a new desktop action
-
-1. Extend `DesktopAction` in `src/desktop/single_instance.rs`.
-2. Emit it from the relevant D-Bus interface (`src/desktop/single_instance.rs` or `src/desktop/tray.rs`).
-3. Handle it in the `zenomen-desktop-actions` loop in `src/main.rs:126-149`, wrapping any UI work in `slint::invoke_from_event_loop`.
-4. Test it in `tests/desktop_integration_tests.rs`.
-
-### Adding a new packaged asset
-
-1. Add the file under `data/` mirroring its installed system path.
-2. Register it in `[package.metadata.packager.deb.files]` in `Cargo.toml`.
-3. If the AppImage/standalone installer needs it, embed it with `include_str!` in `src/desktop/system_integration.rs` and install it via `atomic_write_file`.
-4. Extend `tests/packaging_tests.rs`, which asserts embedded assets match disk.
+**New test:**
+- Integration: `tests/<area>_tests.rs`, importing through `zenomen::...`.
+- Unit: inline `#[cfg(test)] mod tests` in the module under test.
+- Prefer `scan_roots`/`with_all_roots`/`HardwareBackend::new(prefix)` injection over touching real `/sys`; see `tests/sensor_registry_tests.rs` and `tests/linux_procfs_tests.rs`.
 
 ## Special Directories
 
 **`target/`:**
-- Purpose: Cargo build output including the generated Slint Rust code.
-- Generated: Yes. Committed: No.
+- Purpose: Cargo build artifacts including Slint-generated Rust.
+- Generated: Yes.
+- Committed: No (`.gitignore`).
 
 **`dist/`:**
-- Purpose: `.deb`/AppImage output and resource-budget CSVs (`budget-dashboard-open.csv`, `budget-hw-daemon.csv`, `budget-tray-minimized.csv`).
-- Generated: Yes. Committed: No.
+- Purpose: Cargo Packager output (`.deb`, `.AppImage`) and budget measurement CSVs.
+- Generated: Yes.
+- Committed: No (`.gitignore`); budget CSVs here are produced by `scripts/measure-budget.sh` during local measurement.
+
+**`data/icons/hicolor/`:**
+- Purpose: Multi-resolution installed icons (16–512 px + scalable).
+- Generated: No (checked-in art).
+- Committed: Yes.
 
 **`ui/theme/fonts/`:**
-- Purpose: Bundled Inter and JetBrains Mono faces so the UI looks identical offline; includes OFL license files.
-- Generated: No. Committed: Yes.
+- Purpose: Vendored Inter and JetBrains Mono faces with their OFL license files.
+- Generated: No.
+- Committed: Yes; keep the `*-OFL.txt` beside each face.
 
-**`data/`:**
-- Purpose: Canonical system integration assets, consumed both by Cargo Packager and by `include_str!`.
-- Generated: No. Committed: Yes — edits must be reflected in both packaging paths.
+**`.agents/skills/`:**
+- Purpose: Project-skill discovery location.
+- Generated: No.
+- Committed: Yes, but currently empty — no `SKILL.md` index exists, so there are no project-specific agent skills to apply.
 
 **`.planning/`:**
-- Purpose: GSD project memory (PROJECT, ROADMAP, REQUIREMENTS, phase artifacts, research, this codebase map).
-- Generated: Yes. Committed: Yes.
+- Purpose: GSD state (`PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `phases/`, `research/`, `codebase/`).
+- Generated: Yes (by GSD commands).
+- Committed: Yes.
 
-**`.github/workflows/`:**
-- Purpose: CI (`ci.yml`) and release automation (`release.yml`).
-- Generated: No. Committed: Yes.
+**`logo/`:**
+- Purpose: Source logo/brand artwork used to produce `data/icons/*`.
 
 ---
 
-*Structure analysis: 2026-11-02*
+*Structure analysis: 2026-11-06*

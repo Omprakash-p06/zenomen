@@ -1,325 +1,519 @@
 ---
-last_mapped_commit: e50af8f9ea61300a1c10d36dc6954e319da7b6e2
-last_mapped_at: 2026-11-02
+last_mapped_commit: 30d62de2cdf6f507822944e5602bdd907539ce38
+last_mapped_at: 2026-11-06
 ---
 # Testing Patterns
 
-**Analysis Date:** 2026-11-02
+**Analysis Date:** 2026-11-06
+
+## Scope
+
+This document describes the tests that ship with the **Rust + Slint implementation**
+(`src/`, `tests/`). The retired Python CLI had no tests at all; ignore any testing
+guidance inherited from it.
 
 ## Test Framework
 
 **Runner:**
-- `cargo test` (built-in Rust test harness, stable toolchain, edition 2024).
-- No test-runner config file and **no dev-dependencies** in `Cargo.toml` — no `mockall`, no `rstest`, no `proptest`, no `tokio`, no `serial_test`.
-- Integration tests are native `tests/*.rs` targets; unit tests are `#[cfg(test)] mod tests` blocks inside `src/**/*.rs`.
+- Rust built-in test harness (`cargo test`) — no external runner, no `#[tokio::test]`,
+  no `rstest`, no `proptest`, no `serial_test`
+- Config: `Cargo.toml` has **no `[dev-dependencies]` section at all**. Every test uses
+  `std`, the crate's public API, and the standard `assert!` family.
+- Integration suites are declared implicitly: any file at `tests/*.rs` is its own crate.
 
 **Assertion Library:**
-- Standard library `assert!`, `assert_eq!`, `assert_ne!`, and `matches!` — no external assertion crate.
-- `expect("...")` is used for fixture setup and for values the test asserts must exist; plain `unwrap()` appears mostly in older fixture code.
-- Float comparisons use a tolerance: `assert!((util - 75.0).abs() < 0.01, "Expected 75.0%, got {util}")` (`src/hardware/linux/cpu.rs:227`).
+- Standard macros only: `assert!`, `assert_eq!`, `assert_ne!`
+- `assert_eq!` is used with a third message argument whenever the value is not
+  self-describing, e.g. `assert!(agg2 - 75.0).abs() < 0.1, "Expected 75%, got {agg2}")`
+  (`tests/linux_procfs_tests.rs:29`)
+- Error variants are matched, not string-compared:
+  ```rust
+  assert!(matches!(
+      manual_err,
+      HardwareControlError::UnsupportedMode(_)
+  ));
+  ```
+  (`tests/hardware_service_tests.rs:76-79`)
 
 **Run Commands:**
 
 ```bash
-cargo test                                      # all tests
-cargo test --all                                # all workspace targets (CI form)
-xvfb-run --auto-servernum cargo test --all      # headless CI form (required in CI)
-cargo test --lib                                # unit tests only (src/**)
-cargo test --test hardware_service_tests        # one integration suite
-cargo test fan_mode                             # filter by name substring
-cargo test --locked --all                       # release workflow form (Cargo.lock enforced)
+xvfb-run -a cargo test --all          # Canonical run (CI + README)
+cargo test --all                      # Works only if a display server is available
+cargo test                            # Library unit tests + inline modules
+cargo test --lib                      # Inline #[cfg(test)] modules only
+cargo test --test degradation_tests   # One integration suite
+cargo test <substring>                # Filter by test name
 ```
 
-There is no watch, coverage, or benchmark harness wired up (no `cargo-watch`, `llvm-cov`, `tarpaulin`, or `criterion`).
+`xvfb-run` is mandatory on headless machines because the `zenomen` library links Slint
+and the crate's probe binaries must initialise the GUI stack, even though **no test
+instantiates a window** (`.github/workflows/ci.yml:50-52`).
 
-## Test Suite Inventory
+CI gate that matters here (`.github/workflows/ci.yml:47-48`):
 
-**Totals:** 15 integration test files, 6 in-source unit-test modules, **108 `#[test]` functions** (79 integration + 29 unit).
+```bash
+xvfb-run --auto-servernum cargo test --all
+```
 
-| File | Tests | Covers |
-|------|------:|--------|
-| `tests/benchmark_tests.rs` | 5 | RSS instrumentation, worker tick latency, headless worker dispatch (PERF-01, MON-10) |
-| `tests/config_tests.rs` | 6 | TOML roundtrip, atomic save, corrupt-file backup, polling clamp (SYS-06/07/09) |
-| `tests/degradation_tests.rs` | 8 | Degradation matrix: fan/pwm/temp/nvidia-smi/RGB/service absence, unauthorized write, corrupt config (PERF-05) |
-| `tests/desktop_integration_tests.rs` | 8 | Autostart XDG entry, single-instance D-Bus dispatch, StatusNotifierItem, desktop/icon assets |
-| `tests/diagnostics_tests.rs` | 2 | `DiagnosticsReport` from injected roots + live-system smoke test |
-| `tests/fan_control_tests.rs` | 3 | Fan-mode state transitions, verification-error preservation, service status mapping |
-| `tests/hardware_service_tests.rs` | 9 | `zenomen-hw` backend, `write_and_verify`, fan parsing, presets, RGB writes, polkit contract |
-| `tests/linux_gpu_tests.rs` | 3 | DRM card enumeration, nvidia-smi CSV parsing |
-| `tests/linux_procfs_tests.rs` | 4 | `/proc/stat` CPU deltas, `/proc/cpuinfo` model/freq, `/proc/meminfo` |
-| `tests/mock_hardware_tests.rs` | 3 | `Nominal`, `ZeroCapabilities`, `SensorDataGap` scenarios and the no-fabricated-zero rule |
-| `tests/packaging_tests.rs` | 5 | Embedded assets vs `data/`, install/uninstall to a mock prefix, root enforcement, Cargo.toml packaging metadata |
-| `tests/power_preset_tests.rs` | 5 | ACPI profile selection, combined presets, partial success, mock backend |
-| `tests/rgb_tests.rs` | 8 | Hex validation, builtin presets, three interface variants, OpenOMEN migration, sysfs writes |
-| `tests/sensor_registry_tests.rs` | 6 | Shared registry and CPU-temp priority matrix (k10temp > coretemp > acpitz) |
-| `tests/telemetry_history_tests.rs` | 4 | 120-sample bound, SVG path generation, `None` gap breaks |
-
-| Unit module | Tests | Covers |
-|-------------|------:|--------|
-| `src/core/state.rs:293` | 10 | `AppState::apply` transitions, status text, degradation, history resizing |
-| `src/core/telemetry.rs:247` | 6 | `TelemetryHistory` capacity/eviction, SVG path rendering |
-| `src/hardware/linux/cpu.rs:188` | 5 | `CpuJiffies::parse_stat_line`, delta utilization, cpuinfo parsing |
-| `src/hardware/linux/gpu.rs:249` | 3 | nvidia-smi parsing edge cases |
-| `src/hardware/linux/memory.rs:75` | 2 | `/proc/meminfo` arithmetic |
-| `src/hardware/linux/hwmon.rs:88` | 3 | Temperature/fan/label sysfs readers |
-
-**Split rule:** parsers and pure state machines get in-source unit tests; anything that needs a fake filesystem root, a fake provider, or a channel gets an integration test in `tests/`.
+All four gates must pass before a PR: `cargo fmt --all -- --check`,
+`cargo clippy --all-targets --all-features -- -D warnings`, the test command above,
+and `cargo audit`.
 
 ## Test File Organization
 
-**Integration tests:**
-- Flat directory, no subfolders: `tests/<domain>_tests.rs`.
-- Naming `<subsystem>_<kind>_tests.rs` or `<domain>_tests.rs`: `sensor_registry_tests.rs`, `desktop_integration_tests.rs`, `hardware_service_tests.rs`.
-- Each file is its own crate, so it may only use the **public** API via `use zenomen::...`. If a test needs a private helper, either make it `pub` on the module boundary or add the test to the in-source `#[cfg(test)]` module.
+**Location:**
+- **Integration tests:** `tests/<area>_tests.rs` — one file per subsystem area,
+  always suffixed `_tests.rs`
+- **Inline unit tests:** `#[cfg(test)] mod tests { use super::*; ... }` at the bottom of
+  the module under test. Used for pure logic that benefits from private access.
 
-**Unit tests:**
+**Current inventory — 110 `#[test]` functions across 15 integration suites + 9 inline
+modules:**
+
+| Suite | Tests | Focus |
+|---|---|---|
+| `tests/hardware_service_tests.rs` | 9 | `write_and_verify`, `FanMode` conversion, polkit contract |
+| `tests/degradation_tests.rs` | 8 | PERF-05 degradation matrix (`degradation_01`…`degradation_08`) |
+| `tests/desktop_integration_tests.rs` | 8 | autostart, single-instance D-Bus, tray, icons |
+| `tests/rgb_tests.rs` | 8 | hex validation, presets, migration, three sysfs variants |
+| `tests/config_tests.rs` | 6 | TOML roundtrip, atomic save, corruption recovery, clamping |
+| `tests/sensor_registry_tests.rs` | 6 | sensor priority resolution, live-host smoke test |
+| `tests/benchmark_tests.rs` | 5 | RSS instrumentation, worker latency, tick budget |
+| `tests/packaging_tests.rs` | 5 | embedded assets vs `data/`, install/uninstall, root guard |
+| `tests/power_preset_tests.rs` | 5 | ACPI profile writes and combined presets |
+| `tests/telemetry_history_tests.rs` | 4 | bounded `VecDeque`, eviction, SVG path generation |
+| `tests/linux_procfs_tests.rs` | 4 | `/proc/stat` deltas, `/proc/meminfo` parsing |
+| `tests/fan_control_tests.rs` | 3 | `AppState` event transitions, offline client |
+| `tests/linux_gpu_tests.rs` | 3 | `nvidia-smi` parsing, DRM vendor detection |
+| `tests/mock_hardware_tests.rs` | 3 | the three `MockScenario` variants |
+| `tests/diagnostics_tests.rs` | 2 | diagnostics collection and export |
+
+| Inline module | Tests |
+|---|---|
+| `src/core/state.rs` | 10 |
+| `src/core/telemetry.rs` | 6 |
+| `src/hardware/linux/cpu.rs` | 5 |
+| `src/hardware/linux/gpu.rs` | 3 |
+| `src/hardware/linux/hwmon.rs` | 3 |
+| `src/hardware/linux/memory.rs` | 2 |
+| `src/service/polkit.rs` | 1 |
+| `src/desktop/system_integration.rs` | 1 |
+| `src/service/contract.rs` | 0 (`#[cfg(test)]` builder only) |
+
+**Note:** `README.md:226` claims "108 automated unit and integration tests". The actual
+count is **110**. Treat `cargo test` output as authoritative.
+
+**Naming:**
+- Integration files: `<area>_tests.rs`
+- Test functions: **descriptive snake_case sentences**, no `test_` prefix in newer suites:
+  `history_evicts_oldest_beyond_max_samples`, `cpu_sampler_calculates_jiffies_deltas_correctly`,
+  `strict_hex_color_validation_success_and_failure`
+- Older suites still carry `test_`: `test_fan_mode_state_transitions`,
+  `test_embedded_assets_match_disk_files`. **Prefer the descriptive form for new tests.**
+- The degradation matrix uses a zero-padded ordinal tied to the matrix row:
+  `degradation_01_fan_hwmon_absent_leaves_cpu_temp_working`
+  (`tests/degradation_tests.rs:23`)
+- Inline modules: `fn <behavior>_<condition>()`, e.g.
+  `history_evicts_oldest_beyond_max_samples`, `svg_path_breaks_on_none_gaps`
+
+**Structure:**
+
+```text
+tests/
+├── benchmark_tests.rs
+├── config_tests.rs
+├── degradation_tests.rs
+├── desktop_integration_tests.rs
+├── diagnostics_tests.rs
+├── fan_control_tests.rs
+├── hardware_service_tests.rs
+├── linux_gpu_tests.rs
+├── linux_procfs_tests.rs
+├── mock_hardware_tests.rs
+├── packaging_tests.rs
+├── power_preset_tests.rs
+├── rgb_tests.rs
+├── sensor_registry_tests.rs
+└── telemetry_history_tests.rs
+```
+
+## Test Structure
+
+**Suite Organization:** every integration file opens with a `//!` module doc comment
+listing the requirement IDs it enforces:
+
+```rust
+//! Integration tests for zenomen-hw service, verified sysfs writes, and polkit contract.
+```
+
+(`tests/hardware_service_tests.rs:1`)
+
+Larger suites enumerate their coverage as a bullet list with requirement IDs:
+
+```rust
+//! Verifies:
+//! - Multi-variant interface discovery (`FourZone`, `Legacy`, `KernelPatch`) (RGB-01)
+//! - Preset definitions (`White`, `Gaming`, `Rainbow`, `Off`) (RGB-03)
+```
+
+(`tests/rgb_tests.rs:1-14`)
+
+**Setup pattern:** build the fixture, exercise the public API, assert on returned data.
+No `#[before]`/`#[after]` macros, no `ctor`. Setup is plain Rust at the top of the test.
+
+**Teardown pattern:** explicit `let _ = fs::remove_dir_all(&root);` at the end, **or** a
+`Drop` impl for helper structs that own a temp directory (`tests/diagnostics_tests.rs:28-32`,
+`tests/hardware_service_tests.rs:53-57`). Prefer the `Drop` form so a panicking assertion
+still cleans up.
+
+**Assertion pattern:** one behaviour per `#[test]`; multiple `assert!` calls are fine when
+they check the same scenario. Related state transitions are numbered inline:
+
+```rust
+// 1. Success event updates fan mode and clears errors
+state.apply(&AppEvent::FanModeChanged(Ok("max".to_string())));
+// 2. Failure event preserves active mode and sets error
+```
+
+(`tests/fan_control_tests.rs:13-30`)
+
+**Inline module shape:**
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn fully_capable() -> HardwareCapabilities {
+        HardwareCapabilities::all_supported()
+    }
+
     #[test]
-    fn parse_stat_line_correctly_extracts_jiffies() { ... }
+    fn subsystem_count_matches_capability_flags() { ... }
 }
 ```
 
-Always at the bottom of the file; `use super::*;` plus explicit `std` imports when needed (e.g. `use std::fs;` inside `src/hardware/linux/hwmon.rs:90`).
-
-## Test Structure
-
-**File header:** every integration file starts with a `//!` block naming the requirement IDs it verifies:
-
-```rust
-//! Integration tests for fan mode control, read-back verification state, and UI state mapping.
-```
-
-```rust
-//! Degradation matrix integration tests (PERF-05).
-//!
-//! Asserts that removing any sensor, interface, external tool, or daemon
-//! causes zero crashes and cleanly degrades to an explained unavailable state.
-```
-
-**Test body:** arrange → act → assert, with numbered comments for multi-step state transitions:
-
-```rust
-#[test]
-fn test_fan_mode_state_transitions() {
-    let mut state = AppState::default();
-    assert_eq!(state.fan_mode, "");
-
-    // 1. Success event updates fan mode and clears errors
-    state.apply(&AppEvent::FanModeChanged(Ok("max".to_string())));
-    assert_eq!(state.fan_mode, "max");
-
-    // 2. Failure event preserves active mode and sets error
-    state.apply(&AppEvent::FanModeChanged(Err("...".to_string())));
-    assert_eq!(state.fan_mode, "max"); // preserved
-    assert!(state.last_control_error.is_some());
-}
-```
-
-(`tests/fan_control_tests.rs:8`)
-
-**Patterns:**
-- **Assertion messages explain the contract**, not just the value: `assert!(caps.has_fan_control(), "Nominal must report fan control")`, `assert_eq!(state, default, "Default configuration must be restored")`.
-- **Abbreviated scenario naming:** numbered tests for the degradation matrix (`degradation_01_...` … `degradation_08_...`) so the matrix is auditable against the plan.
-- **Structural byte-equality for hardware safety:** after a rejected write, the test re-reads the sysfs file and asserts it is unchanged: `assert_eq!(content, "2\n", "File content must not be corrupted on error")` (`tests/degradation_tests.rs`).
-- **Fixture struct literals with `..AppState::default()`** rather than builders for state-level tests (`tests/diagnostics_tests.rs:83`).
-- **`matches!` for error variants:** `assert!(matches!(RgbColor::from_hex(""), Err(RgbError::EmptyColor)))` (`tests/rgb_tests.rs`).
+(`src/core/state.rs:307-321`)
 
 ## Mocking
 
-**Framework:** none. Fakes are hand-written at the trait and filesystem boundaries.
+**Framework:** none — the project mocks by **injecting filesystem roots** and by using a
+purpose-built mock provider.
 
-**1. Trait injection — `MockHardware`:**
+**1. Path injection (the dominant pattern).** Production code accepts a root prefix and
+tests build a fake sysfs/procfs tree under `std::env::temp_dir()`:
 
-```rust
-pub trait HardwareProvider: Send + Sync {
-    fn capabilities(&self) -> HardwareCapabilities;
-    fn sample_telemetry(&self) -> Result<TelemetrySnapshot, String>;
-}
+| Injectable entry point | File |
+|---|---|
+| `SensorRegistry::scan_roots(hwmon_root, acpi_root)` | `src/hardware/registry.rs:42` |
+| `LinuxHardwareProvider::with_all_roots(...)` | `src/hardware/linux/provider.rs:55` |
+| `HardwareBackend::new(root)` | `src/service/backend.rs:64` |
+| `collect_diagnostics_from_roots(...)` | `src/core/diagnostics.rs:74` |
+| `open_releases_page_with(launcher)` | `src/desktop/releases.rs:26` |
+| `install_to_prefix(prefix)` / `uninstall_from_prefix(prefix)` | `src/desktop/system_integration.rs` |
+| `is_autostart_enabled_at(path)` / `set_autostart_enabled_at(path, bool)` | `src/desktop/autostart.rs` |
+
+When adding a new hardware reader, **accept a root/path parameter** rather than reading an
+absolute path. That is the only mocking seam the project has.
+
+**2. In-memory provider.** `MockHardware` implements `HardwareProvider` for three
+scenarios (`src/hardware/mock.rs:41-58`):
+- `MockScenario::Nominal` — every capability true, plausible values
+- `MockScenario::ZeroCapabilities` — all capability flags false
+- `MockScenario::SensorDataGap` — capabilities advertised but readings `None` for a subset
+
+Selected in production code via `ZENOMEN_MOCK_SCENARIO`:
+
+```bash
+ZENOMEN_MOCK_SCENARIO=zero cargo run
+ZENOMEN_MOCK_SCENARIO=gap  cargo run
 ```
 
-`MockHardware::new(MockScenario::Nominal)` implements it in `src/hardware/mock.rs`; the worker and `main` accept `Arc<dyn HardwareProvider>`, so tests pass the fake without touching sysfs (`tests/benchmark_tests.rs:44`, `src/main.rs:172`).
-- Scenarios: `Nominal` (all sensors, oscillating values), `ZeroCapabilities` (every flag false, empty snapshot), `SensorDataGap` (GPU readings vanish for 3 of every 10 ticks).
-- Runtime selection in the real binary: `ZENOMEN_MOCK_SCENARIO=zero|gap|nominal cargo run` (`src/hardware/mock.rs:76`, `src/main.rs:164`).
+(`src/hardware/mock.rs:12-15`, `src/main.rs:167-178`). `MockScenario::from_name` and
+`from_env` are parseable, and an unknown value logs a warning and falls back to the real
+Linux provider. Tests construct the mock directly with `MockHardware::new(MockScenario::X)`
+rather than mutating env vars — `std::env::set_var` is process-global and races under the
+parallel test runner.
 
-**2. Filesystem-root injection — the dominant hardware fake:**
-- `SensorRegistry::scan_roots(&hwmon_root, &acpi_root)` — tests create a temp tree with `hwmon0/name`, `temp1_input`, `fan1_input`, `pwm1_enable`, `platform_profile*` and point the scan at it (`tests/degradation_tests.rs:16`, `tests/sensor_registry_tests.rs`).
-- `HardwareBackend::new(&root)` prefixes every sysfs path (`src/service/backend.rs:63`); `HardwareBackend::default()` is `new("/")`. Tests build `root/sys/devices/platform/hp-wmi/hwmon/hwmon5/...` under a temp dir (`tests/hardware_service_tests.rs:11`).
-- `detect_rgb_interface(&sysfs_root)`, `install_to_prefix(&temp_dir)`, `is_autostart_enabled_at(&path)`, `set_autostart_enabled_at(&path, bool)`, `collect_diagnostics_from_roots(...)`.
-- There is **no global env-var path override** (besides the mock-scenario selector); prefer adding an `_at`/`_roots`/`_from_prefix` variant over reading env vars.
-
-**3. Temp-directory fixtures with `Drop` cleanup:**
+**3. Test-only builder methods.** Methods gated behind `#[cfg(test)]` may widen
+construction options without shipping them:
 
 ```rust
-struct MockSysfs { root: PathBuf }
-
-impl MockSysfs {
-    fn new(test_name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "zenomen_test_hw_{test_name}_{}", std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);   // idempotent start
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
-    }
-}
-
-impl Drop for MockSysfs {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
-}
+#[cfg(test)]
+pub fn with_polkit_required(mut self, require_polkit: bool) -> Self { ... }
 ```
 
-(`tests/hardware_service_tests.rs:12`; same shape as `TestDir` in `tests/diagnostics_tests.rs:12` and `src/hardware/linux/hwmon.rs:92`.)
-- Unique names use `std::process::id()` or `SystemTime::now().duration_since(UNIX_EPOCH).as_nanos()` — tests run in parallel threads of one process, so the prefix must include the test name.
-- Always clean at the start *and* in `Drop`; never assume the directory is fresh.
+(`src/service/contract.rs:44-47`). Follow this pattern for test-only seams; never add a
+`pub` production API that only tests use.
 
-**4. Channel and D-Bus fakes:**
-- Worker tests use `mpsc::channel()` for events and `mpsc::sync_channel(8)` for commands, asserting with `recv_timeout(Duration::from_millis(500))` (`tests/benchmark_tests.rs:46`).
-- Desktop/tray tests call the zbus interface methods directly on the service object and read the action channel instead of starting a bus (`tests/desktop_integration_tests.rs:56`).
-- The absent-daemon test tolerates both environments: it only asserts errors when `status.is_connected()` is false (`tests/degradation_tests.rs`).
+**4. Trait substitution for desktop side effects.** `open_releases_page_with` and the
+autostart `*_at` functions let tests pass a closure/path so no browser launches and no file
+is written to `$XDG_CONFIG_HOME` (`tests/desktop_integration_tests.rs`).
 
 **What to mock:**
-- Hardware reads (filesystem roots, `HardwareProvider`).
-- External commands (`nvidia-smi` output is passed as a `&str` to `parse_nvidia_smi_output`, never spawned).
-- Privileged installation targets (`install_to_prefix`).
-- Absence scenarios: delete a file/dir from the fake tree rather than returning an error.
+- Every filesystem read under `/sys` or `/proc` — always via a temp root
+- External tools (`nvidia-smi`) — test the parser directly
+  (`parse_nvidia_smi_output` in `tests/degradation_tests.rs:9`) and never spawn the binary
+- All hardware telemetry — `MockHardware`, not the real provider
+- Desktop side effects (browser launch, package install, D-Bus daemon)
 
 **What NOT to mock:**
-- Pure parsers (`parse_stat_line`, `parse_proc_meminfo`, `parse_nvidia_smi_output`, `RgbColor::from_hex`) — call them directly with literal input.
-- `AppState` / `TelemetryHistory` — plain structs, construct and assert.
-- The filesystem itself via a mocking crate — use a temp root instead.
+- Pure parsers and math — feed literal `&str` fixtures instead
+  (`tests/linux_procfs_tests.rs:11-19`)
+- `AppState` / `AppEvent` transitions — drive the real reducer
+  (`tests/fan_control_tests.rs`)
+- The D-Bus interface structs themselves — call the methods directly and read the
+  `mpsc` channel (`tests/desktop_integration_tests.rs:77-88`)
 
 ## Fixtures and Factories
 
-- No `fixtures/` directory and no factory crate. Fixtures are constructed inline.
-- Full snapshot fixture pattern (`src/core/state.rs:427`):
+**Temp directory helpers.** Four hand-rolled variants exist; none are shared across
+crates because each integration test file is its own crate:
 
 ```rust
-fn full_snapshot() -> TelemetrySnapshot {
-    TelemetrySnapshot {
-        cpu_name: "AMD Ryzen 7 5800H".to_string(),
-        cpu_temperature_c: Some(68.0),
-        gpu_utilization: Some(62.0),
-        ram_total_mb: 16_384,
-        fan_rpms: vec![2_450, 2_400],
-        power_profile: "balanced".to_string(),
-        ..TelemetrySnapshot::default()
+// Ownership + Drop cleanup — preferred
+struct TestDir { path: PathBuf }
+
+impl TestDir {
+    fn new(prefix: &str) -> Self {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("zenomen_test_{prefix}_{timestamp}"));
+        fs::create_dir_all(&path).unwrap();
+        Self { path }
     }
+}
+impl Drop for TestDir {
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.path); }
 }
 ```
 
-- Capability fixture: `HardwareCapabilities::all_supported()` for "fully equipped", then mutate one flag for the degraded case (`src/core/state.rs:318`).
-- Mock sysfs fixture: a `MockSysfs`/`TestDir` struct with `new(name)` + `Drop`; add files with `fs::write(dir.join("temp1_input"), "55000\n")`.
-- Embedded-resource fixtures: `tests/packaging_tests.rs` compares `EMBEDDED_*` constants against `data/**` on disk, so edits to `data/` must be mirrored in `src/desktop/system_integration.rs`.
+(`tests/diagnostics_tests.rs:12-32`)
+
+```rust
+// Domain-specific builder — sensor trees
+struct TestHwmonTree(PathBuf);
+impl TestHwmonTree {
+    fn new(prefix: &str) -> Self { /* nanos-suffixed dir */ }
+    fn create_hwmon(&self, id: &str, name: &str,
+                    temp_inputs: &[(&str, Option<&str>, &str)],
+                    fan_inputs: &[(&str, &str)],
+                    has_pwm: bool) { ... }
+}
+```
+
+(`tests/sensor_registry_tests.rs:12-70`)
+
+```rust
+// Full fake machine — hwmon + ACPI in one rooted tree
+struct MockSysfs { root: PathBuf }
+impl MockSysfs {
+    fn new(test_name: &str) -> Self { /* writes name, pwm1_enable, fan*_input,
+                                        platform_profile_choices, platform_profile */ }
+    fn backend(&self) -> HardwareBackend { HardwareBackend::new(&self.root) }
+}
+```
+
+(`tests/hardware_service_tests.rs:10-57`)
+
+**Location:** helpers live at the top of the test file that uses them. There is no shared
+`tests/common/` module.
+
+**Naming:** `temp_test_dir(name)`, `create_temp_dir(name)`, `TestDir`, `TestHwmonTree`,
+`MockSysfs`. Prefix strings identify the subsystem: `zenomen_rgb_test_`,
+`zenomen_config_test_`, `zenomen_deg_`, `zenomen_test_hw_`.
+
+**Collision warning:** helpers either append `std::time::SystemTime::now()` nanos
+(`tests/rgb_tests.rs:17-27`, `tests/config_tests.rs:17-27`,
+`tests/sensor_registry_tests.rs:14-22`, `tests/diagnostics_tests.rs:15-22`,
+`tests/linux_gpu_tests.rs`) **or** only `std::process::id()`
+(`tests/degradation_tests.rs:13-18`, `tests/hardware_service_tests.rs:16-20`,
+`tests/desktop_integration_tests.rs:19`, `tests/power_preset_tests.rs`,
+`tests/packaging_tests.rs`). The pid-only form is collision-safe across processes but not
+within one process if two tests share a prefix. **When adding a helper, include both
+`std::process::id()` and a nanosecond timestamp**, and remove any pre-existing directory
+before creating it (`let _ = fs::remove_dir_all(&root);`).
+
+**Test data:** inline string literals, not files on disk:
+
+```rust
+let sample1 = "\
+cpu  1000 0 500 8500 0 0 0 0 0 0
+cpu0 500 0 250 4250 0 0 0 0 0 0
+";
+```
+
+(`tests/linux_procfs_tests.rs:11-15`)
+
+Real repo files are read directly when the assertion is "embedded asset matches shipped
+file":
+
+```rust
+let desktop_disk = fs::read_to_string("data/applications/zenomen.desktop")
+    .expect("desktop entry exists");
+assert_eq!(EMBEDDED_DESKTOP_ENTRY, desktop_disk);
+```
+
+(`tests/packaging_tests.rs:13-18`)
 
 ## Coverage
 
-**Requirements:** none enforced. No coverage tool, config, threshold, or CI coverage step.
-- CI enforces **pass/fail only** plus the clippy/format/audit gates.
-- To measure locally you would need to add a tool (e.g. `cargo llvm-cov`); none is installed or documented.
-- Practical coverage expectation comes from the requirement IDs in test-file headers and plan acceptance criteria, not from a percentage.
+**Requirements:** None enforced. No `tarpaulin`, `llvm-cov`, `grcov`, Codecov, or coverage
+badge exists anywhere in the repo or CI.
+
+**View Coverage:**
+
+```bash
+
+# Not configured. If needed locally:
+
+cargo install cargo-llvm-cov
+cargo llvm-cov --all --html
+```
+
+Do not add a coverage gate without a project-level decision; the current quality bar is
+**zero clippy warnings + all tests green + degradation matrix complete**, not a percentage.
 
 ## Test Types
 
-**Unit tests:**
-- In-source `#[cfg(test)] mod tests`, 29 tests across 6 modules.
-- Scope: pure parsing (`CpuJiffies`, nvidia-smi CSV, meminfo), state folding (`AppState::apply`), history bounds/SVG paths, and the three hwmon readers against a temp file.
+**Unit tests (inline `#[cfg(test)] mod tests`):**
+- Scope: pure functions, reducer logic, parsers, math
+- Location: bottom of `src/core/state.rs`, `src/core/telemetry.rs`,
+  `src/hardware/linux/{cpu,gpu,hwmon,memory}.rs`, `src/service/polkit.rs`,
+  `src/desktop/system_integration.rs`
+- Approach: `use super::*;` for private access; no filesystem unless the function owns it
 
-**Integration tests:**
-- `tests/*.rs`, 79 tests across 15 crates.
-- Scope: public API behavior across modules — registry priority, degradation matrix, backend write/read-back verification, presets, RGB variants/migration, config persistence, desktop integration, packaging assets.
+**Integration tests (`tests/*_tests.rs`):**
+- Scope: public API across module boundaries, real filesystem under a temp root,
+  event channels, D-Bus interface structs
+- Approach: import through `zenomen::` (the public crate name), never `crate::`
+- Are the primary suite; 79 of the 110 tests live here
 
-**Headless/GUI tests:**
-- CI runs the whole suite through `xvfb-run --auto-servernum cargo test --all` because the test binaries link the Slint/winit/femtovg stack and a future GUI test needs a display (`.github/workflows/ci.yml`, `.github/workflows/release.yml`).
-- **No current test constructs `AppWindow`** (`grep AppWindow tests/` returns nothing). The suite is deliberately headless: `tests/benchmark_tests.rs` states "Headless CI safety (no GUI server requirement or panics)". The window is exercised only by launching the binary under `xvfb-run` in manual/packaging verification (`docs/PACKAGING.md`, `.planning/phases/05-*/05-01-PLAN.md`).
-- If you add a GUI test, put it in `tests/ui_*_tests.rs`, construct `zenomen::AppWindow::new()` on the test thread, keep it short, and run under `xvfb-run`; never leave a window shown or block on the event loop.
+**End-to-end tests:** not used. No `assert_cmd`, no `trycmd`, no spawned GUI process.
 
-**Performance tests:**
-- `tests/benchmark_tests.rs` asserts a worker tick is under ~5 ms, RSS is < 500 MB (sanity bound for the 40 MB budget), and the worker answers `RefreshTelemetry` within 500 ms without waiting for the 1 s tick.
-- Long-duration budget measurement is a shell harness, not a test: `scripts/measure-budget.sh` (with `--soak`), documented in `docs/RESOURCE-BUDGET.md`.
+**Benchmark / performance tests:**
+- `tests/benchmark_tests.rs` asserts RSS bounds (`< 500 MB` sanity, `> 0`),
+  per-tick latency, and headless worker behaviour
+- `BenchmarkTimer::start("name")` marks named phases (`tests/benchmark_tests.rs:35`)
+- These are ordinary `#[test]` functions — no `criterion`, no `#[bench]`
+
+**Degradation tests:**
+- `tests/degradation_tests.rs` is a numbered matrix (`degradation_01` … `degradation_08`)
+  proving that removing one sensor, interface, tool, or daemon produces a clean
+  "unavailable" state and no panic
+- Each row is cross-referenced in `docs/RESOURCE-BUDGET.md`. **Adding a new optional
+  hardware feature means adding a degradation row and a test.**
 
 ## Common Patterns
 
-**Async/channel testing (no async runtime):**
+**Async testing:** there is effectively none. The D-Bus layer is `async` (`zbus`), but no
+test uses `#[tokio::test]` or awaits a zbus call. Instead, tests exercise the synchronous
+pieces around the async boundary:
 
-```rust
-let (event_sender, event_receiver) = mpsc::channel();
-let (command_sender, command_receiver) = mpsc::sync_channel(8);
-let worker = spawn_monitoring_worker(provider, event_sender, command_receiver);
+- Call the interface method directly on the struct and assert the `mpsc` message:
+  ```rust
+  let (action_tx, action_rx) = mpsc::sync_channel(5);
+  let service = ApplicationService::new(action_tx);
+  assert!(service.present_window().is_ok());
+  assert_eq!(action_rx.try_recv().unwrap(), DesktopAction::PresentWindow);
+  ```
+  (`tests/desktop_integration_tests.rs:77-84`)
+- Spawn the real worker thread and use `recv_timeout`:
+  ```rust
+  let worker = spawn_monitoring_worker(provider, event_sender, command_receiver);
+  let event = event_receiver
+      .recv_timeout(Duration::from_millis(500))
+      .expect("Worker must send initial capabilities immediately");
+  ```
+  (`tests/benchmark_tests.rs:44-52`)
 
-let event = event_receiver
-    .recv_timeout(Duration::from_millis(500))
-    .expect("Worker must send initial capabilities immediately");
-match event {
-    AppEvent::CapabilitiesLoaded(caps) => assert!(caps.has_cpu_metrics()),
-    other => panic!("Expected CapabilitiesLoaded, got: {other:?}"),
-}
-```
-
-Never `thread::sleep` to wait for a result; use `recv_timeout` and fail with a contract message.
+Always use `recv_timeout`, never a bare `recv()` — a hung worker must fail the test rather
+than stall CI.
 
 **Error testing:**
 
 ```rust
-assert!(matches!(RgbColor::from_hex("#FFF"), Err(RgbError::InvalidLength(_))));
-assert!(RgbColor::from_hex("#GGGGGG").is_err());
+let err = FanMode::parse_requested("turbo").unwrap_err();
+assert!(matches!(err, HardwareControlError::InvalidParameter(_)));
 
-match install() {
-    Err(SystemIntegrationError::NotRoot) => {}
-    other => panic!("Expected NotRoot error when non-root, got: {other:?}"),
+assert!(matches!(RgbColor::from_hex(""), Err(RgbError::EmptyColor)));
+```
+
+(`tests/hardware_service_tests.rs:75-82`, `tests/rgb_tests.rs:45-49`)
+
+Match on the enum variant; do not assert on the `Display` string unless the message itself
+is the contract.
+
+**Timing / latency testing:**
+
+```rust
+let start = Instant::now();
+// ... exercise the function ...
+assert!(start.elapsed() < Duration::from_millis(5));
+```
+
+(`tests/benchmark_tests.rs`, `tests/telemetry_history_tests.rs`)
+
+Prefer generous bounds (milliseconds, not microseconds) because CI runners are noisy.
+
+**Host-dependent guards.** Tests that touch real hardware or an installed daemon must
+detect the situation and return early rather than fail:
+
+```rust
+let status = client.status();
+if status.is_connected() {
+    eprintln!("skipping ...: production service is active on host");
+    return;
 }
 ```
 
-- Assert the **variant**, not just `is_err()`, whenever the variant carries meaning.
-- For absence, assert `Option::is_none()` and explicitly no fabricated zero: `assert!(sample.gpu_utilization.is_none(), "Non-numeric utilization degrades cleanly to None")`.
+(`tests/fan_control_tests.rs:67-77`)
 
-**Filesystem assertions:**
-- Read back the file to prove hardware safety (`content == "2\n"` after a rejected write).
-- Assert side-effect files exist (`config.toml.bak.<timestamp>`), and that temp files do **not** linger (`config_atomic_write_leaves_no_lingering_temp_file`).
-- Parse exported JSON back into the typed struct and assert equality (`tests/diagnostics_tests.rs`).
+and privilege checks:
 
-**Live-system tests (small, non-assertive):**
-- `collect_diagnostics_live_system_does_not_panic` and `linux_hardware_provider_samples_cleanly_on_linux` may read the real `/sys` and `/proc`.
-- They assert only invariants that hold on every Linux host (non-empty strings, no panic). They must not assert a specific CPU model, fan count, or GPU — CI runners have none of these.
+```rust
+if !is_root() {
+    assert!(matches!(install(), Err(SystemIntegrationError::NotRoot)));
+}
+```
 
-## CI Quality Gate
+(`tests/packaging_tests.rs:56-62`)
 
-Both workflows run the same four gates; release adds packaging. Order matters — packaging cannot start if a gate fails.
+**Fragile counter-example — do not copy.** `live_host_initialization_resolves_real_sensors`
+(`tests/sensor_registry_tests.rs:193-209`) asserts that a `k10temp` sensor is present on
+the build host. That is an AMD-only assumption and will fail on Intel CI runners or
+containers with no hwmon. New host-touching tests should skip when the expected device is
+absent, not assert it exists.
 
-**`.github/workflows/ci.yml` (push/PR to `main`):**
-1. `cargo fmt --all -- --check`
-2. `cargo clippy --all-targets --all-features -- -D warnings`
-3. `xvfb-run --auto-servernum cargo test --all`
-4. `cargo audit` (audits the committed `Cargo.lock`)
+**CWD dependency.** Tests that read `data/...` or `Cargo.toml`
+(`tests/packaging_tests.rs`) are repo-relative and only pass when `cargo test` runs from the
+repository root. Never `cd` inside a test; if a test needs a repo file, resolve it from
+`env!("CARGO_MANIFEST_DIR")` in new code.
 
-**`.github/workflows/release.yml` (tag `v*` or manual):**
-1. Tag must equal `Cargo.toml` version (`cargo metadata` + `jq`)
-2. `cargo fmt --all -- --check`
-3. `cargo clippy --locked --all-targets --all-features -- -D warnings`
-4. `xvfb-run --auto-servernum cargo test --locked --all`
-5. `cargo audit`
-6. `cargo packager --release --formats deb,appimage`
-7. Artifact names must contain the version; generate `SHA256SUMS`; publish release
+## Gaps
 
-**Implications for new tests:** they must be warning-free under clippy (`-D warnings`), rustfmt-clean, pass with `--locked` (do not add a dependency just for a test), not require network access, and clean up temp files.
-
-## Conventions Checklist for New Tests
-
-- [ ] File-level `//!` doc naming the requirement ID(s) verified.
-- [ ] Integration file named `tests/<domain>_tests.rs`; unit tests in `#[cfg(test)] mod tests` at the bottom of the source file.
-- [ ] Test name is a snake_case sentence describing the expected behavior (`sensor_data_gap_scenario_periodically_emits_none`).
-- [ ] Fake hardware through `MockHardware` or a temp filesystem root; no real `/sys` writes.
-- [ ] Temp dir name includes the test name plus PID/nanos; cleanup on start and in `Drop`.
-- [ ] Assert with an explanatory message; assert error variants with `matches!`.
-- [ ] Absence asserted as `None`/empty — never assert or accept a fabricated `0`.
-- [ ] Channels use `recv_timeout`; no fixed `sleep` for synchronization.
-- [ ] No new dev-dependency; std only.
-- [ ] Runs green under `xvfb-run --auto-servernum cargo test --all`, `cargo fmt --all -- --check`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+- **No Slint rendering tests.** No test constructs an `AppWindow`, calls `show()`, or
+  inspects a rendered surface. `src/app.rs` (`apply_to_ui`, callback wiring) is untested.
+  The `xvfb-run` requirement exists only because the linked library initialises a
+  display connection.
+- **No real D-Bus integration test.** The polkit contract, service registration,
+  `zenomen-hw` daemon startup, and `HardwareServiceClient` handshake are validated by
+  unit-level struct tests, not by running a bus. A regression in the XML interface or
+  `.service` file would only be caught by packaging asset equality tests.
+- **`src/service/contract.rs` has no `#[test]`.** Its `#[cfg(test)] with_polkit_required`
+  builder is never exercised, and `authorize()` has no coverage.
+- **Duplicated fixtures.** Four temp-dir helpers and two hwmon-tree builders differ only in
+  naming. Extracting `tests/common/mod.rs` would reduce drift, but note that each
+  `tests/*.rs` is a separate crate and would need `mod common;`.
+- **Repo-relative file reads** make `tests/packaging_tests.rs` fail when run from any
+  directory other than the repo root.
+- **No coverage measurement**, so untested modules (`src/app.rs`, `src/service/contract.rs`,
+  `src/desktop/tray.rs`) are invisible to any metric.
+- **README test count is stale** (108 vs. the actual 110). Update `README.md:226` whenever
+  suites are added.
 
 ---
 
-*Testing analysis: 2026-11-02*
+*Testing analysis: 2026-11-06*
