@@ -1,11 +1,12 @@
 //! Desktop integration module covering single-instance enforcement,
-//! StatusNotifierItem system tray, close-to-tray lifecycle, and XDG autostart.
+//! StatusNotifierItem / Win32 system tray, close-to-tray lifecycle, and autostart.
 
 pub mod autostart;
 pub mod releases;
 pub mod single_instance;
 pub mod system_integration;
 pub mod tray;
+pub mod windows;
 
 pub use autostart::{is_autostart_enabled, set_autostart_enabled};
 pub use releases::{RELEASES_URL, ReleasesError, open_releases_page};
@@ -17,3 +18,27 @@ pub use system_integration::{
     uninstall as uninstall_system_integration,
 };
 pub use tray::{StatusNotifierItem, TrayDbusMenu, register_tray};
+
+#[cfg(target_os = "windows")]
+pub use windows::{
+    AppDataPaths, MutexHandle, TrayHandle, acquire_single_instance, format_autostart_command,
+    install_hardware_service, is_autostart_enabled as is_windows_autostart_enabled,
+    open_releases_page as open_windows_releases_page, present_existing_window, register_tray_icon,
+    remove_tray_icon, resolve_app_data_paths, resolve_app_data_paths_from,
+    set_autostart_enabled as set_windows_autostart_enabled, show_notification,
+};
+
+/// Errors encountered in desktop integration operations.
+#[derive(Debug, thiserror::Error)]
+pub enum DesktopError {
+    #[error("Win32 error ({code}): {message}")]
+    Win32 { code: u32, message: String },
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Registry error: {0}")]
+    Registry(String),
+    #[error("Notification error: {0}")]
+    Notification(String),
+    #[error("Desktop error: {0}")]
+    Other(String),
+}

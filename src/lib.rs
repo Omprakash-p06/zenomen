@@ -14,6 +14,8 @@ pub mod hardware;
 pub mod logging;
 pub mod rgb;
 pub mod service;
+#[cfg(feature = "ui")]
+pub mod ui;
 
 #[cfg(feature = "ui")]
 slint::include_modules!();

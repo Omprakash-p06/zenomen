@@ -16,6 +16,8 @@ pub const APP_INTERFACE: &str = "com.zenomen.App";
 pub enum DesktopAction {
     PresentWindow,
     Quit,
+    SetFanModeAuto,
+    SetFanModeMax,
 }
 
 /// D-Bus interface exposed by the primary application instance.

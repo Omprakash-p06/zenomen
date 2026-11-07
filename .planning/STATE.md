@@ -2,19 +2,19 @@
 gsd_state_version: "1.0"
 current_phase: 06
 status: in_progress
-last_updated: "2026-11-07T19:58:00.000Z"
-state_head: 48ea76a
+last_updated: "2026-11-07T20:25:00.000Z"
+state_head: 05da1ea
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 21
-  completed_plans: 19
-  percent: 90
+  completed_plans: 20
+  percent: 95
 last_activity: 2026-11-07
 current_phase_name: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)
-current_plan: 5
-stopped_at: Plan 06-04 Executed (Wave 4 complete, 140 tests green)
-last_activity_desc: Executed Plan 06-04 (Windows hardware control service: SCM service, secured named-pipe IPC, console session token validation, HP BIOS WMI mailbox driver hpqBIntM, board profile catalog)
+current_plan: 6
+stopped_at: Plan 06-05 Executed (Wave 5 complete, 144 tests green)
+last_activity_desc: Executed Plan 06-05 (Windows desktop integration: single instance mutex, tray icon & context menu pump, HKCU autostart, notifications, known folder paths, and GPUI-CE architecture scaffold)
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 Current Phase: 06 (Unified Cross-Platform Release)
-Phase 06 Status: IN PROGRESS (Wave 4/6 Complete)
+Phase 06 Status: IN PROGRESS (Wave 5/6 Complete)
 Phase 05 Status: COMPLETE
 Phase 04 Status: COMPLETE
 Phase 03 Status: COMPLETE
@@ -57,6 +57,7 @@ Phase 01 Status: COMPLETE
 - Plan 06-04 (Wave 4: Windows Hardware Control Service & Named-Pipe IPC): [`.planning/phases/06-cross-platform-windows-linux-release/06-04-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-04-PLAN.md)
 - Plan 06-04 Summary: [`.planning/phases/06-cross-platform-windows-linux-release/06-04-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-04-SUMMARY.md)
 - Plan 06-05 (Wave 5: Windows Desktop Integration & UI Architecture): [`.planning/phases/06-cross-platform-windows-linux-release/06-05-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-05-PLAN.md)
+- Plan 06-05 Summary: [`.planning/phases/06-cross-platform-windows-linux-release/06-05-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-05-SUMMARY.md)
 - Plan 06-06 (Wave 6: Packaging, Testing Matrix, Documentation & Acceptance Gates): [`.planning/phases/06-cross-platform-windows-linux-release/06-06-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-06-PLAN.md)
 
 Progress: [██████████] 100%

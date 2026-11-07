@@ -60,14 +60,85 @@ pub fn collect_diagnostics(
     state: &AppState,
     registry: Option<&SensorRegistry>,
 ) -> DiagnosticsReport {
-    collect_diagnostics_from_roots(
-        state,
-        registry,
-        Path::new("/etc/os-release"),
-        Path::new("/proc/sys/kernel/osrelease"),
-        Path::new("/sys/class/dmi/id"),
-        Path::new("/sys/class/drm"),
-    )
+    #[cfg(target_os = "windows")]
+    {
+        collect_windows_diagnostics(state, registry)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        collect_diagnostics_from_roots(
+            state,
+            registry,
+            Path::new("/etc/os-release"),
+            Path::new("/proc/sys/kernel/osrelease"),
+            Path::new("/sys/class/dmi/id"),
+            Path::new("/sys/class/drm"),
+        )
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn collect_windows_diagnostics(
+    state: &AppState,
+    _registry: Option<&SensorRegistry>,
+) -> DiagnosticsReport {
+    let app_version = env!("CARGO_PKG_VERSION").to_string();
+    let os_name = "Microsoft Windows 10/11".to_string();
+    let kernel_version = "NT 10.0".to_string();
+
+    let (sys_vendor, product_name) = {
+        let (vendor, model) = crate::hardware::windows::device::read_system_identity();
+        (Some(vendor), Some(model))
+    };
+
+    let cpu_sensor = state
+        .latest_snapshot
+        .as_ref()
+        .and_then(|s| s.cpu_temperature_c.map(|t| format!("CPU ({t:.1}°C)")));
+    let mut fan_sensors = Vec::new();
+    if let Some(snap) = &state.latest_snapshot {
+        for (idx, rpm) in snap.fan_rpms.iter().enumerate() {
+            fan_sensors.push(format!("fan{} ({} RPM)", idx + 1, rpm));
+        }
+    }
+
+    let mut gpu_sensors = Vec::new();
+    for adapter in crate::hardware::windows::gpu::enumerate_gpu_adapters() {
+        gpu_sensors.push(format!(
+            "{} (VRAM: {} MB, ID: {:04x}:{:04x})",
+            adapter.name, adapter.dedicated_vram_mb, adapter.vendor_id, adapter.device_id
+        ));
+    }
+    if gpu_sensors.is_empty()
+        && let Some(gpu_name) = state
+            .latest_snapshot
+            .as_ref()
+            .and_then(|s| s.gpu_name.as_ref())
+    {
+        gpu_sensors.push(gpu_name.clone());
+    }
+
+    let hardware_service = Some(HardwareServiceDiagnostic {
+        service_name: r"\\.\pipe\ZenOmen.Hardware.v1".to_string(),
+        status: state.service_status.description().to_string(),
+        polkit_authorization: "Session Authenticated (Local Named Pipe)".to_string(),
+    });
+
+    DiagnosticsReport {
+        app_version,
+        os_name,
+        kernel_version,
+        product_name,
+        sys_vendor,
+        capabilities: state.capabilities,
+        cpu_sensor,
+        fan_sensors,
+        gpu_sensors,
+        hardware_service,
+        latest_telemetry: state.latest_snapshot.clone(),
+        recent_error: state.last_sampling_error.clone(),
+        timestamp: format_iso8601_utc(SystemTime::now()),
+    }
 }
 
 /// Collect a diagnostic report with customizable paths for testing.
@@ -77,7 +148,7 @@ pub fn collect_diagnostics_from_roots(
     os_release_path: &Path,
     kernel_release_path: &Path,
     dmi_root: &Path,
-    drm_root: &Path,
+    _drm_root: &Path,
 ) -> DiagnosticsReport {
     let app_version = env!("CARGO_PKG_VERSION").to_string();
     let os_name = parse_os_name(os_release_path);
@@ -101,7 +172,8 @@ pub fn collect_diagnostics_from_roots(
     };
 
     let mut gpu_sensors = Vec::new();
-    for gpu in crate::hardware::linux::gpu::enumerate_drm_gpus(drm_root) {
+    #[cfg(target_os = "linux")]
+    for gpu in crate::hardware::linux::gpu::enumerate_drm_gpus(_drm_root) {
         gpu_sensors.push(format!(
             "{} (card: {}, sysfs: {})",
             gpu.name,

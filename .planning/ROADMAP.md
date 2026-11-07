@@ -160,7 +160,7 @@ Plans:
 - [x] 06-04: Windows hardware control service — SCM service, secured named-pipe IPC, HP BIOS WMI mailbox (`hpqBIntM`), board profile catalog
 
 **Wave 5: Windows Desktop Integration & UI Architecture**
-- [ ] 06-05: Windows desktop integration — single instance, system tray, HKCU autostart, notifications, known-folder paths, GPUI-CE migration path
+- [x] 06-05: Windows desktop integration — single instance, system tray, HKCU autostart, notifications, known-folder paths, GPUI-CE migration path
 
 **Wave 6: Packaging, Full Testing Matrix, Documentation Deliverables & Final Acceptance Gates**
 - [ ] 06-06: Cross-platform packaging (WiX MSI, DEB, AppImage), dual-OS release gate matrix, architecture ADRs (ADR-001..004), and 14 final acceptance criteria
@@ -177,4 +177,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
-| 6. Cross-Platform Release | 1/6 | In Progress | - |
+| 6. Cross-Platform Release | 5/6 | In Progress | - |

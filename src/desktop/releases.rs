@@ -40,5 +40,12 @@ pub fn open_releases_page_with(launcher: &str) -> Result<(), ReleasesError> {
 
 /// Open the official GitHub Releases page in the user's default web browser.
 pub fn open_releases_page() -> Result<(), ReleasesError> {
-    open_releases_page_with("xdg-open")
+    #[cfg(target_os = "windows")]
+    {
+        crate::desktop::windows::releases::open_releases_page()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_releases_page_with("xdg-open")
+    }
 }

@@ -11,9 +11,9 @@ use slint::ComponentHandle;
 use zenomen::AppWindow;
 use zenomen::app::ZenOmenApp;
 use zenomen::core::{log_benchmark, spawn_monitoring_worker};
-use zenomen::desktop::{
-    DesktopAction, SingleInstanceResult, ensure_single_instance, register_tray,
-};
+use zenomen::desktop::DesktopAction;
+#[cfg(not(target_os = "windows"))]
+use zenomen::desktop::{SingleInstanceResult, ensure_single_instance, register_tray};
 use zenomen::hardware::{HardwareProvider, MockHardware};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check for root-only system integration commands before launching GUI (REL-03)
+    #[cfg(not(target_os = "windows"))]
     if std::env::args().any(|a| a == "--install-system-integration") {
         match zenomen::desktop::install_system_integration() {
             Ok(()) => {
@@ -51,6 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     if std::env::args().any(|a| a == "--uninstall-system-integration") {
         match zenomen::desktop::uninstall_system_integration() {
             Ok(()) => {
@@ -59,6 +61,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 eprintln!("Error uninstalling system integration: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if std::env::args().any(|a| a == "--install-system-integration" || a == "--install-service") {
+        match zenomen::desktop::windows::install_hardware_service() {
+            Ok(()) => {
+                println!("ZenOmen hardware service installed successfully.");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error installing hardware service: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if std::env::args().any(|a| a == "--uninstall-system-integration" || a == "--uninstall-service")
+    {
+        match zenomen::desktop::windows::uninstall_hardware_service() {
+            Ok(()) => {
+                println!("ZenOmen hardware service uninstalled successfully.");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error uninstalling hardware service: {e}");
                 std::process::exit(1);
             }
         }
@@ -75,7 +106,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Single-instance enforcement (SYS-05)
     let (action_sender, action_receiver) = mpsc::sync_channel::<DesktopAction>(16);
+
+    #[cfg(not(target_os = "windows"))]
     let single_instance = ensure_single_instance(action_sender.clone());
+    #[cfg(not(target_os = "windows"))]
     let _session_conn = match single_instance {
         SingleInstanceResult::Primary(conn) => {
             let _ = register_tray(&conn, action_sender.clone());
@@ -88,6 +122,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SingleInstanceResult::Disabled(e) => {
             tracing::warn!(error = %e, "running in standalone mode without session D-Bus");
             None
+        }
+    };
+
+    #[cfg(target_os = "windows")]
+    let (_instance_guard, _tray_handle) = {
+        match zenomen::desktop::windows::acquire_single_instance() {
+            Ok(zenomen::desktop::windows::SingleInstanceResult::Primary(handle)) => {
+                let tray =
+                    zenomen::desktop::windows::register_tray_icon(action_sender.clone()).ok();
+                (Some(handle), tray)
+            }
+            Ok(zenomen::desktop::windows::SingleInstanceResult::AlreadyRunning) => {
+                return Ok(());
+            }
+            Ok(zenomen::desktop::windows::SingleInstanceResult::Disabled(e)) => {
+                tracing::warn!(error = %e, "running without single-instance mutex");
+                let tray =
+                    zenomen::desktop::windows::register_tray_icon(action_sender.clone()).ok();
+                (None, tray)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to check single-instance status");
+                let tray =
+                    zenomen::desktop::windows::register_tray_icon(action_sender.clone()).ok();
+                (None, tray)
+            }
         }
     };
     drop(action_sender);
@@ -156,6 +216,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 log_benchmark("dashboard-restored");
                             }
                         });
+                    }
+                    DesktopAction::SetFanModeAuto => {
+                        let _ = present_commands
+                            .try_send(zenomen::core::AppCommand::SetFanMode("auto".to_string()));
+                    }
+                    DesktopAction::SetFanModeMax => {
+                        let _ = present_commands
+                            .try_send(zenomen::core::AppCommand::SetFanMode("max".to_string()));
                     }
                     DesktopAction::Quit => {
                         let _ = slint::invoke_from_event_loop(move || {
@@ -286,7 +354,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(app);
     let _ = worker.join();
     let _ = event_pump.join();
+    #[cfg(not(target_os = "windows"))]
     drop(_session_conn);
+    #[cfg(target_os = "windows")]
+    {
+        drop(_tray_handle);
+        drop(_instance_guard);
+    }
     let _ = desktop_action_thread.join();
 
     tracing::info!("ZenOmen shut down cleanly");

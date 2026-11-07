@@ -213,3 +213,60 @@ fn test_open_releases_page_failure_when_launcher_missing() {
         "open_releases_page_with must return Err when launcher cannot be found"
     );
 }
+
+#[test]
+fn test_windows_path_resolution_local_appdata() {
+    use zenomen::desktop::windows::paths::resolve_app_data_paths_from;
+
+    let paths = resolve_app_data_paths_from(
+        Some(r"C:\Users\Tester\AppData\Local"),
+        Some(r"C:\ProgramData"),
+    );
+
+    assert!(paths.local_app_data.ends_with("ZenOmen"));
+    assert!(paths.program_data.ends_with("ZenOmen"));
+    let local_str = paths.local_app_data.to_string_lossy();
+    assert!(local_str.contains("Tester"));
+    assert!(local_str.contains("AppData"));
+    let prog_str = paths.program_data.to_string_lossy();
+    assert!(prog_str.contains("ProgramData"));
+
+    // Fallback when None passed
+    let fallback = resolve_app_data_paths_from(None, None);
+    assert!(fallback.local_app_data.ends_with("ZenOmen"));
+    assert!(fallback.program_data.ends_with("ZenOmen"));
+}
+
+#[test]
+fn test_windows_releases_url_formatting() {
+    use zenomen::desktop::windows::releases::RELEASES_URL;
+    assert_eq!(
+        RELEASES_URL,
+        "https://github.com/Omprakash-p06/zenomen/releases/latest"
+    );
+    assert!(RELEASES_URL.starts_with("https://github.com/"));
+    assert!(!RELEASES_URL.contains("/download/"));
+    assert!(!RELEASES_URL.contains(".exe"));
+}
+
+#[test]
+fn test_windows_autostart_registry_key_escaping() {
+    use std::path::Path;
+    use zenomen::desktop::windows::autostart::{
+        AUTOSTART_KEY, AUTOSTART_VALUE_NAME, format_autostart_command,
+    };
+
+    assert_eq!(
+        AUTOSTART_KEY,
+        r"Software\Microsoft\Windows\CurrentVersion\Run"
+    );
+    assert_eq!(AUTOSTART_VALUE_NAME, "ZenOmen");
+
+    let exe_with_spaces = Path::new(r"C:\Program Files\ZenOmen\zenomen.exe");
+    let cmd = format_autostart_command(exe_with_spaces);
+    assert_eq!(cmd, r#""C:\Program Files\ZenOmen\zenomen.exe" --minimized"#);
+
+    let simple_exe = Path::new(r"C:\ZenOmen\zenomen.exe");
+    let cmd_simple = format_autostart_command(simple_exe);
+    assert_eq!(cmd_simple, r#""C:\ZenOmen\zenomen.exe" --minimized"#);
+}

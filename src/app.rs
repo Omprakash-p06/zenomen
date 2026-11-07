@@ -230,10 +230,20 @@ impl ZenOmenApp {
                         let report =
                             crate::core::collect_diagnostics(&current_state, reg.as_deref());
 
-                        let export_dir =
-                            crate::config::project_dirs()
-                                .map(|dirs| dirs.config_dir().join("diagnostics"))
-                                .unwrap_or_else(|| std::path::PathBuf::from("diagnostics"));
+                        let export_dir = {
+                            #[cfg(target_os = "windows")]
+                            {
+                                crate::desktop::windows::paths::resolve_app_data_paths()
+                                    .map(|paths| paths.local_app_data.join("diagnostics"))
+                                    .unwrap_or_else(|_| std::path::PathBuf::from("diagnostics"))
+                            }
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                crate::config::project_dirs()
+                                    .map(|dirs| dirs.config_dir().join("diagnostics"))
+                                    .unwrap_or_else(|| std::path::PathBuf::from("diagnostics"))
+                            }
+                        };
 
                         let filename = format!(
                             "zenomen-diagnostics-{}.json",

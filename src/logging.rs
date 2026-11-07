@@ -20,16 +20,40 @@ pub struct LoggingGuard {
     _file: WorkerGuard,
 }
 
+#[cfg(target_os = "windows")]
+fn is_running_as_service() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .map(|name| name.contains("zenomen-hw"))
+        .unwrap_or(false)
+}
+
 /// Resolve the platform state directory plus `logs`.
 ///
-/// Linux: `~/.local/state/zenomen/logs`. Other platforms: the equivalent
-/// `directories` location, so the daemon and the GUI agree on one path.
+/// Linux: `~/.local/state/zenomen/logs`. Windows: `%LOCALAPPDATA%\ZenOmen\logs` for GUI,
+/// `%PROGRAMDATA%\ZenOmen\logs` for the zenomen-hw privileged service.
 fn log_directory() -> Option<PathBuf> {
-    directories::ProjectDirs::from("com", "zenomen", "zenomen").map(|dirs| {
-        dirs.state_dir()
-            .unwrap_or_else(|| dirs.data_dir())
-            .join("logs")
-    })
+    #[cfg(target_os = "windows")]
+    {
+        crate::desktop::windows::paths::resolve_app_data_paths()
+            .ok()
+            .map(|paths| {
+                if is_running_as_service() {
+                    paths.program_data.join("logs")
+                } else {
+                    paths.local_app_data.join("logs")
+                }
+            })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        directories::ProjectDirs::from("com", "zenomen", "zenomen").map(|dirs| {
+            dirs.state_dir()
+                .unwrap_or_else(|| dirs.data_dir())
+                .join("logs")
+        })
+    }
 }
 
 /// Open the rotating log file, or explain why it could not be opened.
