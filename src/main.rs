@@ -199,7 +199,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let reg = Arc::clone(linux.registry());
             (linux, None, Some(reg))
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            let windows = Arc::new(zenomen::hardware::WindowsHardwareProvider::new());
+            (windows, None, None)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             // No backend yet: report nothing instead of reaching for sysfs.
             (
@@ -222,7 +227,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_provider_mode("linux".into());
             app.set_provider_label("Linux provider");
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            tracing::info!("windows hardware provider initialized");
+            ui.set_provider_mode("windows".into());
+            app.set_provider_label("Windows provider");
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             tracing::warn!("no hardware provider is implemented for this platform");
             ui.set_provider_mode("unavailable".into());

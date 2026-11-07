@@ -11,6 +11,7 @@ pub mod provider;
 pub mod registry;
 pub mod rgb;
 pub mod unavailable;
+pub mod windows;
 
 // Re-exported so `crate::core` and `src/app.rs` name the boundary in one hop.
 #[cfg(target_os = "linux")]
@@ -19,5 +20,7 @@ pub use mock::{MockHardware, MockScenario};
 pub use provider::{BatteryTelemetry, HardwareCapabilities, HardwareProvider, TelemetrySnapshot};
 pub use registry::SensorRegistry;
 pub use rgb::RgbInterfaceVariant;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub use unavailable::UnavailableHardwareProvider;
+#[cfg(target_os = "windows")]
+pub use windows::WindowsHardwareProvider;

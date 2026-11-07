@@ -52,6 +52,20 @@ path = "src/bin/zenomen-hw.rs"
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Power",
+    "Win32_System_Performance",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Wmi",
+    "Win32_Security",
+] }
+
 [profile.dev]
 # Disable full DWARF debuginfo and incremental caches to prevent target/ from ballooning to 20+ GB
 debug = 0

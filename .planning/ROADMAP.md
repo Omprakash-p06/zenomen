@@ -154,7 +154,7 @@ Plans:
 - [x] 06-02: Shared hardware provider contract, BatteryTelemetry separation, sysfs root isolation, fan driver filtering, dynamic history scaling, chart caching
 
 **Wave 3: Windows Native Telemetry Engine**
-- [ ] 06-03: Windows native telemetry engine — Win32, DXGI 1.3, PDH, and WMI for CPU, RAM, GPU, battery, temps, and fan RPM
+- [x] 06-03: Windows native telemetry engine — Win32, DXGI 1.3, PDH, and WMI for CPU, RAM, GPU, battery, temps, and fan RPM
 
 **Wave 4: Windows Hardware Control Service & Named-Pipe IPC**
 - [ ] 06-04: Windows hardware control service — SCM service, secured named-pipe IPC, HP BIOS WMI mailbox (`hpqBIntM`), board profile catalog
