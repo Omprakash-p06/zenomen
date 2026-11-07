@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_commit: 4baf4bdbfc56a9755e48c37893d7515f1ffa172d
 last_mapped_at: 2026-11-07
 ---
 # Testing Patterns
@@ -19,40 +19,48 @@ last_mapped_at: 2026-11-07
 **Run Commands (as defined by this repo):**
 
 ```bash
-
-# CI quality job (.github/workflows/ci.yml)
-
+# Standard verification commands pipeline
 cargo fmt --all -- --check
+git diff --check
 cargo clippy --all-targets --all-features -- -D warnings
-xvfb-run --auto-servernum cargo test --all
+xvfb-run -a cargo test --all
+./scripts/validate-icons.py
+
+# CI security audit (.github/workflows/ci.yml)
 cargo audit
 
-# README / contributor workflow (README.md:226-291)
-
-xvfb-run -a cargo test --all
-
 # Release workflow (.github/workflows/release.yml)
-
 xvfb-run --auto-servernum cargo test --locked --all
 
 # Single suite
-
 cargo test --test benchmark_tests
 cargo test --test degradation_tests
 cargo test --test fan_control_tests
 cargo test --test power_preset_tests
 cargo test --test desktop_integration_tests
+cargo test --test linux_gpu_tests
+cargo test --test logging_tests
+cargo test --test sensor_registry_tests
 
 # Unit tests only
-
 cargo test --lib
 ```
 
-There is no coverage command, no `justfile`, no `Makefile`, and no test-runner script in `scripts/` (`scripts/` contains `measure-budget.sh`, `generate-icons.sh`, `validate-icons.py`). The test commands above are taken from the committed CI workflows and README, not executed by this analysis.
+Helper scripts in `scripts/` include:
+- `measure-budget.sh`: measures RSS and CPU budget consumption
+- `generate-icons.sh`: generates multi-resolution icon assets via Inkscape and ImageMagick
+- `validate-icons.py`: validates all 8 hicolor PNG sizes (16x16 to 256x256), scalable SVG, and multi-resolution ICO (7 embedded sizes)
 
 ## Test Inventory
 
-**Total: 124 `#[test]` functions** — 34 unit tests inside `src/`, 90 integration tests in 16 files under `tests/`. There are no `#[ignore]`, no `#[should_panic]`, and no async tests.
+**Total test count: 123 verified automated tests across 15 integration test suites and unit tests** (plus 1 benchmark/performance suite, totaling 124 `#[test]` functions: 34 unit tests in `src/` and 90 integration tests across 16 files under `tests/`). There are no `#[ignore]`, no `#[should_panic]`, and no async tests.
+
+### Key Test Suites & Recent Additions
+- `tests/logging_tests.rs` (1 test): verifies rotating file sink directory creation, log line emission to state directory, and process-global double initialization safety.
+- `tests/linux_gpu_tests.rs` (7 tests including NvidiaSampler watcher and expiry): DRM enumeration, nvidia-smi parsing, `NvidiaSampler` background watcher thread (spawning external tool, handling failures/missing binaries), and stale reading expiry (falling back to `None` after timeout).
+- `tests/fan_control_tests.rs` (5 tests including pending fan mode in-flight tracking): `AppEvent` → `AppState` fan-mode transitions, offline daemon handling, and pending fan mode in-flight tracking (marking writes in-flight and clearing upon backend confirmation or failed verification).
+- `tests/power_preset_tests.rs` (6 tests including dual-leg partial success honesty): dynamic ACPI profile enumeration, combined presets full workflow, dual-leg partial success honesty (reporting partial success when either fan mode or platform profile succeeds while the other fails), and diagnostics reporting.
+- `tests/sensor_registry_tests.rs` (9 tests including sysfs battery presence): sensor priority matrix (`k10temp` and `coretemp` selected over `acpitz`, falling back to `acpitz` when CPU driver missing), fan/pwm discovery on HP WMI, sysfs battery presence detection (measured dynamically via `/sys/class/power_supply`, not hardcoded; reports false when absent), and non-synthesizing absence guarantees.
 
 **Integration suites (`tests/`):**
 
@@ -63,16 +71,16 @@ There is no coverage command, no `justfile`, no `Makefile`, and no test-runner s
 | `tests/degradation_tests.rs` | 8 | 209 | One test per degradation case (fan absent, pwm absent, no CPU temp, nvidia-smi missing, RGB absent, service absent, unauthorized write, corrupt config) |
 | `tests/desktop_integration_tests.rs` | 8 | 179 | Autostart, single-instance D-Bus object, tray SNI/DBusMenu, icon assets, releases URL |
 | `tests/diagnostics_tests.rs` | 2 | 179 | Diagnostics from synthetic roots + live-system smoke test |
-| `tests/fan_control_tests.rs` | 5 | 117 | `AppEvent` → `AppState` fan-mode transitions, offline daemon behavior |
+| `tests/fan_control_tests.rs` | 5 | 117 | `AppEvent` → `AppState` fan-mode transitions, offline daemon behavior, pending fan mode in-flight tracking |
 | `tests/hardware_service_tests.rs` | 9 | 280 | `write_and_verify`, mock sysfs backend, presets, polkit/config assets |
-| `tests/linux_gpu_tests.rs` | 7 | 175 | DRM enumeration, nvidia-smi parsing, fake-tool watcher, stale expiry |
+| `tests/linux_gpu_tests.rs` | 7 | 175 | DRM enumeration, nvidia-smi parsing, NvidiaSampler watcher thread, stale reading expiry |
 | `tests/linux_procfs_tests.rs` | 4 | 89 | `/proc/stat`, `/proc/meminfo`, `/proc/cpuinfo` parsing, live provider smoke |
 | `tests/logging_tests.rs` | 1 | 91 | Rotating file sink + double-init safety |
 | `tests/mock_hardware_tests.rs` | 3 | 128 | `MockScenario::{Nominal, ZeroCapabilities, SensorDataGap}` |
 | `tests/packaging_tests.rs` | 5 | 172 | Embedded assets match disk, root enforcement, prefix install/uninstall |
-| `tests/power_preset_tests.rs` | 6 | 256 | ACPI profile selection, combined presets, partial success, diagnostics |
+| `tests/power_preset_tests.rs` | 6 | 256 | ACPI profile selection, combined presets, dual-leg partial success honesty, diagnostics |
 | `tests/rgb_tests.rs` | 8 | 365 | Hex validation, presets, OpenOMEN migration, 3 interface variants, verified writes |
-| `tests/sensor_registry_tests.rs` | 9 | 262 | Sensor priority matrix, fan discovery, battery presence |
+| `tests/sensor_registry_tests.rs` | 9 | 262 | Sensor priority matrix, fan discovery, sysfs battery presence detection |
 | `tests/telemetry_history_tests.rs` | 4 | 89 | 120-sample bound, SVG path generation and gap handling |
 
 **Unit test modules in `src/` (`#[cfg(test)] mod tests`):**
@@ -90,7 +98,7 @@ There is no coverage command, no `justfile`, no `Makefile`, and no test-runner s
 | `src/hardware/linux/memory.rs` | 2 | MemAvailable-based used memory, missing-key behavior |
 | `src/hardware/linux/hwmon.rs` | 3 | Millidegree conversion, fan RPM, label trimming |
 
-**Documentation drift:** `README.md:226` says “123 automated unit and integration tests”; `docs/PARITY.md:83` says 109. The actual source contains 124. Update these numbers when adding or removing tests (AGENTS.md rule 10).
+**Documentation synchronization:** `README.md:226` documents 123 automated unit and integration tests across integration test suites. Update these counts when adding or removing tests (AGENTS.md rule 10).
 
 ## Test File Organization
 
@@ -347,9 +355,11 @@ match result {
 
 Single `quality` job on `ubuntu-latest` (`.github/workflows/ci.yml`), least-privilege `contents: read`, concurrency cancellation, all gates blocking:
 1. `cargo fmt --all -- --check`
-2. `cargo clippy --all-targets --all-features -- -D warnings`
-3. `xvfb-run --auto-servernum cargo test --all`
-4. `cargo audit` against the committed `Cargo.lock`
+2. `git diff --check`
+3. `cargo clippy --all-targets --all-features -- -D warnings`
+4. `xvfb-run -a cargo test --all` (or `xvfb-run --auto-servernum cargo test --all`)
+5. `./scripts/validate-icons.py`
+6. `cargo audit` against the committed `Cargo.lock`
 
 Native packages installed for the build: `libxkbcommon-dev`, `libfontconfig1-dev`, `libgl1-mesa-dev`, `xvfb`. Release workflow repeats fmt/clippy/tests with `--locked`, audits, then packages `.deb` and `.AppImage` via `cargo-packager` (`.github/workflows/release.yml:57-79`).
 
@@ -362,14 +372,14 @@ Note: no test source currently imports `slint` or constructs `AppWindow` (grep a
 - **D-Bus interface methods untested:** `src/service/contract.rs` (214 lines) has no tests; only the backend and polkit serialization are covered.
 - **Live-system assumptions:** `tests/linux_procfs_tests.rs:74-89` and `tests/benchmark_tests.rs:18-36` assert against the real `/proc`; there are no `#[cfg(target_os = "linux")]` gates on the suite, so the tests are Linux-only in practice.
 - **Timing sensitivity:** the GPU stale-expiry test sleeps 3.1 s and worker tests use wall-clock budgets; slow CI runners could flake. Prefer deadline loops over single sleeps in new tests.
-- **Count drift:** README/PARITY test counts are stale (123/109 vs actual 124).
+- **Count synchronization:** `README.md:226` documents 123 tests (15 integration test suites plus unit tests), while the repo has 124 test functions including the benchmark suite. Keep docs synchronized when adding or altering tests.
 
 **Checklist for new tests (per AGENTS.md rule 7):**
 1. Add a unit test in the same file for pure logic; add/extend a `tests/<area>_tests.rs` suite for cross-module behavior.
 2. Use `MockHardware` or inject a temp root; never touch live hardware, `/sys`, or root paths.
 3. Create a uniquely named temp dir and clean it via `Drop` (copy the `TestDir` pattern).
 4. Assert with a message that explains the hardware/state contract being protected.
-5. Run `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `xvfb-run -a cargo test --all`.
+5. Run `cargo fmt --all -- --check`, `git diff --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `xvfb-run -a cargo test --all`, and `./scripts/validate-icons.py`.
 6. Update the test counts in `README.md` if the total changes.
 
 ---

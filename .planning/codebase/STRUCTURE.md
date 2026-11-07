@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_commit: 4baf4bdbfc56a9755e48c37893d7515f1ffa172d
 last_mapped_at: 2026-11-07
 ---
 # Codebase Structure
@@ -19,23 +19,23 @@ zenomen/
 │   ├── lib.rs              # Module tree; `ui`-gated `app` module + include_modules!()
 │   ├── main.rs             # `zenomen` GUI entry point and thread orchestration
 │   ├── app.rs              # Slint ↔ core bridge (only file that touches AppWindow)
-│   ├── logging.rs          # tracing stderr + daily rotating file
+│   ├── logging.rs          # Early non-blocking rotating file appender (used by both bins)
 │   ├── bin/
 │   │   └── zenomen-hw.rs   # `zenomen-hw` root daemon entry point
 │   ├── core/
 │   │   ├── mod.rs          # Re-exports the core surface
 │   │   ├── events.rs       # AppCommand, AppEvent, ScreenId
 │   │   ├── state.rs        # AppState + apply(&AppEvent) + status derivation
-│   │   ├── worker.rs       # 1 Hz monitoring worker + mutation offload
+│   │   ├── worker.rs       # 1 Hz monitoring worker + InFlightGuard atomic mutation handling
 │   │   ├── telemetry.rs    # Bounded history + SVG path generation
 │   │   ├── diagnostics.rs  # Report assembly + atomic JSON export
 │   │   └── benchmark.rs    # RSS/PSS instrumentation and checkpoints
 │   ├── hardware/
-│   │   ├── mod.rs          # Re-exports; cfg-gated Linux provider
+│   │   ├── mod.rs          # Re-exports; cfg-gated Linux provider / unavailable fallback
 │   │   ├── provider.rs     # HardwareProvider trait + capabilities/snapshot types
 │   │   ├── registry.rs     # Canonical sensor discovery (hwmon/ACPI/battery)
 │   │   ├── mock.rs         # MockHardware + MockScenario
-│   │   ├── unavailable.rs  # Zero-capability stub for unsupported platforms
+│   │   ├── unavailable.rs  # Zero-capability stub for non-Linux/Windows builds
 │   │   ├── rgb.rs          # RgbInterfaceVariant detection (read side)
 │   │   └── linux/
 │   │       ├── mod.rs      # Linux backend module tree
@@ -78,7 +78,7 @@ zenomen/
 │   ├── dbus/com.zenomen.Hardware1.{conf,service}
 │   ├── polkit/com.zenomen.hardware.policy
 │   ├── systemd/zenomen-hw.service
-│   └── icons/              # hicolor PNG sizes + SVG + zenomen.ico
+│   └── icons/              # hicolor PNG sizes (16..512 incl 24x24) + SVG + zenomen.ico
 ├── docs/
 │   ├── PACKAGING.md
 │   ├── PARITY.md
@@ -87,7 +87,10 @@ zenomen/
 ├── scripts/                # generate-icons.sh, validate-icons.py, measure-budget.sh
 ├── logo/                   # source SVGs for branding
 ├── dist/                   # generated packaging output + budget CSVs (gitignored)
-├── .github/workflows/      # ci.yml, release.yml
+├── .github/
+│   ├── CODEOWNERS          # Code owners per subsystem
+│   ├── PULL_REQUEST_TEMPLATE.md # PR description & verification checklist
+│   └── workflows/          # ci.yml, release.yml
 └── .planning/              # GSD project state (PROJECT, ROADMAP, codebase maps, phases)
 ```
 
@@ -95,21 +98,26 @@ zenomen/
 
 **`src/core/`:**
 - Purpose: the application's truth and cadence, independent of Slint and of any OS path.
-- Contains: typed messages, `AppState`, the monitoring worker, bounded telemetry history, diagnostics, RSS instrumentation.
+- Contains: typed messages, `AppState`, the monitoring worker with `InFlightGuard` ensuring atomic mutation handling across caller timeouts, bounded telemetry history, diagnostics, RSS instrumentation.
 - Key files: `src/core/events.rs`, `src/core/state.rs`, `src/core/worker.rs`.
 - Rule: nothing here touches hardware directly; `src/hardware` owns sensors, `src/app.rs` owns rendering.
 
 **`src/hardware/`:**
 - Purpose: the only place that reads sensors.
-- Contains: the `HardwareProvider` seam, canonical registry, mock/unavailable implementations, platform backend directory.
-- Key files: `src/hardware/provider.rs`, `src/hardware/registry.rs`, `src/hardware/linux/provider.rs`.
-- Rule: Linux-specific paths stay under `src/hardware/linux/`; new platforms get a sibling directory, not a branch inside the Linux one.
+- Contains: the `HardwareProvider` seam, canonical registry, mock/unavailable implementations (`UnavailableHardwareProvider` for non-Linux/Windows builds), platform backend directory.
+- Key files: `src/hardware/provider.rs`, `src/hardware/registry.rs`, `src/hardware/unavailable.rs`, `src/hardware/linux/provider.rs`.
+- Rule: Linux-specific paths stay under `src/hardware/linux/`; non-Linux/Windows builds select `UnavailableHardwareProvider`.
 
 **`src/service/`:**
 - Purpose: everything that mutates hardware or speaks D-Bus about it.
 - Contains: server interface, verified sysfs backend, Polkit verifier, blocking client, control domain types.
 - Key files: `src/service/contract.rs`, `src/service/backend.rs`, `src/service/client.rs`.
 - Rule: this is the only module allowed to write sysfs; it must not import Slint or `src/app.rs`.
+
+**`src/logging.rs`:**
+- Purpose: process-wide non-blocking logging infrastructure.
+- Contains: `tracing` registry initialization with stderr layer and `tracing-appender` daily rotating file appender in platform state directory (`~/.local/state/zenomen/logs`, 7-day retention).
+- Rule: must be initialized as the first statement in both `zenomen` and `zenomen-hw`; degrades gracefully to stderr if log file directory creation fails.
 
 **`src/desktop/`:**
 - Purpose: session-bus and XDG integration that is not hardware-related.
@@ -132,6 +140,18 @@ zenomen/
 - Key files: `ui/app.slint`, `ui/screens/*.slint`, `ui/components/status-strip.slint`.
 - Rule: no timers, no file access, no hardware calls — only properties, callbacks, and bindings.
 
+**`docs/`:**
+- Purpose: technical specifications, packaging guides, resource budget benchmarks, and Architecture Decision Records.
+- Key files: `docs/PACKAGING.md`, `docs/PARITY.md`, `docs/RESOURCE-BUDGET.md`, `docs/decisions/ADR-001-ui-framework.md`.
+
+**`scripts/`:**
+- Purpose: utility scripts for asset generation, format validation, and performance measurement.
+- Key files: `scripts/generate-icons.sh`, `scripts/validate-icons.py`, `scripts/measure-budget.sh`.
+
+**`.github/`:**
+- Purpose: repository governance and automation workflows.
+- Key files: `.github/CODEOWNERS`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/ci.yml`.
+
 **`tests/`:**
 - Purpose: integration tests across module boundaries using temp filesystem trees and mocks.
 - Contains: one file per subsystem area (see “Testing” below).
@@ -139,8 +159,8 @@ zenomen/
 
 **`data/`:**
 - Purpose: files installed to fixed system paths and embedded into the root installer.
-- Contains: systemd unit, D-Bus config/service, Polkit policy, desktop entry, icons.
-- Key files: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.conf`, `data/polkit/com.zenomen.hardware.policy`.
+- Contains: systemd unit, D-Bus config/service, Polkit policy, desktop entry, multi-resolution icons.
+- Key files: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.conf`, `data/polkit/com.zenomen.hardware.policy`, `data/icons/zenomen.ico`.
 - Rule: `src/desktop/system_integration.rs` embeds these with `include_str!`; `tests/packaging_tests.rs` asserts embedded copies equal the on-disk files.
 
 ## Key File Locations
@@ -161,9 +181,11 @@ zenomen/
 
 **Core Logic:**
 - `src/core/state.rs`: single-writer state machine.
-- `src/core/worker.rs`: sampling loop and mutation offload.
+- `src/core/worker.rs`: sampling loop, mutation offload, and `InFlightGuard` atomic mutation handling.
 - `src/core/telemetry.rs`: history bound and SVG geometry.
 - `src/hardware/registry.rs`: canonical sensor selection.
+- `src/hardware/unavailable.rs`: honest zero-capability fallback provider for non-Linux/Windows builds.
+- `src/logging.rs`: early non-blocking rotating file appender for both GUI and daemon.
 - `src/service/backend.rs`: verified hardware writes.
 - `src/service/contract.rs`: D-Bus API surface.
 
@@ -307,22 +329,22 @@ CI runs `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features
 - Committed: Yes.
 
 **`logo/` and `data/icons/`:**
-- Purpose: brand sources (`logo/*.svg`) and packaged icon sizes (`data/icons/hicolor/<size>/apps/zenomen.png`, plus `.ico`).
+- Purpose: brand sources (`logo/*.svg`) and packaged icon sizes (`data/icons/hicolor/<size>/apps/zenomen.png` across 8 sizes: 16, 24, 32, 48, 64, 128, 256, 512, plus multi-resolution `zenomen.ico` containing 7 embedded resolutions).
 - Generated: Partly (`scripts/generate-icons.sh`, `scripts/validate-icons.py`); outputs are committed.
 - Committed: Yes.
 
 **`scripts/`:**
-- Purpose: icon generation/validation and RSS-budget measurement (`measure-budget.sh`).
+- Purpose: icon generation (`generate-icons.sh`), PNG dimension/IHDR and ICO header validation (`validate-icons.py`), and RSS-budget measurement (`measure-budget.sh`).
 - Generated: No.
 - Committed: Yes.
 
 **`docs/`:**
-- Purpose: packaging, platform parity, resource budget, and ADRs. Update these when interfaces or build requirements change (AGENTS.md rule 10).
+- Purpose: packaging, platform parity, resource budget, and Architecture Decision Records (`docs/decisions/ADR-001-ui-framework.md`). Update these when interfaces or build requirements change (AGENTS.md rule 10).
 - Generated: No.
 - Committed: Yes.
 
-**`.github/workflows/`:**
-- Purpose: `ci.yml` quality gates and `release.yml` tagged Linux builds/publishing.
+**`.github/`:**
+- Purpose: repository governance (`CODEOWNERS`), standardized PR checklist (`PULL_REQUEST_TEMPLATE.md`), and CI/release automation (`.github/workflows/ci.yml`, `release.yml`).
 - Generated: No.
 - Committed: Yes.
 

@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_commit: 4baf4bdbfc56a9755e48c37893d7515f1ffa172d
 last_mapped_at: 2026-11-07
 ---
 # Coding Conventions
@@ -11,7 +11,7 @@ last_mapped_at: 2026-11-07
 **Files:**
 - Rust source files are `snake_case.rs`: `src/core/state.rs`, `src/hardware/linux/hwmon.rs`, `src/desktop/system_integration.rs`.
 - Modules that own a subsystem use a directory plus `mod.rs` (this repo does not use `foo/foo.rs`): `src/core/mod.rs`, `src/hardware/mod.rs`, `src/service/mod.rs`, `src/rgb/mod.rs`, `src/desktop/mod.rs`, `src/config/mod.rs`, `src/hardware/linux/mod.rs`.
-- Integration test suites are `tests/<area>_tests.rs` — 16 files, e.g. `tests/config_tests.rs`, `tests/hardware_service_tests.rs`, `tests/mock_hardware_tests.rs`.
+- Integration test suites are `tests/<area>_tests.rs` — 16 files (15 integration test suites and 1 benchmark suite, totaling 90 integration tests), e.g. `tests/config_tests.rs`, `tests/hardware_service_tests.rs`, `tests/mock_hardware_tests.rs`, `tests/logging_tests.rs`.
 - Binaries: `src/main.rs` builds `zenomen`; `src/bin/zenomen-hw.rs` builds `zenomen-hw` (`Cargo.toml` lines 40-47).
 
 **Functions:**
@@ -44,7 +44,7 @@ last_mapped_at: 2026-11-07
   - Magic numbers are extracted into named constants, e.g. `GAP_PERIOD_TICKS`, `GAP_TICKS`, `RAM_TOTAL_MB` (`src/hardware/mock.rs`).
 
 **Test function names:**
-- Mixed across the repo: 38 of 124 tests use a `test_` prefix, concentrated in older suites (`tests/desktop_integration_tests.rs` 8/8, `tests/fan_control_tests.rs` 5/5, `tests/hardware_service_tests.rs` 9/9, `tests/packaging_tests.rs` 5/5, `tests/power_preset_tests.rs` 6/6). Newer suites and all unit modules use descriptive sentences: `a_partial_sample_is_degraded_but_still_counted` (`src/core/state.rs`), `sensor_data_gap_scenario_periodically_emits_none` (`tests/mock_hardware_tests.rs`).
+- Mixed across the repo: 38 of 123 verified tests use a `test_` prefix, concentrated in older suites (`tests/desktop_integration_tests.rs` 8/8, `tests/fan_control_tests.rs` 5/5, `tests/hardware_service_tests.rs` 9/9, `tests/packaging_tests.rs` 5/5, `tests/power_preset_tests.rs` 6/6). Newer suites and all unit modules use descriptive sentences: `a_partial_sample_is_degraded_but_still_counted` (`src/core/state.rs`), `sensor_data_gap_scenario_periodically_emits_none` (`tests/mock_hardware_tests.rs`).
 - Follow the descriptive style for new tests; do not rename existing tests just to normalize.
 - Requirement-oriented suites use a stable numeric prefix: `degradation_01_...` through `degradation_08_...` (`tests/degradation_tests.rs`).
 
@@ -57,7 +57,8 @@ last_mapped_at: 2026-11-07
   - `unsafe { std::env::set_var(...) }` where tests mutate the environment (`tests/logging_tests.rs:54`).
 - 4-space indentation, no tabs, no trailing whitespace, LF endings.
 - Default 100-column width; a few expressions that rustfmt cannot split remain slightly longer (14 lines in `src/`, 5 in `tests/`).
-- Formatting is a hard CI gate: `cargo fmt --all -- --check` (`.github/workflows/ci.yml:57`; release workflow at `.github/workflows/release.yml:57`).
+- Formatting is a hard CI gate: `cargo fmt --all -- --check` accompanied by `git diff --check`.
+- Standard verification pipeline: `cargo fmt --all -- --check`, `git diff --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `xvfb-run -a cargo test --all`, and `./scripts/validate-icons.py`.
 
 **Linting:**
 - Clippy runs with all targets and all features, warnings denied: `cargo clippy --all-targets --all-features -- -D warnings` (`.github/workflows/ci.yml:60`; the release workflow adds `--locked`).
@@ -177,7 +178,7 @@ Examples: `src/app.rs:16-24`, `src/hardware/registry.rs:7-13`, `src/core/worker.
 ## Documentation Synchronization
 
 - When interfaces, test counts, or build requirements change, update `README.md` and the relevant docstrings in the same change (AGENTS.md rule 10).
-- Current drift to be aware of: `README.md:226` states “123 automated … tests”; the source currently contains 124 `#[test]` functions. `docs/PARITY.md:83` states 109. Update these counts when touching the test suite rather than propagating the old number.
+- Total test count: 123 verified automated tests across 15 integration test suites and unit tests (plus benchmark suite, for a total of 124 `#[test]` functions with 34 unit tests in `src/` and 90 integration tests in `tests/`). `README.md:226` documents 123 tests; ensure docs and tests remain synchronized when touching the test suite.
 
 ---
 

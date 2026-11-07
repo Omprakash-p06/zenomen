@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_commit: 4baf4bdbfc56a9755e48c37893d7515f1ffa172d
 last_mapped_at: 2026-11-07
 ---
 # External Integrations
@@ -15,8 +15,12 @@ surface is entirely local:
   (single-instance, tray).
 - Polkit authorization through `org.freedesktop.PolicyKit1`.
 - Linux kernel pseudo-filesystems: procfs, sysfs, DMI, ACPI, DRM, hwmon.
-- Three external process invocations: optional `nvidia-smi`, root-only `systemctl`,
-  and user-delegated `xdg-open`.
+- Three external process invocations: optional `nvidia-smi` (managed via a dedicated
+  long-lived `NvidiaSampler` thread), root-only `systemctl`, and user-delegated `xdg-open`.
+- Non-blocking daily rotating file logging via `tracing-appender` under the standard
+  platform state directory.
+- Architecture-ready Windows target support (`--target x86_64-pc-windows-msvc --no-default-features`)
+  backed by `UnavailableHardwareProvider` and `winres`.
 
 The only "update check" opens the GitHub Releases page in the user's browser; no
 version check, download, or self-update code exists.
@@ -109,11 +113,47 @@ by systemd; the GUI never performs raw sysfs writes.
 - The URL is opened only from the UI callback `on_open_releases_page`
   (`src/app.rs:265-272`).
 
+### External Processes: NVIDIA Telemetry (`nvidia-smi`)
+
+- **Program:** `nvidia-smi` (spawned via `std::process::Command` in `src/hardware/linux/gpu.rs`).
+- **Watcher thread:** Long-lived `NvidiaSampler` thread named `zenomen-nv-watch` spawned
+  once during `LinuxHardwareProvider` initialization when an NVIDIA GPU or the tool is
+  detected (`src/hardware/linux/provider.rs:73`).
+- **Query arguments:** `--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total --format=csv,noheader,nounits`.
+- **Decoupled execution:** The telemetry tick requests a fresh sample via a capacity-1
+  bounded channel (`mpsc::sync_channel(1)`), which coalesces ticks without waiting.
+- **Staleness and D3cold safety:** The sampler caches `(Instant, GpuTelemetry)` with
+  `MAX_AGE = Duration::from_secs(3)`. If a query hangs (such as when the discrete GPU
+  is in D3cold power saving) or fails, the tick returns `None` (rendered as `Unavailable`)
+  instead of blocking the UI or accumulating detached threads.
+
 ## Kernel Interfaces (sysfs / procfs / DMI / ACPI)
 
 These are the primary "external APIs" for telemetry and hardware control. Reads happen
 in the unprivileged GUI process; writes happen only in `zenomen-hw`
 (`src/service/backend.rs`).
+
+### Core Telemetry Sensors (11 Sensors)
+
+A fully populated telemetry sample carries exactly **11 core sensors**
+(`TelemetrySnapshot::EXPECTED_SENSOR_COUNT = 11` in `src/hardware/provider.rs:189`).
+The 11 core sensors are:
+1. CPU temperature (`cpu_temp_c`)
+2. CPU utilization (`cpu_utilization`)
+3. CPU frequency (`cpu_freq_mhz`)
+4. GPU temperature (`gpu_temp_c`)
+5. GPU utilization (`gpu_utilization`)
+6. GPU VRAM used (`gpu_mem_used_mb`)
+7. RAM used (`ram_used_mb`)
+8. RAM total (`ram_total_mb`)
+9. Fan tachometer RPMs (`fan_rpms`)
+10. Fan mode (`fan_mode`)
+11. Power profile (`power_profile`)
+
+*Note:* `rgb_profile` is presentation state owned by `AppState::active_rgb_profile`
+rather than a hardware sensor sampled by the provider. It is explicitly excluded from
+the core sensor count so healthy machines report full sensor availability rather than
+"11 of 12".
 
 ### sysfs — sensors and controls
 
@@ -135,7 +175,7 @@ in the unprivileged GUI process; writes happen only in `zenomen-hw`
 | `/sys/class/drm/card[0-9]+/device/mem_info_vram_used` / `mem_info_vram_total` | Read | AMD VRAM usage/total (bytes converted to MB). | `src/hardware/linux/gpu.rs:167-178` |
 | `/sys/class/drm/card[0-9]+/device/hwmon/hwmon*/temp1_input` | Read | GPU temperature in millidegrees. | `src/hardware/linux/gpu.rs:117-165` |
 | `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq` | Read | CPU frequency in kHz; falls back to `/proc/cpuinfo` `cpu MHz`. | `src/hardware/linux/provider.rs:133-140` |
-| `/sys/class/power_supply/BAT*/capacity` | Presence check only | Battery capability flag; battery telemetry is not sampled. | `src/hardware/registry.rs:68-71`, `153-169` |
+| `/sys/class/power_supply/BAT*/capacity` | Dynamic presence check | Detects battery presence dynamically to set `HardwareCapabilities.battery_metrics`; battery telemetry is not sampled. | `src/hardware/registry.rs:68-73`, `145-168` |
 | `/sys/class/dmi/id/product_name`, `/sys/class/dmi/id/sys_vendor` | Read | DMI/SMBIOS model and vendor for diagnostics. | `src/core/diagnostics.rs:58-86` |
 
 The daemon's systemd unit grants write access only to
@@ -174,7 +214,7 @@ fabricated: every reader returns `Option`/empty and the UI renders `Unavailable`
 | `~/.config/zenomen/rgb/` | JSON profiles | GUI | ZenOmen RGB profile storage. |
 | `~/.config/openomen/rgb/` | JSON | Read-only | Legacy OpenOMEN migration source; never modified or deleted. |
 | `~/.config/autostart/zenomen.desktop` | Desktop Entry | GUI | XDG autostart toggle. |
-| `~/.local/state/zenomen/logs/` | Text logs | GUI + daemon | Daily rolling logs, 7 files maximum. |
+| `~/.local/state/zenomen/logs/` | Text logs | GUI + daemon | Daily rolling logs (`zenomen.YYYY-MM-DD.log`, 7 files max) via `tracing-appender`. |
 
 - Config saves are atomic: temporary file in the same directory, `sync_all`, rename,
   then parent-directory sync (`src/config/mod.rs:85-116`).
@@ -184,8 +224,8 @@ fabricated: every reader returns `Option`/empty and the UI renders `Unavailable`
 
 **Caching:**
 - In-memory only: cached system-bus connection (`src/service/client.rs:38-75`) and the
-  most recent NVIDIA sample with a 3-second freshness window
-  (`src/hardware/linux/gpu.rs:191-245`).
+  most recent NVIDIA sample with a 3-second freshness window in `NvidiaSampler`
+  (`src/hardware/linux/gpu.rs:218-245`).
 - Telemetry history is in-memory (120 samples by default; configurable 30/60/120/300).
 
 ## Authentication & Identity
@@ -210,11 +250,15 @@ fabricated: every reader returns `Option`/empty and the UI renders `Unavailable`
 - None. No Sentry, telemetry endpoint, OpenTelemetry, or remote error reporting.
 
 **Logs:**
-- `tracing` 0.1.44 with `tracing-subscriber` 0.3.23 and `EnvFilter`.
-- Stderr layer for terminal/journald; optional file layer with daily rotation,
-  `zenomen` prefix, `.log` suffix, max 7 files.
-- Default filter `info`; override with `RUST_LOG`.
-- The daemon logs startup and service registration; systemd/journald captures stderr.
+- `tracing` 0.1.44 with `tracing-subscriber` 0.3.23 (`EnvFilter`) and `tracing-appender` 0.2.5 (`src/logging.rs`).
+- `zenomen::logging::init()` sets up a non-blocking `RollingFileAppender` (rotation daily,
+  `zenomen` prefix, `log` suffix, `max_log_files(7)`) in the standard state directory
+  `~/.local/state/zenomen/logs/`.
+- Non-blocking `WorkerGuard` is held by `LoggingGuard` in `main()` of both binaries
+  to ensure all buffered log records are flushed on exit.
+- If log directory creation or file opening fails, logging degrades cleanly to stderr-only
+  without blocking application startup.
+- Stderr layer with default filter `info` (overridable with `RUST_LOG`).
 - Benchmark instrumentation reads `/proc/self/smaps_rollup`, `/proc/self/status`, and
   `/proc/self/stat`; `ZENOMEN_BENCHMARK=1` enables stdout benchmark lines
   (`src/core/benchmark.rs`).
@@ -325,7 +369,7 @@ variables below are optional.
 - System-bus method calls to `com.zenomen.Hardware1`.
 - System-bus `CheckAuthorization` calls to `org.freedesktop.PolicyKit1`.
 - Session-bus `RegisterStatusNotifierItem` to `org.kde.StatusNotifierWatcher`.
-- Subprocesses: `nvidia-smi`, `systemctl`, `xdg-open`.
+- Subprocesses: `nvidia-smi` (via `NvidiaSampler`), `systemctl`, `xdg-open`.
 - No outgoing HTTP, SMTP, WebSocket, or webhook traffic.
 
 ## Failure / Degradation Behavior
@@ -336,8 +380,10 @@ variables below are optional.
 | Polkit denies or no agent | Mutating call fails before sysfs write; hardware state unchanged. | `src/service/contract.rs:55-80` |
 | StatusNotifierWatcher absent | Tray registration skipped with info log; app continues. | `src/desktop/tray.rs:201-217` |
 | Session D-Bus absent | Single-instance/tray disabled; app runs standalone. | `src/desktop/single_instance.rs:66-74` |
-| `nvidia-smi` absent or fails | dGPU telemetry returns `None`; never blocks the sampling tick and never fabricates values. | `src/hardware/linux/provider.rs:66-73`, `src/hardware/linux/gpu.rs:248-292` |
+| `nvidia-smi` absent, slow, or fails | `NvidiaSampler` thread receives `None`; cached samples older than 3s expire to `None`; telemetry tick never blocks and no detached threads leak. | `src/hardware/linux/gpu.rs:184-245` |
 | hwmon/ACPI/RGB sysfs absent | Capability flags false; UI shows `Unavailable`; no panic. | `src/hardware/registry.rs`, `src/hardware/rgb.rs` |
+| Log directory unwritable / file appender fails | Degrades to stderr-only subscriber with a warning; startup is never blocked. | `src/logging.rs:39-99` |
+| Non-Linux host / Windows target | `UnavailableHardwareProvider` reports 0 capabilities and returns error on sampling; UI renders panels as `Unavailable`. Daemon compiles with `--no-default-features`. | `src/hardware/unavailable.rs`, `src/main.rs` |
 | `xdg-open` missing | Logged warning only; no crash. | `src/app.rs:267-271` |
 
 ---

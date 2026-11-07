@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_commit: 4baf4bdbfc56a9755e48c37893d7515f1ffa172d
 last_mapped_at: 2026-11-07
 ---
 <!-- refreshed: 2026-11-07 -->
@@ -55,13 +55,13 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 | UI shell / router | Window layout, sidebar, 6-screen router keyed by `current-screen`; no hardware access | `ui/app.slint` |
 | Event contract | `AppCommand` (UI→core), `AppEvent` (core→UI), compile-time `ScreenId` | `src/core/events.rs` |
 | Single-writer state | `AppState` + `apply(&AppEvent)` + status/degradation derivation | `src/core/state.rs` |
-| Monitoring worker | 1 Hz deadline loop, on-demand refresh, config persistence, single in-flight mutation | `src/core/worker.rs` |
+| Monitoring worker | 1 Hz deadline loop, on-demand refresh, config persistence, single in-flight mutation with `InFlightGuard` atomic concurrency protection across caller timeouts | `src/core/worker.rs` |
 | Telemetry history | Bounded `VecDeque` (120 points) and SVG path generation (pure) | `src/core/telemetry.rs` |
 | Diagnostics | Report assembly from state + registry + DMI/procfs; atomic JSON export | `src/core/diagnostics.rs` |
 | Hardware contract | `HardwareProvider` trait, `HardwareCapabilities`, `TelemetrySnapshot` | `src/hardware/provider.rs` |
 | Sensor registry | Canonical CPU-temp/fan/ACPI/battery bindings discovered once, shared by dashboard and diagnostics | `src/hardware/registry.rs` |
 | Linux backend | procfs/sysfs/DRM/nvidia-smi sampling; all Linux-specific paths live here | `src/hardware/linux/*.rs` |
-| Mock / unavailable backends | Deterministic scenarios and an honest zero-capability platform stub | `src/hardware/mock.rs`, `src/hardware/unavailable.rs` |
+| Mock / unavailable backends | Deterministic scenarios and an honest zero-capability platform stub for non-Linux/Windows builds | `src/hardware/mock.rs`, `src/hardware/unavailable.rs` |
 | D-Bus server contract | `com.zenomen.Hardware1` methods; Polkit gate on all mutating methods | `src/service/contract.rs` |
 | Verified hardware writes | sysfs write + read-back + exponential-backoff retry; presets; RGB variants | `src/service/backend.rs` |
 | Polkit verifier | `CheckAuthorization` against `org.freedesktop.PolicyKit1.Authority` | `src/service/polkit.rs` |
@@ -70,7 +70,10 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 | Desktop integration | Single instance, SNI tray, close-to-tray, XDG autostart, release link | `src/desktop/*` |
 | Config | `~/.config/zenomen/config.toml` with atomic save and corrupt-file recovery | `src/config/mod.rs`, `src/config/schema.rs` |
 | RGB domain | Profile schema, strict hex validation, OpenOMEN migration, built-in presets | `src/rgb/*` |
-| Logging | stderr + daily rotating file under the XDG state dir | `src/logging.rs` |
+| Logging | Early non-blocking daily rotating file under platform state dir + stderr in both `zenomen` and `zenomen-hw` | `src/logging.rs` |
+| Architecture decisions | Formal ADRs: retaining Slint as UI framework over GPUI-CE (`ADR-001`) | `docs/decisions/ADR-001-ui-framework.md` |
+| Project governance & CI | Subsystem code ownership rules and PR verification template | `.github/CODEOWNERS`, `.github/PULL_REQUEST_TEMPLATE.md` |
+| Asset pipelines | Multi-size icon generation (vector/LANCZOS) and binary format/dimension validator | `scripts/generate-icons.sh`, `scripts/validate-icons.py` |
 
 ## Pattern Overview
 
@@ -110,7 +113,8 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 **Hardware abstraction (read side):**
 - Purpose: One seam for every sensor read.
 - Location: `src/hardware/`
-- Contains: `HardwareProvider` trait (`src/hardware/provider.rs:235`), `SensorRegistry`, `LinuxHardwareProvider`, `MockHardware`, `UnavailableHardwareProvider`, RGB interface detection.
+- Contains: `HardwareProvider` trait (`src/hardware/provider.rs:235`), `SensorRegistry`, `LinuxHardwareProvider`, `MockHardware`, `UnavailableHardwareProvider` (`src/hardware/unavailable.rs`), RGB interface detection.
+- Platform isolation: `UnavailableHardwareProvider` provides an honest, zero-capability implementation for non-Linux/Windows builds, refusing sensor sampling with an informative error rather than reaching for non-existent sysfs paths.
 - Depends on: std only (+ serde for snapshot/capability serialization).
 - Used by: the monitoring worker and diagnostics; never by Slint code.
 
@@ -122,16 +126,23 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 - Used by: `src/bin/zenomen-hw.rs` (server) and `src/core/worker.rs` (client).
 
 **OS/desktop integration:**
-- Purpose: Session-bus lifecycle and user-scoped files.
+- Purpose: Session-bus lifecycle, process logging, and user-scoped files.
 - Location: `src/desktop/`, `src/config/`, `src/logging.rs`, `src/rgb/migration.rs`
-- Contains: single instance, SNI tray, autostart, release link, system integration installer, config TOML, log rotation, profile migration.
-- Depends on: `zbus::blocking`, `directories`, `toml`, `tracing`.
-- Used by: `src/main.rs`, the worker (config persistence), and the Settings screen callbacks.
+- Contains: single instance, SNI tray, autostart, release link, system integration installer, config TOML, early non-blocking log rotation, profile migration.
+- Logging architecture: `src/logging.rs` initializes a non-blocking `tracing-appender` rolling file appender in the platform state directory (`~/.local/state/zenomen/logs`, 7-day retention) alongside stderr, invoked as the first statement in both `zenomen` and `zenomen-hw`.
+- Depends on: `zbus::blocking`, `directories`, `toml`, `tracing`, `tracing-appender`.
+- Used by: `src/main.rs`, `src/bin/zenomen-hw.rs`, the worker (config persistence), and the Settings screen callbacks.
 
-**Packaging/data:**
-- Purpose: Ship the systemd unit, D-Bus policy, Polkit action, desktop entry, icons, and fonts.
-- Location: `data/`, `Cargo.toml` (`[package.metadata.packager]`), `.github/workflows/`
-- Contains: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.{conf,service}`, `data/polkit/com.zenomen.hardware.policy`, `data/applications/zenomen.desktop`, `data/icons/**`, `ui/theme/fonts/**`.
+**Packaging/data & Governance:**
+- Purpose: Ship systemd unit, D-Bus policy, Polkit action, desktop entry, multi-resolution icons, fonts, decision records, and project governance.
+- Location: `data/`, `docs/decisions/`, `.github/`, `scripts/`, `Cargo.toml` (`[package.metadata.packager]`)
+- Contains:
+  - System files: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.{conf,service}`, `data/polkit/com.zenomen.hardware.policy`, `data/applications/zenomen.desktop`.
+  - Icon assets: Full Linux hicolor suite in `data/icons/hicolor/` (16x16, 24x24, 32x32, 48x48, 64x64, 128x128, 256x256, 512x512, scalable) and Windows multi-resolution ICO `data/icons/zenomen.ico` (containing 7 embedded resolutions: 16, 24, 32, 48, 64, 128, 256px).
+  - Automation scripts: `scripts/generate-icons.sh` (vector/LANCZOS generation across 8 dimensions), `scripts/validate-icons.py` (strict PNG IHDR and ICO directory entry validation).
+  - Fonts: `ui/theme/fonts/**` (Inter, JetBrains Mono offline fonts).
+  - Architecture decisions: `docs/decisions/ADR-001-ui-framework.md` (decision to retain Slint over GPUI-CE to preserve memory budgets and declarative UI).
+  - Governance: `.github/CODEOWNERS` (maintainer mapping for hardware, UI, CI), `.github/PULL_REQUEST_TEMPLATE.md` (standardized verification checklist), `.github/workflows/ci.yml`.
 - Note: there is **no** on-disk D-Bus introspection XML; zbus generates introspection from `#[interface]` attributes in `src/service/contract.rs`, `src/desktop/single_instance.rs`, and `src/desktop/tray.rs`.
 
 ## Data Flow
@@ -152,8 +163,12 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 1. Slint callback (`set-fan-mode`, `set-power-profile`, `apply-preset`, `apply-rgb-preset`, `set-rgb-power`) is installed as an `AppCommand` sender (`src/app.rs:94-213`).
 2. `send_command` uses `try_send` on a depth-8 `SyncSender`; a full queue drops the click and logs (`src/app.rs:357-369`).
 3. Worker matches the command and calls `execute_mutating_action` (`src/core/worker.rs:227-297`).
-4. One mutation at a time: `AtomicBool` swap rejects concurrent writes with an immediate error event; an `InFlightGuard` releases the slot even if the RPC thread panics/times out (`src/core/worker.rs:390-446`).
-5. A `zenomen-ctrl-*` thread spawns a nested `zenomen-rpc-*` thread and waits at most 30 s (`src/core/worker.rs:413-436`).
+4. One mutation at a time: `AtomicBool::swap(true, Ordering::SeqCst)` immediately rejects concurrent writes with an error event (`"Another hardware change is still in progress"`).
+5. Concurrency architecture across caller timeouts (`InFlightGuard` in `src/core/worker.rs:390-456`):
+   - A `zenomen-ctrl-*` worker thread spawns a nested `zenomen-rpc-*` thread and transfers ownership of `InFlightGuard(Arc<AtomicBool>)` to the RPC thread.
+   - `zenomen-ctrl-*` waits at most 30 s for completion via `rx.recv_timeout(timeout)`.
+   - If the caller times out or the RPC thread exits prematurely, `zenomen-ctrl-*` sends an error event to the UI (`"Operation timed out waiting for authorization or hardware response"`).
+   - `InFlightGuard` remains held in the background `zenomen-rpc-*` thread and is only dropped when the hardware write operation actually completes (or terminates). This prevents subsequent mutations from interleaving while a slow sysfs write or Polkit interaction is still ongoing in the background, ensuring atomic in-flight mutation handling across caller timeouts.
 6. `HardwareServiceClient` performs blocking zbus calls on the system bus (`src/service/client.rs:59-98`, `123-141`).
 7. Daemon `HardwareService` method calls `authorize()` → `PolkitVerifier::check_authorization` with `com.zenomen.hardware.control` and `allow_user_interaction=true` (`src/service/contract.rs:56-80`).
 8. `HardwareBackend` writes the sysfs target, sleeps, reads back, retries with exponential backoff (3 attempts, 50 ms initial for fan/power, 10 ms for RGB), and returns the confirmed value (`src/service/backend.rs:12-48`, `179-265`).
@@ -163,14 +178,14 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 
 ### Startup Path
 
-1. `logging::init()` installs stderr + rotating file layers, never aborting on failure (`src/main.rs:24`, `src/logging.rs:76`).
+1. Early logging initialization: `logging::init()` (`src/logging.rs`) initializes process-wide early non-blocking rotating file appender (in `~/.local/state/zenomen/logs`, 7-day retention) alongside stderr, returning a `LoggingGuard` that must live for the process lifetime. Initialized as the very first statement in both `src/main.rs:24` (`zenomen`) and `src/bin/zenomen-hw.rs:13` (`zenomen-hw`). Degrades gracefully to stderr on directory or file failure without crashing.
 2. Root-only `--install-system-integration` / `--uninstall-system-integration` are handled before any UI (`src/main.rs:41-65`).
 3. Config loads from `directories::ProjectDirs` (`~/.config/zenomen/config.toml`), with corrupt-file backup + defaults (`src/config/mod.rs:34-78`).
 4. `ensure_single_instance` requests `com.zenomen.App` on the session bus with `DO_NOT_QUEUE`; a secondary instance invokes `PresentWindow` and exits (`src/desktop/single_instance.rs:67-114`).
 5. Tray SNI + DBusMenu objects are registered; a missing `StatusNotifierWatcher` is non-fatal (`src/desktop/tray.rs:186-220`).
 6. Short-lived OpenOMEN RGB migration runs non-destructively (`src/main.rs:98-112`, `src/rgb/migration.rs`).
 7. `AppWindow::new()`, `ZenOmenApp::new`, callbacks installed, close-to-tray interceptor installed (`src/main.rs:114-136`).
-8. Provider selection: `ZENOMEN_MOCK_SCENARIO` → mock; else Linux provider on Linux; else `UnavailableHardwareProvider` (`src/main.rs:186-211`).
+8. Provider selection: `ZENOMEN_MOCK_SCENARIO` → mock; else Linux provider on Linux (`#[cfg(target_os = "linux")]`); else `UnavailableHardwareProvider` (`#[cfg(not(target_os = "linux"))]` in `src/hardware/mod.rs` and `src/hardware/unavailable.rs`) for honest zero-capability fallback on unsupported platforms / Windows (`src/main.rs:186-211`).
 9. `initialize(capabilities)` applies capabilities and writes the first frame directly (no event loop yet), including OS/kernel/DMI diagnostics (`src/app.rs:292-320`).
 10. Config events are applied; the event pump, monitoring worker, and desktop-action thread start; window shows or starts hidden (`src/main.rs:237-268`).
 11. Teardown sends `Shutdown`, drops senders/UI/app in dependency order, joins the worker, event pump, and action thread (`src/main.rs:270-278`).
@@ -233,6 +248,10 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 - Purpose: reproduce nominal, zero-capability, and sensor-gap behaviour without the target laptop.
 - Pattern: selected by `ZENOMEN_MOCK_SCENARIO`; unknown values warn and fall back to real Linux provider selection (in `src/main.rs`) / nominal (in `MockScenario::from_env`).
 
+**`InFlightGuard`** (`src/core/worker.rs:448-456`)
+- Purpose: RAII mutation slot manager ensuring atomic in-flight hardware mutation handling.
+- Pattern: wraps `Arc<AtomicBool>` and resets the flag on `Drop` (`self.0.store(false, Ordering::SeqCst)`). Ownership is passed to the nested `zenomen-rpc-*` thread so the guard remains active across caller/control thread timeouts (`recv_timeout`), preventing race conditions or interleaved mutations until the hardware operation terminates.
+
 ## Entry Points
 
 **GUI binary — `zenomen`:**
@@ -266,7 +285,7 @@ There is exactly one process-level split. The GUI never escalates privileges, ne
 - **Global state:** no module-level mutable `static`s. Shared state is held in `Arc`s: `Arc<Mutex<AppState>>`, `Arc<AtomicBool>` (in-flight mutation and close-to-tray), `Arc<SensorRegistry>`, `Arc<Mutex<Option<Connection>>>` (client cache), `Mutex<CpuSampler>`, `Arc<Mutex<Option<(Instant, GpuTelemetry)>>>`.
 - **Single-writer discipline:** add a new `AppState` field only if it can be changed from `AppState::apply`; the one existing exception is `ZenOmenApp::set_provider_label`, which writes `state.provider_label` directly (`src/app.rs:276-283`).
 - **Privilege boundary:** no `std::fs::write` to sysfs outside `src/service/backend.rs`; the GUI must only read. Root-only install paths live in `src/desktop/system_integration.rs` and are gated by `is_root()`.
-- **Platform separation:** all Linux-specific reads are under `src/hardware/linux/`. `src/hardware/mod.rs:8` compiles that module on every target, but only re-exports `LinuxHardwareProvider` under `cfg(target_os = "linux")` (`src/hardware/mod.rs:16-17`); non-Linux selects `UnavailableHardwareProvider` (`src/main.rs:201-210`). Never add speculative paths to `src/hardware/unavailable.rs`.
+- **Platform separation:** all Linux-specific reads are under `src/hardware/linux/`. `src/hardware/mod.rs:8` compiles that module on every target, but only re-exports `LinuxHardwareProvider` under `cfg(target_os = "linux")` (`src/hardware/mod.rs:16-17`); non-Linux selects `UnavailableHardwareProvider` (`src/hardware/unavailable.rs`, `src/main.rs:201-210`). Windows and other platforms remain architecture-ready and honest without reaching for non-existent sysfs paths. Never add speculative paths to `src/hardware/unavailable.rs`.
 - **No async runtime in the GUI:** `std` threads + `mpsc`; zbus is `blocking`. Do not add Tokio.
 - **Bounded resources:** 120-point history, depth-8 command queue, 30 s mutation timeout, 7 rotating log files, ≤40 MB RSS release profile (`opt-level="s"`, LTO, `panic="abort"`, `strip`).
 - **D-Bus contract is a public API:** bus name `com.zenomen.Hardware1`, object path `/com/zenomen/Hardware1`, interface `com.zenomen.Hardware1`. Changing a method signature requires updating `contract.rs`, `client.rs`, and the daemon/systemd/polkit packaging together.
@@ -297,14 +316,14 @@ Authorization uses action `com.zenomen.hardware.control` (`data/polkit/com.zenom
 **Patterns:**
 - `HardwareControlError` (`thiserror`) for I/O, verification, unsupported mode, Polkit denial, invalid parameter, missing interface (`src/service/types.rs:106-131`).
 - Provider sampling returns `Result<TelemetrySnapshot, String>`; a failure becomes `AppEvent::TelemetrySamplingFailed` and marks the app degraded (`src/core/worker.rs:353-358`, `src/core/state.rs:143-145`).
-- Mutating operations are wrapped with a 30 s timeout; timeout/disconnect/panic all become an error event, and the in-flight slot is released by `Drop` (`src/core/worker.rs:425-446`).
+- Mutating operations are wrapped with a 30 s timeout; timeout/disconnect/panic all become an error event, while `InFlightGuard` ensures the in-flight mutation slot remains held in the RPC thread until the underlying hardware mutation actually terminates, preventing subsequent mutations from colliding with ongoing operations (`src/core/worker.rs:410-456`).
 - Client turns `ServiceUnknown` into an actionable message telling the user to start or install `zenomen-hw` (`src/service/client.rs:232-249`).
 - Config corruption is non-fatal: backup + defaults + `AppEvent::ConfigCorrupted` notice (`src/config/mod.rs:52-76`).
-- Logging failure degrades to stderr only (`src/logging.rs:39-89`).
+- Logging failure degrades to stderr only without crashing startup (`src/logging.rs:39-89`).
 
 ## Cross-Cutting Concerns
 
-**Logging:** `tracing` with `EnvFilter` (`RUST_LOG`, default `info`), stderr layer plus a daily rotating file layer in the XDG state dir (`~/.local/state/zenomen/logs`), 7 files retained (`src/logging.rs`). The `LoggingGuard` must live for the process lifetime.
+**Logging:** `tracing` with `EnvFilter` (`RUST_LOG`, default `info`). Initialized as the very first statement in both `zenomen` (`src/main.rs:24`) and `zenomen-hw` (`src/bin/zenomen-hw.rs:13`) via `logging::init()`. Uses `tracing_appender::non_blocking` to decouple file I/O from runtime threads, writing daily rotating logs to the platform state dir (`~/.local/state/zenomen/logs`), retaining 7 files (`max_log_files(7)`). Degrades gracefully to stderr on failure. The returned `LoggingGuard` holds the `WorkerGuard` and must live for the process lifetime (`src/logging.rs`).
 
 **Validation:** `AppConfig::sanitize` clamps polling to 500–5000 ms and history to 30/60/120/300 (`src/config/schema.rs:88-106`); `FanMode::parse_requested` permits only `auto`/`max`; power profiles must appear in `platform_profile_choices` and reject `\n`, `\r`, `/`, `\0` (`src/service/backend.rs:234-265`); RGB colours use strict hex parsing (`src/rgb/schema.rs`); `ScreenId::from_index` refuses unknown indices.
 
