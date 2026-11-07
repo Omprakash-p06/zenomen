@@ -2,6 +2,7 @@ pub mod backend;
 pub mod client;
 pub mod contract;
 pub mod polkit;
+pub mod protocol;
 pub mod types;
 
 pub use backend::HardwareBackend;
