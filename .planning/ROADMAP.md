@@ -16,9 +16,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation — GUI Shell on Mock Hardware** - Rust + Slint app with all six screens, theme, worker and instrumentation, running end-to-end on a mock provider
 - [x] **Phase 2: Linux Telemetry & Capability Detection** - Real CPU/GPU/RAM/thermal readings, shared SensorRegistry, capability-aware UI, charts and diagnostics export
-- [ ] **Phase 3: Verified Hardware Control** - Privileged D-Bus service, mandatory polkit, verified fan and ACPI writes, PresetResult reporting
-- [ ] **Phase 4: Desktop Integration, Config & Basic RGB** - Tray, autostart, single instance with GNOME fallback, persisted settings, RGB presets with safe legacy JSON migration
-- [ ] **Phase 5: Distribution, Resource Budget & Rebrand** - DEB/AppImage, audit-gated releases, empirical memory/CPU verification, ZenOmen rebrand, Python CLI removed
+- [x] **Phase 3: Verified Hardware Control** - Privileged D-Bus service, mandatory polkit, verified fan and ACPI writes, PresetResult reporting
+- [x] **Phase 4: Desktop Integration, Config & Basic RGB** - Tray, autostart, single instance with GNOME fallback, persisted settings, RGB presets with safe legacy JSON migration
+- [x] **Phase 5: Distribution, Resource Budget & Rebrand** - DEB/AppImage, audit-gated releases, empirical memory/CPU verification, ZenOmen rebrand, Python CLI removed
+- [ ] **Phase 6: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)** - Native Windows telemetry, HP BIOS WMI control, named-pipe IPC, dual-OS packaging & Linux concerns closure
 
 ## Phase Details
 
@@ -128,10 +129,37 @@ Plans:
 - [x] 05-02: Resource budget measurement — empirical cold start, warm dashboard, minimized tray, and peak RSS profiling, degradation matrix
 - [x] 05-03: Rebrand and cleanup — README/docs, update link, remove the Python CLI after full parity verification
 
+### Phase 6: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)
+
+**Goal**: Deliver a verified cross-platform release of ZenOmen supporting Linux and Windows 10/11: closing all outstanding Linux concerns, implementing real Windows native telemetry, secure named-pipe IPC and HP BIOS WMI control, native Windows desktop integration, and automated dual-OS packaging.
+**Mode:** mvp
+**Depends on**: Phase 5
+**Requirements**: SEC-01, SEC-02, SEC-03, REL-01, REL-02, REL-03, REL-04, MON-01, MON-02, MON-03, MON-04, MON-05, MON-06, MON-07, MON-08, COOL-01, COOL-02, PWR-01, PWR-02, RGB-01, RGB-04, SYS-01, SYS-02, SYS-03, SYS-05, WIN-01, WIN-02, WIN-03, WIN-04, WIN-05
+**Success Criteria** (what must be TRUE):
+  1. All open items in CONCERNS.md are resolved: D-Bus systemd delegation, restricted sysfs write paths, RGB toggle profile restoration, session D-Bus absence shutdown safety, non-destructive autostart, and dynamic clock tick calculation.
+  2. Telemetry contracts explicitly support battery percentage, state, and remaining time without fabricating zeros.
+  3. On Windows 10/11, native telemetry reads real CPU, RAM, GPU, battery, and supported sensors via Win32, DXGI, and PDH without shell tools or fake values.
+  4. On Windows, privileged hardware writes execute via an unprivileged GUI communicating over a secured named pipe (`\\.\pipe\ZenOmen.Hardware.v1`) to a Windows Service driving the HP BIOS WMI mailbox (`HPWMI_BIOS_GUID`).
+  5. Windows desktop integration provides native tray (`Shell_NotifyIconW`), single-instance mutex, user-level autostart, and dual-OS CI/release workflows building verified DEB, AppImage, and Windows packages.
+
+**Plans**: 5 plans
+
+Plans:
+**Wave 1**
+- [ ] 06-01: Linux hardening & concerns remediation — D-Bus/systemd sandboxing, RGB toggle preservation, autostart non-destructive toggle, shutdown fix, dynamic clock tick
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 06-02: Cross-platform domain contracts — battery metrics, root-isolated capability detection, aligned fan predicates, history window unit conversion
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 06-03: Windows native telemetry engine — Win32 GetSystemTimes, GlobalMemoryStatusEx, DXGI GPU enumeration, PDH engine utilization, GetSystemPowerStatus battery
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 06-04: Windows hardware control service & named-pipe IPC — Windows SCM service, restricted DACL named pipe, HP BIOS WMI mailbox driver
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 06-05: Windows desktop integration, dual-OS packaging & CI — Shell_NotifyIconW tray, HKCU Run autostart, dual-OS CI/release matrix
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -140,3 +168,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
+| 6. Cross-Platform Release | 0/5 | Planned | - |
