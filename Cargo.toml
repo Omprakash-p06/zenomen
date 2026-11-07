@@ -7,10 +7,16 @@ license = "GPL-3.0-only"
 description = "Lightweight hardware control center for HP OMEN and Victus laptops"
 repository = "https://github.com/Omprakash-p06/zenomen"
 
+[features]
+# The GUI is built by default; `--no-default-features` exists so the privileged
+# daemon can be built without compiling or linking Slint at all.
+default = ["ui"]
+ui = ["dep:slint"]
+
 [dependencies]
 # Slint GUI toolkit — pinned to 1.17. Deliberately excludes the Qt and Skia
 # backends so the desktop UI process stays inside the <=40 MB RSS budget.
-slint = { version = "1.17", default-features = false, features = [
+slint = { version = "1.17", default-features = false, optional = true, features = [
     "std",
     "compat-1-2",
     "backend-winit",
@@ -19,7 +25,6 @@ slint = { version = "1.17", default-features = false, features = [
 
 # Core utilities
 thiserror = "2.0"
-anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "6.0"
@@ -27,12 +32,31 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 zbus = { version = "5", features = ["blocking"] }
+tracing-appender = "0.2"
 
 [build-dependencies]
 slint-build = "1.17"
 
+[[bin]]
+name = "zenomen"
+path = "src/main.rs"
+required-features = ["ui"]
+
+[[bin]]
+name = "zenomen-hw"
+path = "src/bin/zenomen-hw.rs"
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
+[profile.dev]
+# Disable full DWARF debuginfo and incremental caches to prevent target/ from ballooning to 20+ GB
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
 
 [profile.release]
 # Size and memory oriented: this profile exists to uphold the <=40 MB peak RSS

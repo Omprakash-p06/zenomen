@@ -5,15 +5,12 @@
 
 use std::error::Error;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 use zenomen::service::{HardwareBackend, HardwareService};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    // First statement: a failure to bind D-Bus or load the backend is exactly
+    // what the log file needs to record. Journald still captures stderr.
+    let _logging_guard = zenomen::logging::init();
 
     info!(
         "Starting zenomen-hw privileged hardware control service v{}",

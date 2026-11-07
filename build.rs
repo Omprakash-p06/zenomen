@@ -5,9 +5,15 @@
 // widgets. Phase 1 draws no std-widgets yet; later phases depend on this being
 // deterministic.
 fn main() {
-    let config = slint_build::CompilerConfiguration::new().with_style("fluent".into());
-    slint_build::compile_with_config("ui/app.slint", config)
-        .expect("failed to compile ui/app.slint");
+    // `slint-build` is a build-dependency, so it is present even when the `ui`
+    // feature is off. Skip the compiler in that case: the daemon must not fail
+    // to build because of a `.slint` typo it never renders.
+    if std::env::var_os("CARGO_FEATURE_UI").is_some() {
+        println!("cargo:rerun-if-changed=ui/");
+        let config = slint_build::CompilerConfiguration::new().with_style("fluent".into());
+        slint_build::compile_with_config("ui/app.slint", config)
+            .expect("failed to compile ui/app.slint");
+    }
 
     #[cfg(windows)]
     {

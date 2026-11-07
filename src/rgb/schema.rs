@@ -85,6 +85,9 @@ impl RgbColor {
     }
 
     /// Convert to Slint UI color representation.
+    ///
+    /// UI-only, so the privileged daemon does not have to link Slint for it.
+    #[cfg(feature = "ui")]
     pub fn to_slint_color(&self) -> slint::Color {
         slint::Color::from_argb_u8(255, self.r, self.g, self.b)
     }
