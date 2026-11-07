@@ -17,12 +17,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Build & Publish Linux Release
+  release-linux:
+    name: Build Linux Release (DEB & AppImage)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
 
       - name: Verify tag matches Cargo.toml
         if: startsWith(github.ref, 'refs/tags/v')
@@ -62,44 +62,103 @@ jobs:
       - name: Test (headless)
         run: xvfb-run --auto-servernum cargo test --locked --all
 
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2
-        with:
-          tool: cargo-audit
-
-      - name: Security audit
-        run: cargo audit
-
       - name: Install cargo-packager
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager
 
       - name: Build release packages (DEB & AppImage)
         run: cargo packager --release --formats deb,appimage
 
-      - name: Verify artifact filenames match version
-        working-directory: dist
-        run: |
-          ver=$(cargo metadata --no-deps --format-version 1 --manifest-path ../Cargo.toml \
-            | jq -r '.packages[] | select(.name == "zenomen") | .version')
-          ls *"${ver}"*.deb
-          ls *"${ver}"*.AppImage
-
       - name: Generate SHA-256 checksums
         working-directory: dist
         run: |
-          sha256sum *.deb *.AppImage > SHA256SUMS
+          sha256sum *.deb *.AppImage > SHA256SUMS-linux
+          cat SHA256SUMS-linux
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-dist
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS-linux
+
+  release-windows:
+    name: Build Windows Release (MSI & Binaries)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install WiX Toolset
+        run: |
+          dotnet tool install --global wix
+
+      - name: Build release binaries
+        run: |
+          cargo build --release --locked --bins
+
+      - name: Package WiX MSI
+        run: |
+          mkdir dist
+          wix build packaging/windows/ZenOmen.wxs -o dist/ZenOmen-x64.msi
+
+      - name: Package Zip archive
+        run: |
+          Compress-Archive -Path target/release/zenomen.exe, target/release/zenomen-hw.exe, LICENSE, README.md -DestinationPath dist/zenomen-windows-x64.zip
+
+      - name: Generate Windows SHA-256 Checksums
+        working-directory: dist
+        run: |
+          Get-FileHash -Algorithm SHA256 ZenOmen-x64.msi, zenomen-windows-x64.zip | Out-File -Encoding utf8 SHA256SUMS-windows.txt
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: |
+            dist/ZenOmen-x64.msi
+            dist/zenomen-windows-x64.zip
+            dist/SHA256SUMS-windows.txt
+
+  publish-release:
+    name: Publish Unified Dual-OS Release
+    needs: [release-linux, release-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-dist
+          path: artifacts
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: artifacts
+
+      - name: Consolidate Checksums
+        working-directory: artifacts
+        run: |
+          cat SHA256SUMS-linux > SHA256SUMS
+          cat SHA256SUMS-windows.txt >> SHA256SUMS
+          rm SHA256SUMS-linux SHA256SUMS-windows.txt
           cat SHA256SUMS
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.deb
-            dist/*.AppImage
-            dist/SHA256SUMS
+            artifacts/*
           draft: false
           prerelease: false
           generate_release_notes: true

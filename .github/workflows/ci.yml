@@ -1,9 +1,7 @@
 name: CI
 
-# Quality gates for the Rust + Slint application. Every gate here is one that
-# would have caught a real defect in Phase 1, so none of them are advisory:
-# formatting, zero-warning clippy, headless tests, and a dependency audit of the
-# committed Cargo.lock.
+# Quality gates for Linux (Ubuntu 22.04) and Windows 10/11.
+# Formatting, zero-warning clippy, full headless test suites, and dependency audit.
 
 on:
   push:
@@ -11,7 +9,6 @@ on:
   pull_request:
     branches: [main]
 
-# Least privilege: this workflow only reads the repository.
 permissions:
   contents: read
 
@@ -23,24 +20,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  quality:
-    name: Quality gates
+  linux-quality:
+    name: Linux Quality Gates (Ubuntu 22.04)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Installed through rustup rather than a third-party action so the CI
-      # supply chain stays limited to actions/checkout and the cargo-audit
-      # installer.
       - name: Install Rust toolchain (stable, clippy, rustfmt)
         run: |
           rustup toolchain install stable --profile minimal \
             --component clippy --component rustfmt
           rustup default stable
 
-      # winit needs xkbcommon and X11, femtovg needs a GL stack and fontconfig,
-      # and xvfb provides the virtual display the test job renders into.
       - name: Install native Linux build dependencies
         run: |
           sudo apt-get update
@@ -59,11 +51,29 @@ jobs:
       - name: Clippy (zero warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # Tests instantiate the Slint window, which needs a display server even
-      # when nothing is drawn. xvfb-run supplies one on a headless runner.
-      - name: Test (headless)
+      - name: Test (headless xvfb)
         run: xvfb-run --auto-servernum cargo test --all
 
-      # Audits the committed Cargo.lock: the exact graph that ships.
       - name: Security audit
         run: cargo audit
+
+  windows-quality:
+    name: Windows Quality Gates (Windows 10/11 x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable, clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy Windows (zero warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test Windows
+        run: cargo test --all

@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Verified Hardware Control** - Privileged D-Bus service, mandatory polkit, verified fan and ACPI writes, PresetResult reporting
 - [x] **Phase 4: Desktop Integration, Config & Basic RGB** - Tray, autostart, single instance with GNOME fallback, persisted settings, RGB presets with safe legacy JSON migration
 - [x] **Phase 5: Distribution, Resource Budget & Rebrand** - DEB/AppImage, audit-gated releases, empirical memory/CPU verification, ZenOmen rebrand, Python CLI removed
-- [ ] **Phase 6: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)** - Native Windows telemetry, HP BIOS WMI control, named-pipe IPC, dual-OS packaging & Linux concerns closure
+- [x] **Phase 6: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)** - Native Windows telemetry, HP BIOS WMI control, named-pipe IPC, dual-OS packaging & Linux concerns closure
 
 ## Phase Details
 
@@ -163,7 +163,7 @@ Plans:
 - [x] 06-05: Windows desktop integration — single instance, system tray, HKCU autostart, notifications, known-folder paths, GPUI-CE migration path
 
 **Wave 6: Packaging, Full Testing Matrix, Documentation Deliverables & Final Acceptance Gates**
-- [ ] 06-06: Cross-platform packaging (WiX MSI, DEB, AppImage), dual-OS release gate matrix, architecture ADRs (ADR-001..004), and 14 final acceptance criteria
+- [x] 06-06: Cross-platform packaging (WiX MSI, DEB, AppImage), dual-OS release gate matrix, architecture ADRs (ADR-001..004), and 14 final acceptance criteria
 
 ## Progress
 
@@ -177,4 +177,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
-| 6. Cross-Platform Release | 5/6 | In Progress | - |
+| 6. Cross-Platform Release | 6/6 | Complete | 2026-11-07 |
