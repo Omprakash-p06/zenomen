@@ -1,372 +1,184 @@
 ---
-last_mapped_commit: 30d62de2cdf6f507822944e5602bdd907539ce38
-last_mapped_at: 2026-11-06
+last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_at: 2026-11-07
 ---
 # Coding Conventions
 
-**Analysis Date:** 2026-11-06
-
-## Scope and Ground Truth
-
-This document describes the **Rust + Slint implementation** in `src/` and `ui/`.
-
-`AGENTS.md` still embeds a conventions block for the retired Python `openomen`
-CLI (extensionless script, snake_case module functions, no type hints). That
-code no longer exists in the tree. **Do not follow the Python section** — the
-rules below come from the actual Rust and Slint sources.
-
-Supporting configuration:
-
-- `Cargo.toml` — edition 2024, no `[lints]` table, no `[dev-dependencies]`
-- `.github/workflows/ci.yml` — the enforced style gates
-- No `rustfmt.toml`, `.rustfmt.toml`, `clippy.toml`, `deny.toml`,
-  `.editorconfig`, `rust-toolchain.toml`, or `.cargo/config.toml` exist.
-  **Tool defaults are the project's settings.**
+**Analysis Date:** 2026-11-07
 
 ## Naming Patterns
 
-**Rust files:**
-- `snake_case`, one concept per file: `src/hardware/linux/hwmon.rs`,
-  `src/core/telemetry.rs`, `src/rgb/migration.rs`
-- A directory always has `mod.rs` that declares submodules and re-exports the
-  public surface: `src/core/mod.rs`, `src/service/mod.rs`,
-  `src/hardware/mod.rs`, `src/desktop/mod.rs`
-- Binaries: `src/main.rs` (the `zenomen` GUI) and `src/bin/zenomen-hw.rs` (the
-  privileged daemon). Never add another top-level `main` outside these two.
-- Integration tests: `tests/<area>_tests.rs` (see `TESTING.md`)
-
-**Slint files:**
-- Lowercase, role-based names: `ui/screens/cooling.slint`,
-  `ui/components/section-card.slint`, `ui/theme/colors.slint`
-- One exported component per screen/component file
-- Theme token files live only in `ui/theme/`
-
-**Types:**
-- `PascalCase`, noun-first, no prefixes: `HardwareCapabilities`,
-  `TelemetrySnapshot`, `SensorRegistry`, `TelemetryHistory`, `PresetResult`
-- Enums use bare variant names, not type-prefixed ones:
-  `GpuVendor::Amd`, `MockScenario::ZeroCapabilities`, `ScreenId::Overview`
-- Error enums end in `Error`: `HardwareControlError` (`src/service/types.rs:107`),
-  `RgbError` (`src/rgb/schema.rs:13`), `SystemIntegrationError`
-  (`src/desktop/system_integration.rs:29`), `ReleasesError`
-  (`src/desktop/releases.rs:17`)
-- Traits are nouns/agents: `HardwareProvider` (`src/hardware/provider.rs:232`)
+**Files:**
+- Rust source files are `snake_case.rs`: `src/core/state.rs`, `src/hardware/linux/hwmon.rs`, `src/desktop/system_integration.rs`.
+- Modules that own a subsystem use a directory plus `mod.rs` (this repo does not use `foo/foo.rs`): `src/core/mod.rs`, `src/hardware/mod.rs`, `src/service/mod.rs`, `src/rgb/mod.rs`, `src/desktop/mod.rs`, `src/config/mod.rs`, `src/hardware/linux/mod.rs`.
+- Integration test suites are `tests/<area>_tests.rs` — 16 files, e.g. `tests/config_tests.rs`, `tests/hardware_service_tests.rs`, `tests/mock_hardware_tests.rs`.
+- Binaries: `src/main.rs` builds `zenomen`; `src/bin/zenomen-hw.rs` builds `zenomen-hw` (`Cargo.toml` lines 40-47).
 
 **Functions:**
-- `snake_case`, verb-first: `sample_telemetry`, `read_cpu_temp`,
-  `write_and_verify`, `apply_preset`, `collect_diagnostics`, `load_or_default`,
-  `save_atomic`
-- Constructors: `new()`; alternate construction uses `with_*`:
-  `TelemetryHistory::with_capacity`, `LinuxHardwareProvider::with_all_roots`,
-  `HardwareService::with_connection` (`src/core/telemetry.rs:115`,
-  `src/hardware/linux/provider.rs:55`, `src/service/contract.rs:38`)
-- Predicates: `has_*` / `is_*`: `has_fan_control`, `is_connected`,
-  `is_full_success`, `is_off`, `has_any_reading`
-- Conversions: `from_*` / `to_*`: `FanMode::from_sysfs`,
-  `RgbColor::from_hex`, `RgbColor::to_slint_color`,
-  `TelemetryPoint::from_snapshot`, `ScreenId::from_index`
-- Test functions: newer suites use descriptive snake_case sentences
-  (`history_evicts_oldest_beyond_max_samples`); older suites keep a `test_`
-  prefix (`test_fan_mode_state_transitions`). The degradation matrix uses a
-  numbered prefix: `degradation_01_...` (`tests/degradation_tests.rs:23`).
-  **For new tests, prefer the descriptive form without `test_`.**
+- `snake_case`, verb-first, intent in the prefix:
+  - Parsers take `&str` and return `Option`/`Result`: `parse_proc_meminfo`, `parse_nvidia_smi_output`, `read_cpu_model`, `read_cpu_freq_from_cpuinfo` (`src/hardware/linux/memory.rs`, `src/hardware/linux/gpu.rs`, `src/hardware/linux/cpu.rs`).
+  - Scanners/discovery: `scan_hwmon_devices`, `scan_roots`, `enumerate_drm_gpus`, `detect_rgb_interface` (`src/hardware/linux/hwmon.rs`, `src/hardware/registry.rs`, `src/hardware/linux/gpu.rs`, `src/hardware/rgb.rs`).
+  - Predicates: `has_cpu_metrics`, `is_degraded`, `is_connected`, `is_card_device_name` (`src/hardware/provider.rs`, `src/core/state.rs`, `src/service/client.rs`).
+  - Constructors: `new`, `default`, `from_env`; builder-style options use `with_` (`with_connection`, `with_polkit_required` in `src/service/contract.rs`).
+  - Conversions follow `from_*` / `as_*` / `to_*`: `FanMode::from_sysfs`, `as_sysfs_value`, `RgbColor::to_hex`, `to_slint_color`.
+- Free functions are preferred for pure parsing; they never touch global paths.
 
 **Variables:**
-- `snake_case`, unit suffixes are part of the name:
-  `cpu_temperature_c`, `ram_total_mb`, `polling_interval_ms`, `rss_kb`,
-  `cpu_frequency_mhz`, `initial_delay`
-- Established abbreviations only: `cpu`, `gpu`, `ram`, `rpm`, `rgb`, `hwmon`,
-  `sysfs`, `procfs`, `dmi`, `drm`, `polkit`, `ui`, `ms`, `mb`, `kb`
-- Short names are allowed for loop/closure locals: `ui`, `e`, `err`, `res`,
-  `guard`, `snap`
-- Prefix intentionally unused bindings with `_`: `_session_conn`,
-  `_per_core`, `_attempt` (`src/main.rs:73`, `src/hardware/linux/provider.rs:127`)
+- `snake_case`, with units encoded in the name: `cpu_temperature_c`, `cpu_frequency_mhz`, `ram_used_mb`, `polling_interval_ms`, `vram_used_mb`, `fan_rpms` (`src/hardware/provider.rs`, `src/config/schema.rs`).
+- Option-valued readings are named plainly and documented as `None` when unreadable — never defaulted to a fabricated zero: `gpu_utilization: Option<f32>`, `gpu_name: Option<String>` (`src/hardware/provider.rs`).
+- Error/unavailable state uses explicit names: `last_sampling_error`, `last_control_error`, `pending_fan_mode`, `config_corrupt_notice` (`src/core/state.rs`).
+- Loop variables that are intentionally unused are prefixed `_`: `for _attempt in 1..=max_retries` (`src/service/backend.rs`).
+
+**Types:**
+- `PascalCase` noun phrases: `HardwareCapabilities`, `TelemetrySnapshot`, `SensorRegistry`, `TelemetryHistory`, `MockScenario`, `PresetResult`.
+- Enums use PascalCase variants and carry payloads where the failure/state is richer than a string: `FanMode::Manual(u8)`, `FanMode::Unknown(String)`, `MockScenario::ZeroCapabilities` (`src/service/types.rs`, `src/hardware/mock.rs`).
+- Error enums always end in `Error`: `HardwareControlError`, `RgbError`, `SystemIntegrationError`, `ReleasesError`.
+- Traits name a capability, not an implementation: `HardwareProvider` (`src/hardware/provider.rs`).
+- Domain structs derive `Debug, Clone, PartialEq, Eq` where possible and add `Copy` for small enums/flags. Types holding `f32` omit `Eq` (`TelemetrySnapshot` in `src/hardware/provider.rs`).
+- Generic constructors accept `impl Into<String>` or `P: Into<PathBuf>` rather than concrete `String`/`PathBuf`: `RgbProfile::new`, `HardwareBackend::new` (`src/rgb/schema.rs`, `src/service/backend.rs`).
 
 **Constants:**
-- Module-level `SCREAMING_SNAKE_CASE`: `MAX_SAMPLES`, `COMMAND_QUEUE_DEPTH`,
-  `SAMPLING_INTERVAL`, `POLKIT_ACTION_CONTROL`, `HISTORY_WINDOW`, `USER_HZ`
-- Public API constants are associated consts:
-  `TelemetrySnapshot::EXPECTED_SENSOR_COUNT` (`src/hardware/provider.rs:188`),
-  `ScreenId::ALL` (`src/core/events.rs:27`), `MockScenario::ALL`
-  (`src/hardware/mock.rs:56`)
-- Numeric literals use `_` separators: `16_384`, `3_200`, `2_450`, `0x1002`,
-  `0o755`
+- `SCREAMING_SNAKE_CASE`, declared near the concept they bound, with a doc comment that states the unit and the reason:
+  - `SAMPLING_INTERVAL`, `HISTORY_WINDOW`, `MAX_SAMPLES`, `EXPECTED_SENSOR_COUNT`, `COMMAND_QUEUE_DEPTH` (`src/core/worker.rs`, `src/core/state.rs`, `src/core/telemetry.rs`, `src/hardware/provider.rs`, `src/app.rs`).
+  - Bounds are exported when callers/tests need them: `MIN_POLLING_INTERVAL_MS`, `MAX_POLLING_INTERVAL_MS`, `DEFAULT_POLLING_INTERVAL_MS` (`src/config/schema.rs`).
+  - Magic numbers are extracted into named constants, e.g. `GAP_PERIOD_TICKS`, `GAP_TICKS`, `RAM_TOTAL_MB` (`src/hardware/mock.rs`).
 
-**Slint identifiers:**
-- Components `PascalCase`: `AppWindow`, `SectionCard`, `UnavailablePanel`,
-  `StatusPill`
-- Globals: `ThemeColors`, `ThemeTypography`, `ThemeMetrics`
-- Properties and callbacks are **kebab-case**: `active-screen`,
-  `has-fan-control`, `polling-interval-ms`, `rgb-profile-desc`,
-  `set-fan-mode`, `open-releases-page`, `dismiss-control-error`
-  (`ui/app.slint:44`, `ui/app.slint:137-149`)
-- Read-only inputs use `in`, two-way use `in-out`, derived state uses
-  `private property` (`ui/app.slint:151-192`)
+**Test function names:**
+- Mixed across the repo: 38 of 124 tests use a `test_` prefix, concentrated in older suites (`tests/desktop_integration_tests.rs` 8/8, `tests/fan_control_tests.rs` 5/5, `tests/hardware_service_tests.rs` 9/9, `tests/packaging_tests.rs` 5/5, `tests/power_preset_tests.rs` 6/6). Newer suites and all unit modules use descriptive sentences: `a_partial_sample_is_degraded_but_still_counted` (`src/core/state.rs`), `sensor_data_gap_scenario_periodically_emits_none` (`tests/mock_hardware_tests.rs`).
+- Follow the descriptive style for new tests; do not rename existing tests just to normalize.
+- Requirement-oriented suites use a stable numeric prefix: `degradation_01_...` through `degradation_08_...` (`tests/degradation_tests.rs`).
 
 ## Code Style
 
 **Formatting:**
-- `cargo fmt` with **default rustfmt settings**; CI runs
-  `cargo fmt --all -- --check` (`.github/workflows/ci.yml`)
-- 4-space indentation, LF newlines, UTF-8, 100-column default width
-- Trailing commas in multi-line calls/structs/arrays
-- Imports are alphabetized within a group by default rustfmt
+- `rustfmt` with default settings. There is no `rustfmt.toml` or `.rustfmt.toml` in the repository.
+- Edition 2024 is used (`Cargo.toml` line 4), so edition-2024 idioms appear:
+  - let-chains: `if hp_wmi_hwmon.is_dir() && let Ok(entries) = fs::read_dir(&hp_wmi_hwmon)` (`src/service/backend.rs:80`), also `src/main.rs:30`, `src/core/diagnostics.rs:112`.
+  - `unsafe { std::env::set_var(...) }` where tests mutate the environment (`tests/logging_tests.rs:54`).
+- 4-space indentation, no tabs, no trailing whitespace, LF endings.
+- Default 100-column width; a few expressions that rustfmt cannot split remain slightly longer (14 lines in `src/`, 5 in `tests/`).
+- Formatting is a hard CI gate: `cargo fmt --all -- --check` (`.github/workflows/ci.yml:57`; release workflow at `.github/workflows/release.yml:57`).
 
 **Linting:**
-- CI runs `cargo clippy --all-targets --all-features -- -D warnings`; warnings
-  are errors. Never leave a clippy warning in a PR.
-- There is exactly **one** lint suppression in the crate:
-  `#[allow(clippy::large_enum_variant)]` on `AppEvent`
-  (`src/core/events.rs:113`), accompanied by a comment explaining the
-  allocation trade-off. Any new allow needs the same justification inline.
+- Clippy runs with all targets and all features, warnings denied: `cargo clippy --all-targets --all-features -- -D warnings` (`.github/workflows/ci.yml:60`; the release workflow adds `--locked`).
+- `Cargo.toml` has no `[lints]` table; lints are enforced solely by the CI command line.
+- There is exactly one lint suppression in `src/`, and it carries a justification comment: `#[allow(clippy::large_enum_variant)]` on `AppEvent` (`src/core/events.rs:110-113`). Follow that pattern — suppress narrowly, comment why, do not add file-level allows.
 
-**Edition 2024 idioms used deliberately:**
-- Let-chains instead of nested `if let`:
-  `src/main.rs:22-27`, `src/service/backend.rs:80-88`,
-  `src/hardware/registry.rs:109-112`, `src/core/worker.rs:171-175`
-- `is_multiple_of` instead of `% n == 0`: `src/core/worker.rs:301`
-- `unsafe` is required and used for `std::env::set_var` (`src/main.rs:29`) and
-  the `geteuid` FFI declaration (`src/desktop/system_integration.rs:44-48`).
-  Every `unsafe` block carries a `// SAFETY:` comment.
+**Derives and serde:**
+- Standard derive order observed: `#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]` (`src/hardware/provider.rs:27`), `#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]` (`src/config/schema.rs`).
+- Config/RGB structs use `#[serde(default)]` on every newly-added optional field so older files still deserialize (`src/config/schema.rs`, `src/rgb/schema.rs`).
+- Enums exposed over serde use `#[serde(rename_all = "lowercase")]` (`FanMode`, `src/service/types.rs:8`).
+- Custom conversions are implemented instead of leaking wire formats: `Serialize`/`Deserialize` for `RgbColor` serialize as `#RRGGBB` strings (`src/rgb/schema.rs:94-110`).
 
-**Control-flow style:**
-- Prefer `let ... else` for early returns:
-  `src/core/telemetry.rs:226-231`, `src/core/diagnostics.rs:163-165`,
-  `src/hardware/registry.rs:109-113`
-- Prefer `Option` combinators (`?`, `.ok()?`, `.map`, `.and_then`,
-  `.unwrap_or_default`) in parsers:
-  `src/hardware/linux/hwmon.rs:67-86`, `src/hardware/linux/gpu.rs:117-120`
-- Use saturating arithmetic for hardware counters and deltas:
-  `src/hardware/linux/cpu.rs:65-97`, `src/core/telemetry.rs:220`
-- Avoid `else { if ... }`; use `match` or let-chains
-
-**Derives (observed order):**
-`Debug, Clone, Copy, PartialEq, Eq, Default` for plain value types;
-`Debug, Clone, PartialEq, Eq, Serialize, Deserialize` for config/D-Bus types;
-`Debug, Error` (thiserror) for error enums. Put `Default` last.
+**Feature/platform gating:**
+- The GUI is an optional default feature: `#[cfg(feature = "ui")] pub mod app;` and `#[cfg(feature = "ui")] slint::include_modules!();` (`src/lib.rs:8-19`). UI-only methods are gated the same way: `#[cfg(feature = "ui")] pub fn to_slint_color` (`src/rgb/schema.rs:93`).
+- Linux hardware code is isolated under `src/hardware/linux/` and selected with `#[cfg(target_os = "linux")]` / `#[cfg(not(target_os = "linux"))]` re-exports (`src/hardware/mod.rs:16-22`).
+- Non-Linux builds must use `UnavailableHardwareProvider`, which reports zero capabilities and an error on sampling — never speculative sysfs reads (`src/hardware/unavailable.rs:1-34`).
 
 ## Import Organization
 
-**Order (blank line between groups):**
-1. `std::...`
-2. External crates: `serde::`, `slint::`, `thiserror::`, `tracing::`, `zbus::`
-3. `crate::...` (library) or `zenomen::...` (binaries/tests)
-4. In `#[cfg(test)] mod tests`: `use super::*;` first, then local `use`
+**Order (dominant pattern):**
+1. `std::...` imports.
+2. Blank line.
+3. External crates, alphabetical (`serde`, `thiserror`, `slint`, `zbus`, `tracing_*`).
+4. Blank line.
+5. `crate::...` imports.
 
-Example: `src/app.rs:16-24`, `src/main.rs:6-17`,
-`tests/rgb_tests.rs:11-18`.
+Examples: `src/app.rs:16-24`, `src/hardware/registry.rs:7-13`, `src/core/worker.rs:20-27`, `src/service/backend.rs:3-7`.
 
-**Path rules:**
-- Inside the library always use `crate::` paths — never `zenomen::`
-- Binaries and integration tests use the public crate name `zenomen::`
-  (`src/main.rs:11-13`, `tests/hardware_registry…` style imports)
-- Import from the module root where possible (`zenomen::hardware::HardwareProvider`)
-  rather than reaching into implementation modules, unless testing internals
-- Glob imports only as `use super::*;` inside inline test modules
-- Re-export the public API from each `mod.rs` (`src/core/mod.rs:15-23`,
-  `src/service/mod.rs`, `src/rgb/mod.rs`)
+**Exceptions (do not copy):**
+- `src/service/contract.rs:3-10` places `std::sync` after the `crate::` imports. Use the std-first order above for new code.
+
+**Path aliases:**
+- None. There are no `[workspace]` members and no path aliases; use `crate::...` for internal paths and `zenomen::...` from integration tests.
+
+**Re-exports:**
+- Each subsystem `mod.rs` declares its modules first, then re-exports the public surface with `pub use` in alphabetical order: `src/core/mod.rs:6-20`, `src/hardware/mod.rs:12-22`, `src/desktop/mod.rs:6-18`.
+- Callers import from the curated boundary, not deep modules, where a boundary exists: integration tests use `zenomen::hardware::{HardwareProvider, MockHardware, MockScenario}` (`tests/mock_hardware_tests.rs:3`). Deep imports are acceptable for parsers that are deliberately testable, e.g. `zenomen::hardware::linux::cpu::{CpuSampler, read_cpu_model}` (`tests/linux_procfs_tests.rs:3`).
+- Glob imports appear only as `use super::*;` inside `#[cfg(test)] mod tests` blocks.
 
 ## Error Handling
 
-**Three tiers — pick the lowest one that works:**
+**Core rule — absence is not an error and is never a zero:**
+- Unreadable sensors are `None`/empty collections, not `0`: `gpu_utilization: Option<f32>`, `fan_rpms: Vec<u32>` (`src/hardware/provider.rs:147-181`). Sysfs readers return `Option` via `.ok()?`: `read_temp_millidegrees`, `read_fan_rpm`, `read_cpu_freq_mhz` (`src/hardware/linux/hwmon.rs:67-77`, `src/hardware/linux/cpu.rs:170-174`).
+- Operation failure returns `Result`; the UI-displayable reason crosses the provider boundary as `Result<TelemetrySnapshot, String>` with “a human-readable reason … it must never be a panic” (`src/hardware/provider.rs:239-241`).
 
-1. **Domain errors** — `thiserror` enums with a message per variant:
-   - `HardwareControlError` (`src/service/types.rs:106-131`) covering
-     `IoError`, `VerificationFailed { target, actual, retries }`,
-     `UnsupportedMode`, `PolkitDenied`, `InvalidParameter`, `InterfaceMissing`
-   - `RgbError` (`src/rgb/schema.rs:12-28`)
-   - `SystemIntegrationError` (`src/desktop/system_integration.rs:28-38`)
-   - `ReleasesError` (`src/desktop/releases.rs:16-20`)
-   - Convert to D-Bus with an explicit `impl From<...> for zbus::fdo::Error`
-     (`src/service/types.rs:133-145`). Add the mapping when adding a variant.
+**Typed errors:**
+- Domain errors use `thiserror` and are `Clone + PartialEq + Eq` so they can be asserted on and moved through events: `HardwareControlError` (`src/service/types.rs:105-131`), `RgbError` (`src/rgb/schema.rs:11-29`), `SystemIntegrationError` (`src/desktop/system_integration.rs:28`), `ReleasesError` (`src/desktop/releases.rs:16`).
+- `#[error("...")]` messages are user-facing sentences and include context fields.
+- Conversions to external error types are explicit: `impl From<HardwareControlError> for zbus::fdo::Error` (`src/service/types.rs:133-145`).
+- Filesystem config APIs use `std::io::Result<()>` where no domain error is needed: `save_atomic` (`src/config/mod.rs:85`).
 
-2. **Message-only boundaries** — `Result<T, String>` where the caller only
-   displays the text:
-   - `HardwareProvider::sample_telemetry` (`src/hardware/provider.rs:238`)
-   - `HardwareServiceClient` methods (`src/service/client.rs`)
-   - `read_memory_snapshot` (`src/hardware/linux/memory.rs:68-73`)
-   - `export_diagnostics_to_file` (`src/core/diagnostics.rs:145-160`)
+**Context preservation:**
+- Add context with `map_err`, including the path: `fs::write(path, ...).map_err(|e| HardwareControlError::IoError(format!("Write to {} failed: {e}", path.display())))` (`src/service/backend.rs:22-24`).
+- Use `?` for propagation and `let ... else` for graceful early exits: `let Ok(entries) = std::fs::read_dir(hwmon_root) else { return devices; }` (`src/hardware/linux/hwmon.rs:36-38`).
 
-3. **Absence** — `Option<T>` for a sensor that was not read. This is the
-   project's core value encoded in the type system: `None`, never `0` or `0.0`
-   (`src/hardware/provider.rs:9-17`, `src/hardware/linux/hwmon.rs:67-77`).
-
-**Rules:**
-- Never `unwrap()` on filesystem, D-Bus, or parse results in library code
-- Mutex poisoning is tolerated, not propagated:
-  `.unwrap_or_else(|p| p.into_inner())` (`src/app.rs:376-380`,
-  `src/service/client.rs:60`)
-- `expect()` is reserved for programmer invariants where continuing is
-  impossible: thread spawn (`src/main.rs:165`, `src/main.rs:229`,
-  `src/core/worker.rs:326`), Slint compilation (`build.rs:10`)
-- Errors shown to users are actionable and name the next step. The canonical
-  example is the offline-daemon guidance in `src/service/client.rs:232-249` —
-  change the message there, not at every call site.
-- Validation happens at the point of use, before any write:
-  `set_power_profile` rejects newlines/slashes/NUL and unadvertised profiles
-  (`src/service/backend.rs:234-258`); `RgbColor::from_hex` rejects malformed
-  hex (`src/rgb/schema.rs:47-75`).
-- `anyhow` is declared in `Cargo.toml` but **unused**. Do not introduce it
-  without a project-level decision; the established pattern is `thiserror` +
-  `String` boundaries.
-
-**Write verification is mandatory** for anything that mutates hardware:
-`write_and_verify` writes, sleeps, reads back, retries with exponential
-backoff, then returns `VerificationFailed`
-(`src/service/backend.rs:12-48`). Never add a direct `fs::write` to a sysfs
-control file without a read-back.
+**Panics and poisoning:**
+- Library/runtime code does not `panic!`, `unwrap()`, or `expect()`. The only `panic!` calls in `src/` are inside `#[cfg(test)] mod tests` (`src/core/worker.rs:489,548,573`).
+- Startup thread spawns are the sole runtime `expect`s and carry messages: `"spawning desktop action listener must succeed"` (`src/main.rs:168`), `"spawning event pump must succeed"` (`src/main.rs:254`).
+- Mutex poisoning is recovered rather than propagated: `.lock().unwrap_or_else(|p| p.into_inner())` (`src/app.rs:88`, `src/app.rs:376-380`).
+- Failures degrade: `load_or_default` backs up a corrupt config and returns defaults plus a notice (`src/config/mod.rs:34-78`); `logging::init` falls back to stderr-only (`src/logging.rs:76-102`); unsupported hardware yields `UnavailableHardwareProvider` (`src/hardware/unavailable.rs`).
 
 ## Logging
 
-- Use the `tracing` macros exclusively: `tracing::info!`, `warn!`, `error!`,
-  `debug!`
-- `println!` appears only for CLI-facing output of the system-integration flags
-  (`src/main.rs:38`, `src/main.rs:51`) and the machine-readable benchmark line
-  (`src/core/benchmark.rs:247`). Do not add `println!` to library code.
-- Structured fields first, message second; message is a lowercase sentence with
-  no trailing period:
-  ```rust
-  tracing::warn!(path = %path.display(), error = %e, "could not read config file; using defaults");
-  tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting ZenOmen");
-  ```
-- `%value` for `Display`, `?value` for `Debug`, bare `field` for scalars
-  (`src/app.rs:351-367`, `src/core/worker.rs:223`)
-- Level meanings:
-  - `error!` — the user-visible operation failed and needs attention
-  - `warn!` — degraded but continuing (fallback config, missing hardware,
-    dropped command)
-  - `info!` — lifecycle changes (start, stop, migration report, config saved)
-  - `debug!` — per-tick internals and queue behaviour. **Never log per tick at
-    info** (1 Hz spam).
-- Subscriber setup: `tracing_subscriber::fmt::init()` in the GUI
-  (`src/main.rs:89`), `EnvFilter` defaulting to `info` in the daemon
-  (`src/bin/zenomen-hw.rs:12-16`). `RUST_LOG` is the user knob.
+**Framework:** `tracing` + `tracing-subscriber` with `EnvFilter`; stderr layer plus a daily rotating file layer (`src/logging.rs`). `RUST_LOG` selects the filter; default level is `info`.
+
+**Patterns:**
+- Structured fields, not string interpolation: `tracing::warn!(path = %path.display(), error = %e, "could not read config file; using defaults")` (`src/config/mod.rs:42`), `tracing::info!(path = %path.display(), "configuration atomically saved")` (`src/config/mod.rs:114`).
+- Message text is lowercase, imperative/declarative, and has no trailing period: `"monitoring worker started"`, `"ignored unknown mock scenario"` (`src/core/worker.rs:52`, `src/hardware/mock.rs:81`).
+- `%` for `Display` values (paths), `?` for `Debug` values (e.g. scenario lists).
+- Log-and-degrade on recoverable failure; `error!` only when a fallback action itself failed (backup copy failure, `src/config/mod.rs:60`).
+- `println!`/`eprintln!` are confined to CLI entry points (`src/main.rs`, `src/bin/zenomen-hw.rs`) and the logging fallback warnings in `src/logging.rs:43-63`.
+- Never log secrets, environment dumps, or raw sensor file contents.
 
 ## Comments and Documentation
 
-- **Every module starts with `//!`** — a topic sentence plus the reason the
-  module exists: `src/hardware/provider.rs:1-17`,
-  `src/core/worker.rs:1-16`, `src/core/telemetry.rs:1-16`
-- **Every public item has `///`** explaining *why* and any constraint, not a
-  restatement of the name:
-  ```rust
-  /// `pop_front()` runs *before* `push_back()`, so the deque never holds more
-  /// than `capacity` points even for an instant (T-01-05).
-  ```
-  (`src/core/telemetry.rs:139-142`)
-- Requirement/threat IDs are cited inline and should be preserved when editing:
-  `FOUND-05`, `MON-04`, `MON-11`, `RGB-06`, `SYS-07`, `PERF-03`, `T-01-03`,
-  `T-01-04`, `WR-01`. Examples: `src/app.rs:7-11`, `src/core/events.rs:12-14`,
-  `src/service/backend.rs:9-11`
-- Inline `//` comments explain hardware quirks and ordering constraints:
-  numbered discovery steps (`src/service/backend.rs:78-91`), the CPU sensor
-  priority matrix (`src/hardware/registry.rs:46-49`), and the deadline loop
-  (`src/core/worker.rs:83-99`)
-- `// SAFETY:` is required above every `unsafe` block
-- Slint files use `//` for the component contract (what the component may and
-  may not do) and `///` for properties that map to Rust setters
-  (`ui/app.slint:43`, `ui/app.slint:124-149`)
-- Do **not** write JSDoc-style `Args:` / `Returns:` blocks. Prose paragraphs
-  and lists are the style.
+**Module docs (`//!`):**
+- Every module starts with a purpose statement plus the design constraint it encodes. Examples: `src/hardware/provider.rs:1-17` (why absence is `None`), `src/core/state.rs:1-10` (single source of truth), `src/app.rs:1-14` (two directions only), `src/hardware/unavailable.rs:1-11` (do not add speculative reads).
+- Requirement IDs are cited in parentheses so intent stays traceable: `(FOUND-04)`, `(FOUND-05)`, `(MON-04)`, `(MON-11)`, `(SYS-06)`, `(RGB-02)`, `(PERF-02)`. Examples: `src/hardware/provider.rs:24-25`, `src/core/state.rs:25-27`, `src/rgb/schema.rs:4-6`.
+- Module docs state *why*, including rejected alternatives and failure contracts: `src/logging.rs:1-8`, `src/hardware/mock.rs:3-19`.
 
-## Function Design
+**Item docs (`///`):**
+- Public structs, fields, enums, variants, traits, and functions are documented. Field docs state units and `None` semantics: `src/hardware/provider.rs:147-181`, `src/core/state.rs:29-77`.
+- Intra-doc links are used for related items: `[`AppState::apply`]`, `[`TelemetrySnapshot::reported_sensor_count`]` (`src/core/state.rs:5`, `src/hardware/provider.rs:129`).
+- Doctest fences are not used for executable examples; the only fence is a `text` block documenting env-var launches (`src/hardware/mock.rs:13-16`).
 
-- Small and single-purpose. Separate pure parsing from I/O:
-  `parse_proc_meminfo` vs `read_memory_snapshot`
-  (`src/hardware/linux/memory.rs:30` and `:68`);
-  `parse_nvidia_smi_output` vs `sample_nvidia_smi`
-  (`src/hardware/linux/gpu.rs`)
-- Testability comes from **path injection**, not traits-for-everything:
-  `SensorRegistry::scan_roots(hwmon_root, acpi_root)`,
-  `LinuxHardwareProvider::with_all_roots(...)`,
-  `HardwareBackend::new(root)`,
-  `collect_diagnostics_from_roots(...)`,
-  `open_releases_page_with(launcher)`,
-  `install_to_prefix(prefix)` (`src/hardware/registry.rs:42`,
-  `src/service/backend.rs:64`, `src/core/diagnostics.rs:74`,
-  `src/desktop/releases.rs:26`, `src/desktop/system_integration.rs`)
-- Typical arity is 0–3. Above that, prefer a struct or document the parameter
-  order (see `with_all_roots`).
-- Return owned data and let the caller decide presentation. Core functions do
-  not print; only `src/main.rs` and `src/core/benchmark.rs` print.
-- Generic parameters use inline bounds:
-  `pub fn new<P: Into<PathBuf>>(root: P)` (`src/service/backend.rs:64`),
-  `label: impl Into<String>` (`src/app.rs:276`)
-- Higher-order helpers take closures for event mapping:
-  `execute_mutating_action(name, sender, f, event_builder)`
-  (`src/core/worker.rs:350-380`)
-- Series selection uses `fn` pointers, not boxed closures:
-  `fn path(&self, pick: fn(&TelemetryPoint) -> Option<f32>, ...)`
-  (`src/core/telemetry.rs:180`)
+**Inline comments:**
+- Explain rationale, ordering, safety, and trade-offs rather than restating the code:
+  - `// SAFETY: setting LC_CTYPE before starting any worker threads...` (`src/main.rs:34`).
+  - `// 1. Direct path check...` / `// 2. Fallback: ...` for discovery order (`src/service/backend.rs:78-91`).
+  - `// Relaxed is sufficient: the counter only has to be unique...` (`src/hardware/mock.rs:135-136`).
+- Comments that describe a past state or a plan (“Phase 1 has no detector yet”, `src/hardware/mock.rs:3`) should not be added for new work; describe the current behavior.
 
-## Module Design
+## Function and API Design
 
-**Layer boundaries (do not invert):**
-- `src/hardware/**` — the only code allowed to read `/sys`, `/proc`, or spawn
-  `nvidia-smi`. Exposes plain data through `HardwareProvider`.
-- `src/core/**` — state, events, telemetry math, diagnostics. Touches no
-  hardware and no Slint.
-- `src/app.rs` — the single Slint bridge. Turns callbacks into `AppCommand`s
-  and `AppEvent`s into UI properties.
-- `src/service/**` — privileged D-Bus daemon, verified writes, polkit. The GUI
-  reaches it only through `HardwareServiceClient`.
-- `src/main.rs` — orchestration only: config, single instance, tray, worker
-  spawn, event loop, teardown.
+**Small, injected, testable:**
+- IO roots and external program paths are constructor parameters, never hardcoded inside logic: `HardwareBackend::new(root)` (`src/service/backend.rs:62-68`), `SensorRegistry::scan_roots(hwmon_root, acpi_root)` (`src/hardware/registry.rs:52`), `NvidiaSampler::new(program)` (`src/hardware/linux/gpu.rs:208`), `set_autostart_enabled_at` (`src/desktop/autostart.rs`).
+- Production wrappers delegate to injectable `*_from_roots` / `*_at` functions: `collect_diagnostics` → `collect_diagnostics_from_roots` (`src/core/diagnostics.rs:59-81`).
+- Parsers accept `&str` so they can be unit-tested with fixture text; filesystem readers accept `&Path`.
+- Prefer returning owned plain data (`TelemetrySnapshot`, `DiagnosticsReport`) over borrowed views across threads/modules.
+- Public functions that can fail return `Result`; functions that answer “is it there?” return `bool`/`Option`.
 
-**Exports:**
-- Re-export the intended public surface from `mod.rs`; submodules stay `pub` so
-  integration tests can reach internals.
-- There is currently **no** `pub(crate)` or `pub(super)` usage. When adding
-  helpers that are not part of the public API, prefer `pub(crate)` over
-  widening the surface.
-- `src/lib.rs` declares the modules and ends with `slint::include_modules!();`
-  — generated `AppWindow` is available as `crate::AppWindow` /
-  `zenomen::AppWindow`.
+**Threading:**
+- No async runtime in the product (no Tokio; `Cargo.toml` has no async dependency beyond zbus). Background work uses `std::thread`, named threads (`thread::Builder::new().name("zenomen-monitor-worker".to_string())`, `src/core/worker.rs:42-45`), and `std::sync::mpsc` channels.
+- The zbus interface methods (`src/service/contract.rs`) are the only `async fn`s; callers use zbus’s blocking API outside them.
+- Shared mutable state uses `Arc<Mutex<_>>` / atomics, with a documented reason for the ordering (`Ordering::Relaxed` for the mock tick, `src/hardware/mock.rs:133-139`).
 
-**File size:**
-- Most files are under 300 lines. The two large files are `src/app.rs` (545)
-  and `src/service/backend.rs` (502). A new file approaching 300 lines is a
-  signal to split by responsibility (e.g. schema vs migration in `src/rgb/`).
+## Module and Architecture Conventions
 
-## Slint Conventions
+- **Layer boundaries are enforced by imports:** `src/core/` never touches hardware directly; `src/app.rs` owns the only Slint bridge; `src/hardware/` owns sensors, sysfs, and external tools (`src/core/mod.rs:1-6`, `src/hardware/mod.rs:1-10`).
+- **Single writer for UI state:** `AppState` is mutated only through `AppState::apply(&AppEvent)` (`src/core/state.rs:107-109`). Add new state via a new `AppEvent` variant + `apply` arm, not by assigning fields from callers.
+- **Message types:** UI → core is `AppCommand`, core → UI is `AppEvent` (`src/core/events.rs:69-153`). Variants carry domain types, never sysfs paths or shell commands.
+- **UI callbacks are non-blocking:** they enqueue an `AppCommand` through the bounded channel (`COMMAND_QUEUE_DEPTH = 8`) and drop/log if full (`src/app.rs:1-14`, `src/app.rs:30`, `send_command`).
+- **Capabilities are per-subsystem booleans,** not one aggregate flag (`HardwareCapabilities`, `src/hardware/provider.rs:21-47`). Add a new `has_*` accessor and update `reported_sensor_count`/`SUBSYSTEM_COUNT` (`src/core/state.rs:23`) and tests in the same change.
+- **Platform separation:** only `src/hardware/linux/**` may read `/sys` or `/proc`; the non-Linux provider stays honest with zero capabilities.
+- **Dependency discipline:** no new frameworks or async runtimes; the RSS budget (≤40 MB) is a design constraint encoded in `Cargo.toml` comments (`Cargo.toml:17-24,52-68`) and AGENTS.md rule 4.
 
-- **No literal colors or spacing in screens.** Reference the token globals:
-  `ThemeColors.*`, `ThemeMetrics.*`, `ThemeTypography.*`
-  (`ui/theme/colors.slint:1-6`, `ui/theme/metrics.slint`, `ui/theme/typography.slint`)
-- Component inputs are `in property`; two-way bindings are `in-out property`.
-  Do not expose raw sensor values — the core sends preformatted strings
-  (`ui/app.slint:72-98`, `src/app.rs:521-539`)
-- Callbacks are re-emitted upward; a component never talks to the core:
-  ```slint
-  set-fan-mode(mode) => { root.set-fan-mode(mode); }
-  ```
-  (`ui/app.slint:310-312`)
-- The router keys on `current-screen` with an explicit fallback to Overview so
-  a bad index cannot blank the window (`ui/app.slint:191-192`)
-- Containers that accept children use `@children`
-  (`ui/components/section-card.slint:32`)
-- Conditional UI uses `if condition : Component { ... }` — no visibility hacks
-- Animations are short and eased: `animate x { duration: 150ms; easing:
-  ease-out; }` (`ui/screens/settings.slint:24-34`)
-- Import `std-widgets.slint` sparingly; the shell imports only `ScrollView`
-  (`ui/app.slint:17`)
-- New screens must be instantiated in `ui/app.slint` so the compiler
-  type-checks them, and wired to properties in `src/app.rs` (`apply_to_ui`)
+## Documentation Synchronization
 
-## Git and Tooling
-
-- Commit messages follow Conventional Commits with a scope:
-  `feat(05-03): ...`, `fix(service): ...`, `fix(ui, concerns): ...`,
-  `docs(codebase): ...`, `ci: ...` (`git log`)
-- `Cargo.lock` is committed on purpose (application, not library) so
-  `cargo audit` audits the shipped graph — see `.gitignore:5-8`
-- Comments in `Cargo.toml` explain dependency and profile choices
-  (`Cargo.toml:11-18`, `:37-44`). Keep that habit.
-- Before committing, the project expects all four gates to pass: `cargo fmt
-  --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
-  `xvfb-run -a cargo test --all`, `cargo audit`
-  (`.github/workflows/ci.yml`, `README.md:274-296`)
+- When interfaces, test counts, or build requirements change, update `README.md` and the relevant docstrings in the same change (AGENTS.md rule 10).
+- Current drift to be aware of: `README.md:226` states “123 automated … tests”; the source currently contains 124 `#[test]` functions. `docs/PARITY.md:83` states 109. Update these counts when touching the test suite rather than propagating the old number.
 
 ---
 
-*Convention analysis: 2026-11-06*
+*Convention analysis: 2026-11-07*

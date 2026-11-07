@@ -1,277 +1,345 @@
 ---
-last_mapped_commit: 30d62de2cdf6f507822944e5602bdd907539ce38
-last_mapped_at: 2026-11-06
+last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_at: 2026-11-07
 ---
 # External Integrations
 
-**Analysis Date:** 2026-11-06
+**Analysis Date:** 2026-11-07
 
-## Network Posture
+## Overview
 
-**ZenOmen has no network dependency and ships no HTTP client.**
+ZenOmen has no HTTP API clients, cloud services, databases, or webhooks. Its external
+surface is entirely local:
 
-- `Cargo.lock` contains zero packages named `reqwest`, `ureq`, `hyper`, `rustls`, `native-tls`, `openssl`, `curl`, `isahc`, or `sentry` (verified by name search in the lockfile).
-- No source file opens a network socket, starts a server, or performs an HTTP request; all IPC goes through local D-Bus (via `zbus`) and the desktop display connection.
-- There is **no self-updater, no version-check API, no download, no signature fetch, no telemetry upload, and no crash reporting**.
-- "Check for updates" is a browser hand-off only:
-  - `RELEASES_URL = "https://github.com/Omprakash-p06/zenomen/releases/latest"` (`src/desktop/releases.rs:13`)
-  - `open_releases_page()` spawns `xdg-open <url>` with stdin/stdout/stderr set to `Stdio::null()` and reaps the child on a detached thread (`src/desktop/releases.rs:26`–`44`)
-- Keep this property: do not add an HTTP client or background update checker without an explicit project decision.
+- D-Bus on the system bus (privileged hardware control) and session bus
+  (single-instance, tray).
+- Polkit authorization through `org.freedesktop.PolicyKit1`.
+- Linux kernel pseudo-filesystems: procfs, sysfs, DMI, ACPI, DRM, hwmon.
+- Three external process invocations: optional `nvidia-smi`, root-only `systemctl`,
+  and user-delegated `xdg-open`.
+
+The only "update check" opens the GitHub Releases page in the user's browser; no
+version check, download, or self-update code exists.
 
 ## APIs & External Services
 
-### D-Bus System Bus — `com.zenomen.Hardware1` (privileged hardware control)
+### System D-Bus — Hardware Control Service
 
-The primary integration contract between the unprivileged GUI and root-only hardware access.
+- **Bus name:** `com.zenomen.Hardware1`
+- **Object path:** `/com/zenomen/Hardware1`
+- **Interface:** `com.zenomen.Hardware1`
+- **Server:** `zenomen-hw` (`src/bin/zenomen-hw.rs`, `src/service/contract.rs`)
+- **Client:** `HardwareServiceClient` (`src/service/client.rs`)
+- **SDK/client library:** `zbus` 5.19.0 with the `blocking` feature
+- **Activation file:** `data/dbus/com.zenomen.Hardware1.service` → `/usr/bin/zenomen-hw`
+- **Bus policy:** `data/dbus/com.zenomen.Hardware1.conf` — only `root` may own the name;
+  any local user may send/receive messages.
+- **Service manager:** `data/systemd/zenomen-hw.service` (`Type=dbus`,
+  `BusName=com.zenomen.Hardware1`, `ExecStart=/usr/bin/zenomen-hw`).
 
-| Property | Value | Source |
-|---|---|---|
-| Bus | system bus (session bus only when `ZENOMEN_HW_SESSION` is set, for development) | `src/bin/zenomen-hw.rs:26`–`30` |
-| Bus name | `com.zenomen.Hardware1` | `src/bin/zenomen-hw.rs:34` |
-| Object path | `/com/zenomen/Hardware1` | `src/bin/zenomen-hw.rs:35` |
-| Interface | `com.zenomen.Hardware1` | `src/service/contract.rs:82` |
-| Owner | `root`, enforced by D-Bus policy | `data/dbus/com.zenomen.Hardware1.conf:6`–`9` |
-| Server | `HardwareService` | `src/service/contract.rs:14`–`213` |
-| Client | `HardwareServiceClient` (blocking zbus) | `src/service/client.rs:34`–`344` |
-| Backend | `HardwareBackend` (sysfs writes + read-back) | `src/service/backend.rs:52`–`502` |
+**Methods:**
 
-**Methods** (`src/service/contract.rs`; zbus exposes them PascalCase on the wire):
-
-| Method | Signature | Mutating / polkit-gated | Purpose |
+| Method | Mutating | Polkit required | Return |
 |---|---|---|---|
-| `GetCapabilities` | `() -> String` (JSON) | No | `has_fan_control`, `has_power_profiles`, `has_rgb_lighting`, `rgb_variant`, `service_version`. Used as the liveness probe by `status()`. |
-| `GetFanStatus` | `() -> (String, Vec<u32>)` | No | Active fan mode + RPMs. |
-| `SetFanMode` | `(String) -> String` | **Yes** | Accepts only `auto` / `max`; verified read-back. |
-| `GetPowerProfiles` | `() -> Vec<String>` | No | ACPI `platform_profile_choices`. |
-| `GetPowerProfile` | `() -> String` | No | Active ACPI profile. |
-| `SetPowerProfile` | `(String) -> String` | **Yes** | Validated against advertised choices; verified read-back. |
-| `ApplyPreset` | `(String) -> String` (JSON `PresetResult`) | **Yes** | Combined quiet/balanced/gaming preset; reports partial success. |
-| `ApplyRgbProfile` | `(String JSON) -> String` | **Yes** | Deserializes `RgbProfile` and applies `zones`; rejects invalid JSON with `InvalidArgs`. |
-| `SetRgbEnabled` | `(bool) -> String` | **Yes** | `true` = white on all four zones, `false` = black. |
+| `GetCapabilities` | No | No | JSON string: fan/power/RGB availability and variant |
+| `GetFanStatus` | No | No | `(String mode, Vec<u32> rpms)` |
+| `SetFanMode(mode)` | Yes | `com.zenomen.hardware.control` | Confirmed mode string |
+| `GetPowerProfiles` | No | No | Advertised ACPI profile names |
+| `GetPowerProfile` | No | No | Active ACPI profile |
+| `SetPowerProfile(profile)` | Yes | `com.zenomen.hardware.control` | Confirmed profile |
+| `ApplyPreset(preset)` | Yes | `com.zenomen.hardware.control` | `PresetResult` serialized as JSON |
+| `ApplyRgbProfile(profile_json)` | Yes | `com.zenomen.hardware.control` | Confirmation string |
+| `SetRgbEnabled(enabled)` | Yes | `com.zenomen.hardware.control` | Confirmation string |
 
-**Authorization:** every mutating method calls `HardwareService::authorize()` (`src/service/contract.rs:55`–`79`) before touching hardware. It extracts the caller's unique bus name from the message header, then calls `org.freedesktop.PolicyKit1.Authority.CheckAuthorization` at `/org/freedesktop/PolicyKit1/Authority` with:
-- subject `("system-bus-name", {"name": <unique sender>})`
-- action `com.zenomen.hardware.control`
-- interactive flag `1` (the desktop polkit agent may prompt)
-- empty cancellation id
+Mutating methods call `PolkitVerifier::check_authorization` with the caller's D-Bus
+sender name (`src/service/contract.rs:55-80`). The service is root-owned and sandboxed
+by systemd; the GUI never performs raw sysfs writes.
 
-Response is deserialized as `(bba{ss})` — `(is_authorized, is_challenge, details)` (`src/service/polkit.rs:44`–`70`; regression-tested at `src/service/polkit.rs:76`–`100`).
+**Client behavior:** caches the system-bus connection; checks liveness with
+`GetCapabilities`; maps `ServiceUnknown`/missing `.service` errors to a user-readable
+"daemon not running" message (`src/service/client.rs:58-98`, `232-249`).
 
-`with_polkit_required(false)` is `#[cfg(test)]` only (`src/service/contract.rs:43`–`47`); never enable it in a production path.
+### Session D-Bus — Single Instance
 
-**Error mapping** (`src/service/types.rs:133`–`145`):
+- **Bus name / interface:** `com.zenomen.App`
+- **Object path:** `/com/zenomen/App`
+- **Methods:** `PresentWindow`, `Activate`, `Quit`
+- **Purpose:** second launch asks the primary instance to show its window, then exits
+  (`src/desktop/single_instance.rs`).
+- **Name acquisition:** `RequestName` with flag `4` (`DO_NOT_QUEUE`); primary owner
+  registers the object server. If the session bus is unavailable, the app runs
+  standalone rather than failing (`SingleInstanceResult::Disabled`).
 
-| Internal | D-Bus error |
-|---|---|
-| `PolkitDenied` | `AccessDenied` |
-| `InvalidParameter` | `InvalidArgs` |
-| `UnsupportedMode` | `NotSupported` |
-| `InterfaceMissing` | `FileNotFound` |
-| `VerificationFailed` / `IoError` | `Failed` |
+### Session D-Bus — System Tray
 
-**Service-unavailable handling:** the client distinguishes `Connected` / `Disconnected` / `Unavailable` (`src/service/client.rs:10`–`29`), caches the system connection, resets it on failure, and rewrites `ServiceUnknown` into actionable "start `zenomen-hw`" guidance (`src/service/client.rs:232`–`252`).
+- **`org.kde.StatusNotifierItem`** at `/StatusNotifierItem` — properties include
+  `Category`, `Id`, `Title`, `Status`, `IconName`, `Menu`; methods `Activate`,
+  `SecondaryActivate`, `ContextMenu`, `Scroll` (`src/desktop/tray.rs`).
+- **`com.canonical.dbusmenu`** at `/MenuBar` — `GetLayout`, `Event`, `AboutToShow`,
+  with "Open ZenOmen" and "Quit ZenOmen" items.
+- **Registration:** calls `RegisterStatusNotifierItem` on
+  `org.kde.StatusNotifierWatcher` at `/StatusNotifierWatcher`. A missing watcher is
+  logged at info level and treated as optional (e.g., stock GNOME without an
+  AppIndicator extension).
 
-**D-Bus policy** (`data/dbus/com.zenomen.Hardware1.conf`):
-- Only `root` may own the name.
-- Any local user may send/receive on the name; mutation is authorized inside the service by polkit.
+### Polkit — Authorization
 
-**D-Bus activation** (`data/dbus/com.zenomen.Hardware1.service`): `Name=com.zenomen.Hardware1`, `Exec=/usr/bin/zenomen-hw`, `User=root`.
+- **Service:** `org.freedesktop.PolicyKit1`
+- **Object path:** `/org/freedesktop/PolicyKit1/Authority`
+- **Interface:** `org.freedesktop.PolicyKit1.Authority`
+- **Method:** `CheckAuthorization(subject, action_id, details, flags, cancellation_id)`
+- **Subject:** `("system-bus-name", { "name": <caller unique bus name> })`
+- **Action ID:** `com.zenomen.hardware.control`
+- **Policy file:** `data/polkit/com.zenomen.hardware.policy`
+- **Defaults:** `allow_any=auth_admin`, `allow_inactive=auth_admin`,
+  `allow_active=auth_admin_keep`.
+- **Call sites:**
+  - Daemon enforcement with interactive prompt allowed (`flags = 1`):
+    `src/service/polkit.rs:28-71`.
+  - GUI diagnostics with no prompt (`flags = 0`):
+    `src/service/client.rs:251-299`.
 
-**Installed locations** (authoritative: `Cargo.toml:67`–`75` and `src/desktop/system_integration.rs:12`–`18`):
-- `/usr/lib/systemd/system/zenomen-hw.service`
-- `/usr/share/dbus-1/system-services/com.zenomen.Hardware1.service`
-- `/usr/share/dbus-1/system.d/com.zenomen.Hardware1.conf`
-- `/usr/share/polkit-1/actions/com.zenomen.hardware.policy`
+### GitHub Releases — Browser-Delegated Update Link
 
-`README.md:70` says the D-Bus config lands in `/etc/dbus-1/system.d/`; the Cargo packager mapping and installer target `/usr/share/dbus-1/system.d/`. Treat the code as correct and fix the README when touching it.
+- **URL constant:** `https://github.com/Omprakash-p06/zenomen/releases/latest`
+  (`src/desktop/releases.rs:13`).
+- **Mechanism:** spawns `xdg-open <URL>` with stdin/stdout/stderr set to null and reaps
+  the child on a background thread (`src/desktop/releases.rs:26-44`).
+- **No network client, no download, no signature check, no self-update.**
+- The URL is opened only from the UI callback `on_open_releases_page`
+  (`src/app.rs:265-272`).
 
-### Polkit
+## Kernel Interfaces (sysfs / procfs / DMI / ACPI)
 
-- Action ID: `com.zenomen.hardware.control` — constant `POLKIT_ACTION_CONTROL` (`src/service/polkit.rs:10`).
-- Policy file: `data/polkit/com.zenomen.hardware.policy`.
-- Defaults: `allow_any = auth_admin`, `allow_inactive = auth_admin`, `allow_active = auth_admin_keep` — an admin password prompt for fan/power/RGB changes, cached for the active session.
-- No custom polkit agent is implemented; the desktop environment's agent supplies the dialog.
-- The GUI performs a **non-interactive** check (`flags = 0`) for Diagnostics via `HardwareServiceClient::check_polkit_status()` (`src/service/client.rs:252`–`299`), reporting "Authorized", "Authentication challenge required", or "Authorization not granted".
-- Mutating RPCs run on `zenomen-ctrl-*` / `zenomen-rpc-*` threads with a **30-second** timeout so a polkit prompt cannot stall the 1 Hz telemetry loop (`src/core/worker.rs:350`–`379`).
+These are the primary "external APIs" for telemetry and hardware control. Reads happen
+in the unprivileged GUI process; writes happen only in `zenomen-hw`
+(`src/service/backend.rs`).
 
-### systemd
+### sysfs — sensors and controls
 
-- Unit: `data/systemd/zenomen-hw.service` → `/usr/lib/systemd/system/zenomen-hw.service`.
-- `Type=dbus`, `BusName=com.zenomen.Hardware1`, `ExecStart=/usr/bin/zenomen-hw`, `Restart=on-failure`, `RestartSec=3s`.
-- Hardening: `ProtectSystem=strict`, `ProtectHome=true`, `ReadOnlyPaths=/`, `PrivateTmp=true`, `ProtectControlGroups=true`, `RestrictRealtime=true`, `RestrictNamespaces=true`, `NoNewPrivileges=true`, empty `CapabilityBoundingSet=`/`AmbientCapabilities=`, `RestrictAddressFamilies=AF_UNIX`, `SystemCallFilter=@system-service`, `LockPersonality=true`, `MemoryDenyWriteExecute=true`.
-- Writable carve-outs are `-`-prefixed so absent hardware paths do not fail startup: `/sys/devices/platform/hp-wmi`, `/sys/firmware/acpi`, `/sys/class/hwmon`, `/sys/class/leds`.
-- `ProtectKernelTunables` is **intentionally omitted** because it would make `/sys` read-only (`data/systemd/zenomen-hw.service:21`–`22`). Do not add it.
-- Installer drives `systemctl --no-ask-password daemon-reload/enable/restart` (and `stop`/`disable` on uninstall), preferring `/usr/bin/systemctl`, then `/bin/systemctl`, then `PATH` (`src/desktop/system_integration.rs:195`–`217`).
-
-### D-Bus Session Bus — GUI desktop integration
-
-| Integration | Bus name / path / interface | File |
-|---|---|---|
-| Single instance | owns `com.zenomen.App`, object `/com/zenomen/App`, interface `com.zenomen.App` | `src/desktop/single_instance.rs:10`–`12` |
-| Single-instance RPCs | `PresentWindow`, `Activate`, `Quit` | `src/desktop/single_instance.rs:29`–`54` |
-| Tray (SNI) | `org.kde.StatusNotifierItem` at `/StatusNotifierItem` | `src/desktop/tray.rs:14`, `:22`–`:107` |
-| Tray menu | `com.canonical.dbusmenu` at `/MenuBar` | `src/desktop/tray.rs:15`, `:123`–`:184` |
-| Tray registration | `RegisterStatusNotifierItem` on `org.kde.StatusNotifierWatcher` at `/StatusNotifierWatcher` | `src/desktop/tray.rs:186`–`:220` |
-
-- Name acquisition uses `RequestName("com.zenomen.App", 4)` (`DBUS_NAME_FLAG_DO_NOT_QUEUE`). Replies `1`/`4` = primary; `2`/`3` = already running, so the secondary calls `PresentWindow` and exits (`src/desktop/single_instance.rs:77`–`113`).
-- Missing session bus is non-fatal: the GUI logs a warning and runs standalone (`src/main.rs:68`–`72`, `src/desktop/single_instance.rs:73`–`79`).
-- SNI properties exposed: `Category`, `Id`, `Title`, `Status`, `WindowId`, `IconName`, `OverlayIconName`, `AttentionIconName`, `AttentionMovieName`, `Menu`, `ItemIsMenu`; methods `Activate`, `SecondaryActivate`, `ContextMenu`, `Scroll`.
-- DBusMenu exposes `Version=3`, `Status="normal"`, `GetLayout`, `Event`, `AboutToShow`, with two items: **Open ZenOmen** (id 1) and **Quit ZenOmen** (id 2).
-- No `StatusNotifierWatcher` (e.g. stock GNOME without AppIndicator) is logged at info level and startup continues; D-Bus single-instance remains the fallback activation path.
-
-### XDG desktop integration
-
-- Autostart entry managed at `~/.config/autostart/zenomen.desktop`, content in `src/desktop/autostart.rs:17`–`30`, `Exec=zenomen --minimized`.
-- Enabled/disabled by creating or removing the file; `Hidden=true` and `X-GNOME-Autostart-enabled=false` are honoured when reading state (`src/desktop/autostart.rs:41`–`73`).
-- Packaged desktop entry: `data/applications/zenomen.desktop`, `Exec=zenomen %U`, `Categories=Utility;System;`, `StartupWMClass=zenomen`.
-- AppImage / standalone installs embed the desktop entry, systemd unit, D-Bus conf/service, and polkit policy with `include_str!` and write them atomically as root (`src/desktop/system_integration.rs:20`–`26`, `:117`–`138`, `:178`–`193`).
-
-## Kernel Integration Surface (sysfs / procfs)
-
-All hardware access is direct file I/O. There are no ioctls, no libsensors, no udev rules, and no ZenOmen kernel module.
-
-**Telemetry (read-only, GUI process):**
-
-| Interface | Data | Code |
-|---|---|---|
-| `/proc/stat` | Aggregate CPU utilization from jiffies deltas | `src/hardware/linux/cpu.rs:25`–`153`, `src/hardware/linux/provider.rs:122`–`129` |
-| `/proc/cpuinfo` | CPU model string and frequency fallback | `src/hardware/linux/cpu.rs:155`–`186`, `src/hardware/linux/provider.rs:61`, `:131`–`137` |
-| `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq` | Current frequency (kHz → MHz) | `src/hardware/linux/provider.rs:38`, `src/hardware/linux/cpu.rs:169`–`174` |
-| `/proc/meminfo` | RAM total/available; used = total − available | `src/hardware/linux/memory.rs:26`–`73` |
-| `/sys/class/hwmon/hwmon*/name` | hwmon driver identification | `src/hardware/linux/hwmon.rs:32`–`62` |
-| `/sys/class/hwmon/hwmon*/temp*_input` + `temp*_label` | Temperatures (millidegrees) and labels | `src/hardware/linux/hwmon.rs:65`–`86` |
-| `/sys/class/hwmon/hwmon*/fan*_input` | Fan tachometer RPM | `src/hardware/linux/hwmon.rs:74`–`77`, `src/hardware/registry.rs:74`–`80` |
-| `pwm1_enable` read path | Active fan mode (`0` max / `1` manual / `2` auto) | `src/hardware/registry.rs:82`–`98` |
-| `/sys/class/drm/card[0-9]+/device/vendor` | PCI vendor ID (`0x1002` AMD, `0x8086` Intel, `0x10de` NVIDIA) | `src/hardware/linux/gpu.rs:86`–`97`, `:23`–`29` |
-| `/sys/class/drm/card*/device/gpu_busy_percent` | AMD utilization | `src/hardware/linux/gpu.rs:150`–`155` |
-| `/sys/class/drm/card*/device/mem_info_vram_{used,total}` | AMD VRAM | `src/hardware/linux/gpu.rs:167`–`177` |
-| `/sys/class/drm/card*/device/hwmon/hwmon*/temp1_input` | GPU temperature | `src/hardware/linux/gpu.rs:117`–`127`, `:157`–`164` |
-| `/sys/firmware/acpi/platform_profile` | Active power profile | `src/hardware/registry.rs:100`–`105` |
-| `/sys/firmware/acpi/platform_profile_choices` | Advertised profiles | `src/hardware/registry.rs:107`–`114` |
-| `/etc/os-release`, `/proc/sys/kernel/osrelease`, `/sys/class/dmi/id/{product_name,sys_vendor}`, `/sys/class/drm` | Diagnostics metadata | `src/core/diagnostics.rs:61`–`89` |
-| `/proc/self/smaps_rollup` (fallback `/proc/self/status`), `/proc/self/stat` | RSS/PSS/private-dirty and CPU instrumentation | `src/core/benchmark.rs:42`–`145` |
-| `/proc/<pid>/status`, `/proc/<pid>/stat` | External budget harness only (not product code) | `scripts/measure-budget.sh:50`–`65` |
-
-**Hardware control (privileged `zenomen-hw` only):**
-
-| Interface | Operation | Code |
-|---|---|---|
-| `/sys/devices/platform/hp-wmi/hwmon/hwmon*/pwm1_enable` (primary) or `/sys/class/hwmon/hwmon*/pwm1_enable` where `name` is `hp`/`hp-wmi` (fallback) | Fan mode: `0` max, `2` auto; write then read back, 3 attempts, exponential backoff | `src/service/backend.rs:12`–`48`, `:77`–`115`, `:162`–`176` |
-| `/sys/firmware/acpi/platform_profile` | Power profile, validated against `platform_profile_choices`; read-back verified | `src/service/backend.rs:196`–`248` |
-| `/sys/devices/platform/hp-wmi/rgb_zones/zone0{0..3}` | RGB variant `FourZone`; hex per zone, write + read-back per zone | `src/service/backend.rs:352`–`357`, `:442`–`451` |
-| `/sys/devices/platform/hp-wmi/keyboardleds` | RGB variant `Legacy`; one 24-character hex payload, write + read-back | `src/service/backend.rs:361`–`364`, `:452`–`463` |
-| `/sys/class/leds/hp_omen::kbd_backlight/zone_colors` | RGB variant `KernelPatch`; 12 raw bytes written with `fs::write`, then one read-back comparison | `src/service/backend.rs:367`–`370`, `:464`–`500` |
-| Any detected RGB variant | Read current colors (`get_rgb_colors`) | `src/service/backend.rs:381`–`437` |
-
-**Semantics and safeguards:**
-- Fan mode: `0` = Max, `1` = Manual, `2` = Auto (`src/service/types.rs:31`–`44`); v1 writes only `auto`/`max` and rejects `manual` with `UnsupportedMode`.
-- Every write is verified by reading the value back; mismatch returns `VerificationFailed` rather than claiming success.
-- Missing interfaces return `InterfaceMissing` → D-Bus `FileNotFound`; the UI renders "Unavailable", never a fabricated zero.
-- `HardwareCapabilities::battery_metrics` is declared but `detect_capabilities()` hardcodes it to `false`; there is no `/sys/class/power_supply` read path (`src/hardware/registry.rs:117`–`135`). Do not claim battery support without implementing it.
-- `HardwareBackend` takes a configurable `sysfs_root` (`HardwareBackend::new`), and `SensorRegistry::scan_roots` / `LinuxHardwareProvider::with_all_roots` accept alternate roots for tests. Production uses `/`.
-
-## External Processes
-
-| Process | Required? | Invocation | Purpose |
+| Path / pattern | Access | Used for | Source |
 |---|---|---|---|
-| `nvidia-smi` | Optional | `nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total --format=csv,noheader,nounits`; 200 ms receive timeout on a helper thread; on timeout the thread is detached rather than joined (`src/hardware/linux/gpu.rs:187`–`219`, `src/hardware/linux/provider.rs:164`–`166`) | NVIDIA telemetry. Absent/suspended GPU degrades to DRM sampling or `None`. |
-| `xdg-open` | Optional | `xdg-open https://github.com/Omprakash-p06/zenomen/releases/latest`, stdio null, child reaped asynchronously (`src/desktop/releases.rs:26`–`44`) | Open the Releases page. |
-| `systemctl` | Install/uninstall only | `/usr/bin/systemctl` or `/bin/systemctl` or `systemctl`; `--no-ask-password` plus `daemon-reload`, `enable`, `restart`, `stop`, `disable` (`src/desktop/system_integration.rs:195`–`217`) | Register/unregister `zenomen-hw`. |
+| `/sys/class/hwmon/hwmon*/name` | Read | Driver identity (`k10temp`, `coretemp`, `acpitz`, `hp`, `hp-wmi`, GPU drivers). | `src/hardware/linux/hwmon.rs:32-62`, `src/hardware/registry.rs:38-82` |
+| `/sys/class/hwmon/hwmon*/temp*_input` | Read | Temperature in millidegrees Celsius. | `src/hardware/linux/hwmon.rs:64-71` |
+| `/sys/class/hwmon/hwmon*/temp*_label` | Read | Sensor label selection (`Tctl`, `Tdie`, `Package id 0`). | `src/hardware/linux/hwmon.rs:79-86` |
+| `/sys/class/hwmon/hwmon*/fan*_input` | Read | Fan tachometer RPM. | `src/hardware/linux/hwmon.rs:73-77`, `src/hardware/registry.rs:90-96` |
+| `/sys/class/hwmon/hwmon*/pwm1_enable` | Read | Fan mode (`0=max`, `1=manual`, `2=auto`). | `src/hardware/registry.rs:98-114` |
+| `/sys/devices/platform/hp-wmi/hwmon/hwmon*/pwm1_enable` | Read/write | Primary HP fan-mode control interface; fallback scan of `/sys/class/hwmon`. | `src/service/backend.rs:76-124` |
+| `/sys/firmware/acpi/platform_profile` | Read/write | Active ACPI platform profile; write is validated and read back. | `src/service/backend.rs:217-265` |
+| `/sys/firmware/acpi/platform_profile_choices` | Read | Advertised profile names; writes are rejected unless listed. | `src/service/backend.rs:195-258`, `src/hardware/registry.rs:123-130` |
+| `/sys/devices/platform/hp-wmi/rgb_zones/zone0{0..3}` | Read/write | Four-zone RGB interface (hex per zone). | `src/hardware/rgb.rs:33-54`, `src/service/backend.rs:390-461` |
+| `/sys/devices/platform/hp-wmi/keyboardleds` | Read/write | Legacy monolithic 24-hex-character RGB interface. | `src/hardware/rgb.rs:41-45`, `src/service/backend.rs:409-473` |
+| `/sys/class/leds/hp_omen::kbd_backlight/zone_colors` | Read/write | Kernel-patch RGB interface (12 raw bytes). | `src/hardware/rgb.rs:47-51`, `src/service/backend.rs:428-508` |
+| `/sys/class/drm/card[0-9]+/device/vendor` | Read | PCI vendor ID (AMD `0x1002`, Intel `0x8086`, NVIDIA `0x10de`). | `src/hardware/linux/gpu.rs:63-105` |
+| `/sys/class/drm/card[0-9]+/device/gpu_busy_percent` | Read | AMD GPU utilization. | `src/hardware/linux/gpu.rs:144-156` |
+| `/sys/class/drm/card[0-9]+/device/mem_info_vram_used` / `mem_info_vram_total` | Read | AMD VRAM usage/total (bytes converted to MB). | `src/hardware/linux/gpu.rs:167-178` |
+| `/sys/class/drm/card[0-9]+/device/hwmon/hwmon*/temp1_input` | Read | GPU temperature in millidegrees. | `src/hardware/linux/gpu.rs:117-165` |
+| `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq` | Read | CPU frequency in kHz; falls back to `/proc/cpuinfo` `cpu MHz`. | `src/hardware/linux/provider.rs:133-140` |
+| `/sys/class/power_supply/BAT*/capacity` | Presence check only | Battery capability flag; battery telemetry is not sampled. | `src/hardware/registry.rs:68-71`, `153-169` |
+| `/sys/class/dmi/id/product_name`, `/sys/class/dmi/id/sys_vendor` | Read | DMI/SMBIOS model and vendor for diagnostics. | `src/core/diagnostics.rs:58-86` |
 
-All commands are spawned with explicit argument vectors. No `sh -c`, no shell interpolation, no user-supplied command or path. The GUI never invokes `sudo`; privilege escalation is polkit + the root daemon.
+The daemon's systemd unit grants write access only to
+`-/sys/devices/platform/hp-wmi`, `-/sys/firmware/acpi`, `-/sys/class/hwmon`, and
+`-/sys/class/leds`; the rest of the filesystem is read-only
+(`data/systemd/zenomen-hw.service:14-32`).
+
+### procfs and system metadata
+
+| Path / pattern | Access | Used for | Source |
+|---|---|---|---|
+| `/proc/stat` | Read | CPU utilization deltas and per-core jiffies. | `src/hardware/linux/provider.rs:124-131`, `src/hardware/linux/cpu.rs` |
+| `/proc/cpuinfo` | Read | CPU model name and frequency fallback. | `src/hardware/linux/provider.rs:62-63`, `133-140` |
+| `/proc/meminfo` | Read | RAM total/available → used MB. | `src/hardware/linux/memory.rs:26-72` |
+| `/proc/self/smaps_rollup` | Read | RSS/PSS/Private_Dirty benchmark metrics. | `src/core/benchmark.rs:42-79` |
+| `/proc/self/status` | Read | `VmRSS` fallback when `smaps_rollup` is unavailable. | `src/core/benchmark.rs:87-110` |
+| `/proc/self/stat` | Read | CPU tick sampling for benchmark percentage. | `src/core/benchmark.rs:145-180` |
+| `/proc/sys/kernel/osrelease` | Read | Kernel version for diagnostics. | `src/core/diagnostics.rs:67-70`, `184-188` |
+| `/etc/os-release` | Read | Distribution name (`PRETTY_NAME`/`NAME`) for diagnostics. | `src/core/diagnostics.rs:66-70`, `162-182` |
+| `/proc/<pid>/status`, `/proc/<pid>/stat` | Read | External budget harness samples `VmRSS` and utime+stime. | `scripts/measure-budget.sh:54-68` |
+
+No direct block-device, `/dev`, or kernel-module I/O is used. No sensor data is
+fabricated: every reader returns `Option`/empty and the UI renders `Unavailable`.
 
 ## Data Storage
 
-**Databases:** None. No SQL, no embedded KV store, no daemon-side persistence.
+**Databases:**
+- None. No SQL/NoSQL client or embedded database crate is present.
 
-**File storage (local only):**
-- `~/.config/zenomen/config.toml` — user settings; atomic replace with fsync of file and parent directory (`src/config/mod.rs:85`–`116`).
-- `~/.config/zenomen/config.toml.bak.<unix-seconds>` — backup of an unparseable config (`src/config/mod.rs:53`–`78`).
-- `~/.config/zenomen/rgb/*.json` — RGB profiles, serde JSON with strict `#RRGGBB` validation (`src/rgb/schema.rs`).
-- `~/.config/zenomen/diagnostics/zenomen-diagnostics-<timestamp>.json` — user-triggered export, written atomically (`src/app.rs:233`–`242`, `src/core/diagnostics.rs:145`–`160`). Never uploaded.
-- `~/.config/autostart/zenomen.desktop` — XDG autostart entry (`src/desktop/autostart.rs`).
-- `~/.config/openomen/rgb/*.json` — **read-only legacy import source**, never modified or deleted (`src/rgb/migration.rs:42`–`48`, `:185`–`270`).
-- System files owned by packaging/installer: `/usr/bin/zenomen`, `/usr/bin/zenomen-hw`, `/usr/share/applications/zenomen.desktop`, `/usr/lib/systemd/system/zenomen-hw.service`, `/usr/share/dbus-1/system-services/com.zenomen.Hardware1.service`, `/usr/share/dbus-1/system.d/com.zenomen.Hardware1.conf`, `/usr/share/polkit-1/actions/com.zenomen.hardware.policy`, `/usr/share/icons/hicolor/*/apps/zenomen.*`.
+**File Storage (local filesystem only):**
 
-**Caching:** None on disk. Hardware state is read fresh each tick. In-memory telemetry is a bounded `VecDeque` of 120 samples (`src/core/telemetry.rs:22`–`25`).
+| Path | Format | Writer | Purpose |
+|---|---|---|---|
+| `~/.config/zenomen/config.toml` | TOML | GUI | General and telemetry settings; atomic save; corruption backup. |
+| `~/.config/zenomen/diagnostics/zenomen-diagnostics-<timestamp>.json` | JSON | GUI | Diagnostics export (`src/app.rs:233-245`). |
+| `~/.config/zenomen/rgb/` | JSON profiles | GUI | ZenOmen RGB profile storage. |
+| `~/.config/openomen/rgb/` | JSON | Read-only | Legacy OpenOMEN migration source; never modified or deleted. |
+| `~/.config/autostart/zenomen.desktop` | Desktop Entry | GUI | XDG autostart toggle. |
+| `~/.local/state/zenomen/logs/` | Text logs | GUI + daemon | Daily rolling logs, 7 files maximum. |
 
-**Concurrency:** Config writes are atomic (temp + `sync_all` + rename). RGB writes go through the daemon's verified-write helper. No cross-process file locks; the session-bus name `com.zenomen.App` is the single-instance guard.
+- Config saves are atomic: temporary file in the same directory, `sync_all`, rename,
+  then parent-directory sync (`src/config/mod.rs:85-116`).
+- Diagnostics exports use a temporary file plus rename
+  (`src/core/diagnostics.rs:144-160`).
+- No cache directory, no key-value store, and no remote storage are used.
+
+**Caching:**
+- In-memory only: cached system-bus connection (`src/service/client.rs:38-75`) and the
+  most recent NVIDIA sample with a 3-second freshness window
+  (`src/hardware/linux/gpu.rs:191-245`).
+- Telemetry history is in-memory (120 samples by default; configurable 30/60/120/300).
 
 ## Authentication & Identity
 
-- **No accounts, login, tokens, OAuth, or cloud identity.**
-- **Authorization is polkit only**, scoped to `com.zenomen.hardware.control`, with `zenomen-hw` running as root under systemd.
-- D-Bus name ownership is restricted to root by policy; any local user may call read-only methods, while mutating methods are gated inside the service.
-- The system-integration installer checks effective UID == 0 via `geteuid()` and refuses to write anything as non-root (`src/desktop/system_integration.rs:41`–`53`, `:117`–`120`).
-- No secrets exist in the repository: no `.env`, no credential files, no signing keys. Release integrity is SHA-256 checksums only (`SHA256SUMS`), not GPG signing.
+**Auth provider:** Polkit (system authorization), not an application account system.
+
+- No usernames, passwords, tokens, OAuth, OIDC, or API keys are stored or transmitted.
+- Identity is the caller's D-Bus unique name, resolved by the system bus.
+- The D-Bus policy permits any local user to call the daemon, but every mutating method
+  performs its own Polkit check.
+- The systemd unit runs as root with: `ProtectSystem=strict`, `ProtectHome=true`,
+  `NoNewPrivileges=true`, empty `CapabilityBoundingSet`/`AmbientCapabilities`,
+  `RestrictAddressFamilies=AF_UNIX`, and `SystemCallFilter=@system-service`
+  (`data/systemd/zenomen-hw.service:14-32`).
+- `ZENOMEN_HW_SESSION` is a development/test override that binds the daemon to the
+  session bus instead of the system bus (`src/bin/zenomen-hw.rs:23-27`). It grants no
+  additional privilege; do not use it in production.
 
 ## Monitoring & Observability
 
-**Error tracking:** None. No Sentry, crash reporter, or remote logging.
+**Error tracking:**
+- None. No Sentry, telemetry endpoint, OpenTelemetry, or remote error reporting.
 
 **Logs:**
-- `tracing` to **stderr** in both binaries. GUI: `tracing_subscriber::fmt::init()` (`src/main.rs:75`). Daemon: `EnvFilter` defaulting to `info` (`src/bin/zenomen-hw.rs:12`–`16`).
-- `RUST_LOG` controls verbosity; structured fields are used (`version`, `scenario`, `path`, `error`, `rss_mb`, `scanned`, `imported`).
-- No log files, rotation, or log levels beyond `tracing` defaults.
-- Optional benchmark lines on stdout when `ZENOMEN_BENCHMARK=1` (`src/core/benchmark.rs:245`–`256`).
-
-**User-facing diagnostics:** JSON report with app version, OS name, kernel release, DMI product/vendor, capabilities, CPU/fan/GPU sensor bindings, hardware-service status, polkit status, latest telemetry, last sampling error, and UTC timestamp (`src/core/diagnostics.rs:29`–`56`). Exported locally, never uploaded.
-
-**Budget measurement:** `scripts/measure-budget.sh` samples `/proc/<pid>/status` and `/proc/<pid>/stat`; results are recorded in `docs/RESOURCE-BUDGET.md`. Targets: GUI ≤40 MB peak RSS and ≤0.1% idle CPU; daemon budget reported separately (≤15 MB, measured ~3.4 MB).
+- `tracing` 0.1.44 with `tracing-subscriber` 0.3.23 and `EnvFilter`.
+- Stderr layer for terminal/journald; optional file layer with daily rotation,
+  `zenomen` prefix, `.log` suffix, max 7 files.
+- Default filter `info`; override with `RUST_LOG`.
+- The daemon logs startup and service registration; systemd/journald captures stderr.
+- Benchmark instrumentation reads `/proc/self/smaps_rollup`, `/proc/self/status`, and
+  `/proc/self/stat`; `ZENOMEN_BENCHMARK=1` enables stdout benchmark lines
+  (`src/core/benchmark.rs`).
 
 ## CI/CD & Deployment
 
-**Hosting:** GitHub (`https://github.com/Omprakash-p06/zenomen`); binary distribution via GitHub Releases.
+**Hosting:**
+- GitHub Releases (`https://github.com/Omprakash-p06/zenomen/releases`).
+- No container registry, cloud runtime, or package repository is configured.
 
-**CI (`.github/workflows/ci.yml`):** push/PR to `main`; stable Rust with clippy + rustfmt; native deps (`libxkbcommon-dev`, `libfontconfig1-dev`, `libgl1-mesa-dev`, `xvfb`); `cargo fmt --all -- --check`; `cargo clippy --all-targets --all-features -- -D warnings`; `xvfb-run --auto-servernum cargo test --all`; `cargo audit`. `permissions: contents: read`, concurrency cancellation enabled.
+**CI pipeline — `.github/workflows/ci.yml`:**
+- Trigger: push to `main`, pull request to `main`.
+- Runner: `ubuntu-latest`; permissions: `contents: read`.
+- Steps: checkout (`actions/checkout@v4`), install stable Rust + clippy + rustfmt,
+  install native Linux build dependencies, `cargo fmt --all -- --check`,
+  `cargo clippy --all-targets --all-features -- -D warnings`,
+  `xvfb-run --auto-servernum cargo test --all`, `cargo audit`.
+- `cargo-audit` is installed through `taiki-e/install-action@cargo-audit`; its version
+  is not pinned in the repository.
 
-**Release (`.github/workflows/release.yml`):** triggered by `v*` tags or manual dispatch.
-- Verifies the tag equals the `zenomen` version from `cargo metadata`.
-- Runs the same gates with `--locked`, then `cargo packager --release --formats deb,appimage`.
-- Installs `dpkg-dev`, `file`, `libfuse2` in addition to build deps.
-- Generates `dist/SHA256SUMS` and publishes `.deb`, `.AppImage`, and checksums via `softprops/action-gh-release`.
-- Actions are pinned by commit SHA; `permissions: contents: write` is limited to this workflow.
-- The latest commit (`30d62de`) restricts release builds to Linux packages only; no Windows artifact is produced.
+**Release pipeline — `.github/workflows/release.yml`:**
+- Trigger: tags matching `v*` and manual `workflow_dispatch`.
+- Permissions: `contents: write`.
+- Verifies the tag equals the `Cargo.toml` package version.
+- Re-runs format, clippy, tests, and `cargo audit` with `--locked`.
+- Builds `deb` and `appimage` via `cargo packager --release --formats deb,appimage`.
+- Verifies artifact filenames contain the package version, writes
+  `sha256sum *.deb *.AppImage > SHA256SUMS`, and publishes a GitHub Release with
+  `softprops/action-gh-release` (pinned commit SHA).
+- Release-action and checkout versions are pinned to commit SHAs; CI checkout is not.
 
-**Distribution:** Debian/Ubuntu `.deb` and portable `.AppImage`. AppImage users run `sudo ./ZenOmen_*.AppImage --install-system-integration` once to install the daemon and system files from embedded assets.
+**Packaging targets:**
+
+| Target | Output | Configuration |
+|---|---|---|
+| Debian `.deb` | `dist/zenomen_<version>_amd64.deb` | `[package.metadata.packager.deb]` in `Cargo.toml:88-99` |
+| AppImage | `dist/ZenOmen_<version>_amd64.AppImage` | `[package.metadata.packager]` in `Cargo.toml:70-86` |
+
+**Installed system files (both packaging paths / installer):**
+
+| Source | Target |
+|---|---|
+| `zenomen` | `/usr/bin/zenomen` |
+| `zenomen-hw` | `/usr/bin/zenomen-hw` |
+| `data/applications/zenomen.desktop` | `/usr/share/applications/zenomen.desktop` |
+| `data/systemd/zenomen-hw.service` | `/usr/lib/systemd/system/zenomen-hw.service` |
+| `data/dbus/com.zenomen.Hardware1.conf` | `/usr/share/dbus-1/system.d/com.zenomen.Hardware1.conf` |
+| `data/dbus/com.zenomen.Hardware1.service` | `/usr/share/dbus-1/system-services/com.zenomen.Hardware1.service` |
+| `data/polkit/com.zenomen.hardware.policy` | `/usr/share/polkit-1/actions/com.zenomen.hardware.policy` |
+
+- The AppImage path embeds the desktop entry, systemd unit, D-Bus files, and Polkit
+  policy via `include_str!`, copies an adjacent `zenomen-hw` binary to `/usr/bin`, and
+  installs the files with `--install-system-integration` / removes them with
+  `--uninstall-system-integration` (`src/desktop/system_integration.rs`). Both commands
+  require effective UID 0 and quit with an explicit error otherwise.
+- The installer then runs `/usr/bin/systemctl` (falling back to `/bin/systemctl` or
+  `systemctl` in `PATH`) with `--no-ask-password`: `daemon-reload`, `enable`,
+  `restart`; uninstall uses `stop`, `disable`, `daemon-reload`.
+- **Note:** `README.md:70` says the D-Bus policy installs to
+  `/etc/dbus-1/system.d/...`, but the authoritative packaging and installer code uses
+  `/usr/share/dbus-1/system.d/...` (`Cargo.toml:94`,
+  `src/desktop/system_integration.rs:14`).
+- No Flatpak, Snap, RPM, Arch package, or Docker image configuration exists in the
+  repository.
 
 ## Environment Configuration
 
-**Required env vars:** none. The app starts with an empty environment given a session bus and the expected kernel interfaces.
+**Required environment variables:** none. Both binaries have safe defaults; all
+variables below are optional.
 
-**Optional env vars:**
-
-| Variable | Values | Effect |
+| Variable | Consumer | Effect |
 |---|---|---|
-| `RUST_LOG` | tracing filter | Log verbosity |
-| `ZENOMEN_MOCK_SCENARIO` | `nominal`, `zero` / `zerocapabilities`, `gap` / `sensordata` | Use `MockHardware` instead of the Linux provider (`src/hardware/mock.rs:60`–`69`) |
-| `ZENOMEN_BENCHMARK` | `1` | Emit benchmark lines |
-| `ZENOMEN_HW_SESSION` | any value | Bind `zenomen-hw` to the session bus for local testing |
-| `LC_CTYPE` / `LC_ALL` / `LANG` | locale strings | GUI injects `LC_CTYPE=C.UTF-8` when the locale lacks a UTF-8 suffix (`src/main.rs:21`–`31`) |
+| `RUST_LOG` | GUI + daemon | Log filter; default `info`. |
+| `ZENOMEN_MOCK_SCENARIO` | GUI | Selects mock provider scenario; unknown values fall back to real Linux provider. |
+| `ZENOMEN_BENCHMARK=1` | GUI | Emits benchmark measurements to stdout. |
+| `ZENOMEN_HW_SESSION` | Daemon | Binds to session bus instead of system bus (dev/test only). |
+| `LANG`, `LC_CTYPE`, `LC_ALL` | GUI | UTF-8 locale fallback before winit starts. |
 
-**Secrets location:** none. No `.env` file and no credential material is present or read.
+**Secrets location:**
+- None in the repository. No `.env`, credential file, token, or key material is
+  present or read by the application.
+- Privilege is delegated to Polkit and the system D-Bus policy; no application secrets
+  are involved.
+
+**Runtime prerequisites (integration-relevant):**
+- System D-Bus for hardware control; a session D-Bus is required for single-instance
+  enforcement and tray registration, but the app degrades gracefully without one.
+- systemd for packaged `zenomen-hw.service` management.
+- Polkit authority and an authentication agent for interactive authorization.
+- `hp-wmi` kernel module for HP fan/power/RGB interfaces.
+- `nvidia-smi` only when NVIDIA telemetry is desired; its absence is non-fatal.
+- `xdg-open` only when the user clicks "Check for updates"; failure is logged.
 
 ## Webhooks & Callbacks
 
-**Incoming:** None over HTTP. The only inbound channels are D-Bus method calls on:
-- system bus `com.zenomen.Hardware1` (hardware control)
-- session bus `com.zenomen.App` (`PresentWindow`, `Activate`, `Quit`)
-- session bus SNI/DBusMenu objects (tray clicks)
-- session bus `org.kde.StatusNotifierWatcher.RegisterStatusNotifierItem`
+**Incoming:**
+- No HTTP endpoints or webhooks.
+- D-Bus is the inbound interface: system-bus method calls to `com.zenomen.Hardware1`,
+  session-bus calls to `com.zenomen.App`, StatusNotifierItem/DBusMenu events, and
+  D-Bus service activation of `zenomen-hw`.
+- CLI entry points actually parsed by `src/main.rs`: `--install-system-integration`,
+  `--uninstall-system-integration`, and `--minimized`/`-m` (`src/main.rs:40-74`).
+  `README.md:128-140` also advertises `--export-diagnostics`, `--help`, and
+  `--version`, but no matching argument handling was found in the source; diagnostics
+  export is currently a UI callback (`src/app.rs:220-262`).
 
-**Outgoing:** None. No webhook POSTs, telemetry callbacks, update pings, or email.
+**Outgoing:**
+- System-bus method calls to `com.zenomen.Hardware1`.
+- System-bus `CheckAuthorization` calls to `org.freedesktop.PolicyKit1`.
+- Session-bus `RegisterStatusNotifierItem` to `org.kde.StatusNotifierWatcher`.
+- Subprocesses: `nvidia-smi`, `systemctl`, `xdg-open`.
+- No outgoing HTTP, SMTP, WebSocket, or webhook traffic.
 
-## Integration Constraints for Future Work
+## Failure / Degradation Behavior
 
-- The GUI process must remain unprivileged: no direct sysfs writes, no `sudo`, no shell commands. All mutations go through `com.zenomen.Hardware1`.
-- The daemon accepts only predefined operations and validated values (mode allow-list, membership in `platform_profile_choices`, 4-zone RGB schema). Never accept arbitrary paths, command strings, or shell fragments.
-- New D-Bus methods must be polkit-gated if they mutate hardware, mirrored in `src/service/client.rs`, and surfaced in diagnostics when user-visible.
-- Keep the no-network guarantee: no HTTP client, no downloader. Update discovery stays a browser hand-off in `src/desktop/releases.rs`.
-- Every new sysfs read must degrade to `None`/`Unavailable`; every new write must use `write_and_verify` semantics (`src/service/backend.rs:12`–`48`).
-- New daemon sysfs paths require a matching `ReadWritePaths` carve-out in `data/systemd/zenomen-hw.service`, or `ProtectSystem=strict` will deny the write.
-- Do not add `ProtectKernelTunables` to the unit; it would make `/sys` read-only and break fan/power/RGB control.
-- Keep `README.md:70`'s D-Bus path claim aligned with the real installer target (`/usr/share/dbus-1/system.d/`).
+| Missing integration | Observed behavior | Source |
+|---|---|---|
+| `zenomen-hw` not running / no `.service` activation | GUI reports service unavailable, remains read-only, shows actionable message. | `src/service/client.rs:232-249` |
+| Polkit denies or no agent | Mutating call fails before sysfs write; hardware state unchanged. | `src/service/contract.rs:55-80` |
+| StatusNotifierWatcher absent | Tray registration skipped with info log; app continues. | `src/desktop/tray.rs:201-217` |
+| Session D-Bus absent | Single-instance/tray disabled; app runs standalone. | `src/desktop/single_instance.rs:66-74` |
+| `nvidia-smi` absent or fails | dGPU telemetry returns `None`; never blocks the sampling tick and never fabricates values. | `src/hardware/linux/provider.rs:66-73`, `src/hardware/linux/gpu.rs:248-292` |
+| hwmon/ACPI/RGB sysfs absent | Capability flags false; UI shows `Unavailable`; no panic. | `src/hardware/registry.rs`, `src/hardware/rgb.rs` |
+| `xdg-open` missing | Logged warning only; no crash. | `src/app.rs:267-271` |
 
 ---
 
-*Integration audit: 2026-11-06*
+*Integration audit: 2026-11-07*

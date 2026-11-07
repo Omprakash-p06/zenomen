@@ -1,378 +1,351 @@
 ---
-last_mapped_commit: 30d62de2cdf6f507822944e5602bdd907539ce38
-last_mapped_at: 2026-11-06
+last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_at: 2026-11-07
 ---
-<!-- refreshed: 2026-11-06 -->
+<!-- refreshed: 2026-11-07 -->
 
 # Architecture
 
-**Analysis Date:** 2026-11-06
+**Analysis Date:** 2026-11-07
 
 ## System Overview
 
-ZenOmen is a two-process system built from one Cargo package (`zenomen`) that produces two binaries:
-
-1. `zenomen` — the unprivileged Slint desktop GUI (`src/main.rs`).
-2. `zenomen-hw` — the privileged, headless system D-Bus daemon (`src/bin/zenomen-hw.rs`).
-
-The GUI reads telemetry **in-process** from procfs/sysfs and sends every hardware **mutation** over the system bus to the daemon, which authorizes the caller with Polkit and performs verified sysfs writes.
+ZenOmen is a two-process Rust (edition 2024) application. The **unprivileged GUI** (`zenomen`) owns all rendering, telemetry sampling, and configuration; the **privileged daemon** (`zenomen-hw`) owns every hardware mutation and is reached only over system D-Bus through Polkit-gated calls.
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│ Presentation — Slint, UI thread, unprivileged                             │
-│  `ui/app.slint` router  ·  `ui/screens/*`  ·  `ui/components/*`  ·  theme │
-└───────────────────────────────┬──────────────────────────────────────────┘
-                                │ properties in (formatted strings)
-                                │ callbacks out (user intents only)
-┌───────────────────────────────▼──────────────────────────────────────────┐
-│ Bridge — `src/app.rs` (`ZenOmenApp`)                                      │
-│  callback → `AppCommand` → `SyncSender` (depth 8, drop on full)           │
-│  `AppEvent` → `AppState::apply` → `invoke_from_event_loop` → `apply_to_ui`│
-└──────────────┬───────────────────────────────────────────┬───────────────┘
-               │ command channel                           │ event channel
-┌──────────────▼──────────────────┐          ┌─────────────▼───────────────┐
-│ Core — worker thread            │          │ Event pump thread           │
-│ `core/worker.rs` 1 Hz deadline  │          │ `core/worker.rs` events →   │
-│ `core/state.rs` single writer   │          │ `ZenOmenApp::handle_event`  │
-│ `core/telemetry.rs` 120-point   │          └─────────────────────────────┘
-└──────────────┬──────────────────┘
-               │ `HardwareProvider` trait (`Send + Sync`)
-┌──────────────▼──────────────────┐          ┌─────────────────────────────┐
-│ Hardware adapters (GUI process) │          │ Privileged daemon           │
-│ `hardware/linux/provider.rs`    │          │ `src/bin/zenomen-hw.rs`     │
-│ `hardware/registry.rs` canonical│          │ `service/contract.rs`       │
-│ `hardware/linux/{cpu,gpu,...}`  │          │ `service/polkit.rs`         │
-│ `hardware/mock.rs` scenarios    │          │ `service/backend.rs`        │
-└─────────────────────────────────┘          │  `write_and_verify` → sysfs │
-                                             └──────────────▲──────────────┘
-                                                            │ system D-Bus
-                                             `service/client.rs` (GUI side)
-                                             `com.zenomen.Hardware1`
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Process A — `zenomen`  (regular user; built only with `--features ui`)      │
+│                                                                              │
+│  ui/app.slint + ui/screens/* + ui/components/*   ← pure declarative Slint    │
+│                     ▲ Slint properties (strings only)                        │
+│  src/app.rs  (Slint ↔ core bridge; callbacks→AppCommand, AppEvent→properties)│
+│                     ▲ AppState::apply / invoke_from_event_loop               │
+│  src/core/  (events, state, worker, telemetry, diagnostics, benchmark)       │
+│  src/hardware/  (HardwareProvider trait, SensorRegistry, Linux/mock/         │
+│                  unavailable backends — read-only sysfs/procfs)              │
+│  src/config, src/logging, src/rgb, src/desktop                               │
+└───────────┬──────────────────────────────────────┬───────────────────────────┘
+            │ session D-Bus                        │ system D-Bus (control only)
+            ▼                                      ▼
+  com.zenomen.App (/com/zenomen/App)      com.zenomen.Hardware1
+  org.kde.StatusNotifierItem (/StatusNotifierItem)   /com/zenomen/Hardware1
+  com.canonical.dbusmenu (/MenuBar)       src/service/client.rs (zbus::blocking)
+            │                                      │
+            │                              ┌───────▼───────────────────────────┐
+            │                              │ Process B — `zenomen-hw` (root)   │
+            │                              │  src/service/contract.rs          │
+            │                              │   #[interface] + polkit gate      │
+            │                              │  src/service/backend.rs           │
+            │                              │   verified sysfs writes           │
+            │                              │  src/service/polkit.rs            │
+            │                              │  systemd: ProtectSystem=strict    │
+            │                              └───────────────────────────────────┘
+            ▼
+  desktop actions (PresentWindow / Quit) → src/main.rs action thread
 ```
 
-Desktop shell services also live in the GUI process on the **session** bus: single-instance ownership of `com.zenomen.App` and a StatusNotifierItem tray (`src/desktop/`).
+There is exactly one process-level split. The GUI never escalates privileges, never imports `src/service/backend.rs`, and never writes sysfs. The daemon is designed to build without Slint (`--no-default-features`; `src/lib.rs:8` gates `app`, and `build.rs:11` skips compiling `ui/app.slint`); it never samples telemetry and never runs a window event loop.
 
 ## Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|----------------|------|
-| GUI entry point | CLI flags, config load, single instance, tray, provider selection, thread wiring, teardown | `src/main.rs` |
-| Library root | Module tree plus `slint::include_modules!()` (generated `AppWindow`) | `src/lib.rs` |
-| Slint bridge | Queue UI callbacks as commands; fold events into state; publish formatted strings to Slint properties | `src/app.rs` |
-| Typed contracts | `ScreenId`, `AppCommand`, `AppEvent` | `src/core/events.rs` |
-| Core state | Single source of truth; exhaustive `apply(&AppEvent)`; status/degradation logic | `src/core/state.rs` |
-| Monitoring worker | 1 Hz deadline loop, visibility gating, command dispatch, off-thread mutations | `src/core/worker.rs` |
-| Telemetry history | Bounded `VecDeque` (120), SVG chart/sparkline path generation | `src/core/telemetry.rs` |
-| Diagnostics | Report assembly, DMI/OS/kernel collection, JSON export | `src/core/diagnostics.rs` |
-| Benchmark instrumentation | RSS/PSS reading and stage timing (`ZENOMEN_BENCHMARK`) | `src/core/benchmark.rs` |
-| Configuration | `AppConfig` schema, clamping, atomic TOML save, corruption backup | `src/config/{mod,schema}.rs` |
-| Provider contract | `HardwareProvider`, `HardwareCapabilities`, `TelemetrySnapshot` | `src/hardware/provider.rs` |
-| Sensor registry | One canonical scan for CPU temp, fan tachometers, fan control, ACPI profiles | `src/hardware/registry.rs` |
-| Linux adapters | procfs CPU/RAM, DRM/NVIDIA GPU, hwmon scan, provider assembly | `src/hardware/linux/` |
-| Mock provider | Deterministic nominal/zero/gap scenarios | `src/hardware/mock.rs` |
-| D-Bus contract | `com.zenomen.Hardware1` methods and Polkit gate | `src/service/contract.rs` |
-| D-Bus client | Blocking proxy used by the worker; status/polkit probes | `src/service/client.rs` |
-| Daemon backend | Verified sysfs writes, retries, presets, RGB variants | `src/service/backend.rs` |
-| Polkit verifier | `CheckAuthorization` against `com.zenomen.hardware.control` | `src/service/polkit.rs` |
-| Daemon entry | Connects to system (or session in tests) bus, serves the interface | `src/bin/zenomen-hw.rs` |
-| Desktop integration | Single instance, SNI tray, XDG autostart, releases link, installer | `src/desktop/` |
-| RGB model/migration | Color validation, profiles, OpenOMEN import | `src/rgb/` |
-| UI shell | Window, sidebar/header/status strip, screen router | `ui/app.slint` |
-| UI screens | Overview, Cooling, Performance, Lighting, Settings, Diagnostics | `ui/screens/*.slint` |
-| UI components | Reusable cards, charts, pills, buttons, notices | `ui/components/*.slint` |
-| Theme tokens | Colors, typography, metrics, bundled fonts | `ui/theme/` |
+| GUI entry point | Logging, config load, single instance, provider selection, thread orchestration, shutdown order | `src/main.rs` |
+| Slint bridge | Queue UI callbacks as `AppCommand`; fold `AppEvent` into `AppState`; publish properties on the UI thread | `src/app.rs` |
+| UI shell / router | Window layout, sidebar, 6-screen router keyed by `current-screen`; no hardware access | `ui/app.slint` |
+| Event contract | `AppCommand` (UI→core), `AppEvent` (core→UI), compile-time `ScreenId` | `src/core/events.rs` |
+| Single-writer state | `AppState` + `apply(&AppEvent)` + status/degradation derivation | `src/core/state.rs` |
+| Monitoring worker | 1 Hz deadline loop, on-demand refresh, config persistence, single in-flight mutation | `src/core/worker.rs` |
+| Telemetry history | Bounded `VecDeque` (120 points) and SVG path generation (pure) | `src/core/telemetry.rs` |
+| Diagnostics | Report assembly from state + registry + DMI/procfs; atomic JSON export | `src/core/diagnostics.rs` |
+| Hardware contract | `HardwareProvider` trait, `HardwareCapabilities`, `TelemetrySnapshot` | `src/hardware/provider.rs` |
+| Sensor registry | Canonical CPU-temp/fan/ACPI/battery bindings discovered once, shared by dashboard and diagnostics | `src/hardware/registry.rs` |
+| Linux backend | procfs/sysfs/DRM/nvidia-smi sampling; all Linux-specific paths live here | `src/hardware/linux/*.rs` |
+| Mock / unavailable backends | Deterministic scenarios and an honest zero-capability platform stub | `src/hardware/mock.rs`, `src/hardware/unavailable.rs` |
+| D-Bus server contract | `com.zenomen.Hardware1` methods; Polkit gate on all mutating methods | `src/service/contract.rs` |
+| Verified hardware writes | sysfs write + read-back + exponential-backoff retry; presets; RGB variants | `src/service/backend.rs` |
+| Polkit verifier | `CheckAuthorization` against `org.freedesktop.PolicyKit1.Authority` | `src/service/polkit.rs` |
+| D-Bus client | Blocking zbus calls, connection caching, actionable offline errors | `src/service/client.rs` |
+| Daemon entry point | Build/serve `com.zenomen.Hardware1` on system bus (or session when `ZENOMEN_HW_SESSION` set) | `src/bin/zenomen-hw.rs` |
+| Desktop integration | Single instance, SNI tray, close-to-tray, XDG autostart, release link | `src/desktop/*` |
+| Config | `~/.config/zenomen/config.toml` with atomic save and corrupt-file recovery | `src/config/mod.rs`, `src/config/schema.rs` |
+| RGB domain | Profile schema, strict hex validation, OpenOMEN migration, built-in presets | `src/rgb/*` |
+| Logging | stderr + daily rotating file under the XDG state dir | `src/logging.rs` |
 
 ## Pattern Overview
 
-**Overall:** Ports-and-adapters hardware boundary plus a unidirectional, message-driven UI bridge, split across a privilege boundary.
+**Overall:** Layered hexagonal-ish architecture with a typed message bus at the centre and a privilege boundary implemented as a D-Bus service.
 
 **Key Characteristics:**
-- One trait (`HardwareProvider`) is the only seam between core logic and hardware (`src/hardware/provider.rs:232`).
-- Exactly two message types cross the core/UI boundary: `AppCommand` (UI → core) and `AppEvent` (core → UI) (`src/core/events.rs:71`, `src/core/events.rs:115`).
-- `AppState::apply` is the only mutator of view state (`src/core/state.rs:109`).
-- Hardware **reads** happen in the unprivileged process; hardware **writes** happen only in the daemon.
-- Absence is modeled as `Option`/empty collections/empty strings, never as `0` (`src/hardware/provider.rs:12-14`, `src/app.rs:444-458`).
-- All UI mutation happens on the Slint event loop via `slint::invoke_from_event_loop` (`src/app.rs:342`).
-- Memory is bounded by construction: 120-sample ring buffer plus regenerated path strings (`src/core/telemetry.rs:27`, `src/core/telemetry.rs:141-158`).
+- **Single writer:** `AppState` changes through `AppState::apply(&AppEvent)` (`src/core/state.rs:109`); the UI only receives formatted strings.
+- **Message-driven UI:** every visible change is the result of one `AppEvent`, published inside `slint::invoke_from_event_loop` (`src/app.rs:327-353`).
+- **Read/write split:** telemetry reads happen in-process via `HardwareProvider`; all writes cross the D-Bus + Polkit boundary.
+- **Honest absence:** missing sensors are `None`/empty/zero-length, never fabricated zeros; `UnavailableHardwareProvider` reports zero capabilities.
+- **No async runtime in the GUI:** `std::thread` + `std::sync::mpsc`; zbus is used in `blocking` mode (`Cargo.toml:34`). Only the daemon uses zbus's async executor.
+- **Feature-gated UI:** `ui` is a default feature; `zenomen` requires it, `zenomen-hw` builds without it.
 
 ## Layers
 
-**Presentation (Slint):**
-- Purpose: Render properties and emit user intents; no hardware access and no formatting of raw values.
-- Location: `ui/app.slint`, `ui/screens/`, `ui/components/`, `ui/theme/`.
-- Contains: window shell, six screens, reusable components, design tokens, bundled Inter/JetBrains Mono fonts.
-- Depends on: nothing in Rust except the generated property/callback surface.
-- Used by: the bridge only.
+**Presentation — Slint:**
+- Purpose: Declarative rendering; property bindings only.
+- Location: `ui/app.slint`, `ui/screens/`, `ui/components/`, `ui/theme/`
+- Contains: `AppWindow`, six screens (Overview, Cooling, Performance, Lighting, Settings, Diagnostics), shared cards/charts/status strip, theme tokens and bundled Inter/JetBrains Mono fonts.
+- Depends on: nothing executable — imports only other `.slint` files and `std-widgets.slint`.
+- Used by: `src/app.rs` (generated `AppWindow` via `slint::include_modules!()` in `src/lib.rs:18-19`).
 
-**Bridge (`src/app.rs`):**
-- Purpose: Translate callbacks into queued commands; translate events into state plus Slint property writes.
-- Location: `src/app.rs:36-354` (type), `src/app.rs:94-273` (callbacks), `src/app.rs:386-519` (rendering).
-- Contains: `ZenOmenApp`, `send_command`, `lock_state`, `apply_to_ui`, formatting helpers.
-- Depends on: `core` types, `hardware` data types, one `Arc<SensorRegistry>` for diagnostics labels.
-- Used by: `src/main.rs` and the event pump thread.
+**Bridge:**
+- Purpose: The only bidirectional path between UI and core.
+- Location: `src/app.rs`
+- Contains: `ZenOmenApp` (`Weak<AppWindow>`, `SyncSender<AppCommand>`, `Arc<Mutex<AppState>>`, registry slot, close-to-tray flag), `install_callbacks`, `handle_event`, `initialize`, `apply_to_ui`.
+- Depends on: `src/core`, `src/hardware` data types, `src/rgb`, `src/config`, `src/desktop::releases`.
+- Used by: `src/main.rs` only.
 
-**Core (state and orchestration):**
-- Purpose: Own app state, sampling cadence, bounded history, diagnostics, and the command/event vocabulary.
-- Location: `src/core/`.
-- Contains: `AppState`, `AppEvent`, `AppCommand`, `spawn_monitoring_worker`, `TelemetryHistory`, `DiagnosticsReport`, benchmark helpers.
-- Depends on: `hardware` (data types and the provider trait), `config`, `service` (client, result types), `rgb`.
-- Used by: the bridge and `src/main.rs`.
+**Application core:**
+- Purpose: Own the truth about what is displayed and the sampling cadence.
+- Location: `src/core/`
+- Contains: `AppCommand`/`AppEvent`/`ScreenId`, `AppState`, `spawn_monitoring_worker`, `TelemetryHistory`/SVG paths, diagnostics, RSS benchmarking.
+- Depends on: `src/hardware` types and `src/service` types (client status, `PresetResult`).
+- Used by: `src/app.rs`, `src/main.rs`, tests.
 
-**Hardware adapters (unprivileged reads):**
-- Purpose: Convert kernel interfaces into `TelemetrySnapshot` values.
-- Location: `src/hardware/`.
-- Contains: `LinuxHardwareProvider`, `SensorRegistry`, hwmon/CPU/GPU/memory parsers, mock provider, RGB interface detection.
-- Depends on: std only (plus `serde` for data types).
-- Used by: the monitoring worker and diagnostics.
+**Hardware abstraction (read side):**
+- Purpose: One seam for every sensor read.
+- Location: `src/hardware/`
+- Contains: `HardwareProvider` trait (`src/hardware/provider.rs:235`), `SensorRegistry`, `LinuxHardwareProvider`, `MockHardware`, `UnavailableHardwareProvider`, RGB interface detection.
+- Depends on: std only (+ serde for snapshot/capability serialization).
+- Used by: the monitoring worker and diagnostics; never by Slint code.
 
-**Service (privileged write path):**
-- Purpose: Expose a narrow, Polkit-gated D-Bus API and execute verified sysfs writes.
-- Location: `src/service/`.
-- Contains: `HardwareService` (`contract.rs`), `HardwareBackend` (`backend.rs`), `PolkitVerifier` (`polkit.rs`), blocking `HardwareServiceClient` (`client.rs`), `FanMode`/`PresetResult`/`HardwareControlError` (`types.rs`).
-- Depends on: `zbus`, std fs, `rgb`/`hardware::rgb` types.
-- Used by: the daemon binary (server side) and the worker (client side).
+**Privileged control (write side):**
+- Purpose: Validate, authorize, write, verify hardware state.
+- Location: `src/service/`
+- Contains: D-Bus interface (`contract.rs`), sysfs backend (`backend.rs`), Polkit (`polkit.rs`), blocking client (`client.rs`), domain types (`types.rs`).
+- Depends on: `zbus`, `serde_json`, `thiserror`, `crate::rgb`, `crate::hardware::rgb`.
+- Used by: `src/bin/zenomen-hw.rs` (server) and `src/core/worker.rs` (client).
 
-**Desktop shell (session bus + XDG):**
-- Purpose: Single instance, tray, autostart, releases link, system installer.
-- Location: `src/desktop/`.
-- Contains: `ensure_single_instance`, `register_tray`, `set_autostart_enabled`, `open_releases_page`, `install`/`uninstall`.
-- Depends on: `zbus` (session bus), std fs/process, `directories`.
-- Used by: `src/main.rs` and the worker (autostart toggles).
+**OS/desktop integration:**
+- Purpose: Session-bus lifecycle and user-scoped files.
+- Location: `src/desktop/`, `src/config/`, `src/logging.rs`, `src/rgb/migration.rs`
+- Contains: single instance, SNI tray, autostart, release link, system integration installer, config TOML, log rotation, profile migration.
+- Depends on: `zbus::blocking`, `directories`, `toml`, `tracing`.
+- Used by: `src/main.rs`, the worker (config persistence), and the Settings screen callbacks.
 
-**Persistence:**
-- Purpose: Durable user configuration and diagnostics output.
-- Location: `src/config/mod.rs:20-116`, `src/core/diagnostics.rs:145`, `src/rgb/migration.rs`.
-- Contains: `~/.config/zenomen/config.toml`, backups `config.toml.bak.<epoch>`, diagnostics JSON under `<config_dir>/diagnostics/`, OpenOMEN RGB migration into the ZenOmen config dir.
-- Depends on: `directories`, `toml`, `serde_json`, atomic write helpers.
+**Packaging/data:**
+- Purpose: Ship the systemd unit, D-Bus policy, Polkit action, desktop entry, icons, and fonts.
+- Location: `data/`, `Cargo.toml` (`[package.metadata.packager]`), `.github/workflows/`
+- Contains: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.{conf,service}`, `data/polkit/com.zenomen.hardware.policy`, `data/applications/zenomen.desktop`, `data/icons/**`, `ui/theme/fonts/**`.
+- Note: there is **no** on-disk D-Bus introspection XML; zbus generates introspection from `#[interface]` attributes in `src/service/contract.rs`, `src/desktop/single_instance.rs`, and `src/desktop/tray.rs`.
 
 ## Data Flow
 
-### Primary Flow — telemetry sample to rendered pixel
+### Primary Request Path — telemetry tick → pixels
 
-1. The worker thread wakes on its deadline or an immediate refresh (`src/core/worker.rs:98-118`).
-2. `sample_and_dispatch` calls `provider.sample_telemetry()` (`src/core/worker.rs:331-346`).
-3. `LinuxHardwareProvider` reads `/proc/stat`, cpufreq or `/proc/cpuinfo`, the canonical registry temperature/fans, `/proc/meminfo`, ACPI profiles, and GPU data (`src/hardware/linux/provider.rs:115-201`).
-4. `SensorRegistry` supplies CPU temperature, fan RPMs, fan mode and power profiles from the paths discovered once at startup (`src/hardware/registry.rs:69-114`).
-5. A `AppEvent::TelemetryUpdated(snapshot)` is sent on the event channel (`src/core/worker.rs:336-338`).
-6. The event pump thread calls `app.handle_event(event)` for every event (`src/main.rs:220-229`).
-7. `handle_event` folds the event into `AppState` under a mutex (`src/app.rs:335-338`, `src/core/state.rs:109-142`), appending a `TelemetryPoint` and regenerating SVG paths (`src/core/state.rs:116-141`).
-8. `slint::invoke_from_event_loop` schedules `apply_to_ui` on the UI thread (`src/app.rs:340-352`).
-9. `apply_to_ui` formats strings/colors and writes `AppWindow` properties (`src/app.rs:386-519`); Slint re-renders.
-10. `ui/app.slint` routes on `current-screen` and passes properties to the active screen (`ui/app.slint:260-425`).
+1. `spawn_monitoring_worker` opens with an initial capabilities event and an immediate sample (`src/core/worker.rs:49-64`).
+2. Loop waits with `command_receiver.recv_timeout(deadline - now)`; `RefreshTelemetry` breaks the wait immediately (`src/core/worker.rs:103-148`).
+3. On timeout, `sample_and_dispatch` calls `HardwareProvider::sample_telemetry()` (`src/core/worker.rs:345-360`).
+4. `LinuxHardwareProvider::sample_telemetry` reads `/proc/stat`, cpufreq (fallback `/proc/cpuinfo`), the canonical CPU-temp binding, `/proc/meminfo`, fan tachometers, `platform_profile*`, then NVIDIA watcher or DRM GPU sysfs (`src/hardware/linux/provider.rs:117-205`).
+5. Snapshot → `AppEvent::TelemetryUpdated` → `mpsc::Sender<AppEvent>` → `zenomen-event-pump` thread (`src/main.rs:245-254`).
+6. `ZenOmenApp::handle_event` applies the event to `AppState` under the mutex, then queues `apply_to_ui` via `slint::invoke_from_event_loop` (`src/app.rs:327-353`).
+7. `AppState::apply` pushes a `TelemetryPoint`, regenerates chart + sparkline SVG paths, fills first-seen fan/power values (`src/core/state.rs:116-142`).
+8. `apply_to_ui` formats values into `SharedString`s and sets ~50 Slint properties (`src/app.rs:386-519`).
 
-### Secondary Flow — mutating hardware control
+### Control Path — fan/power/RGB mutation
 
-1. A screen callback reaches the bridge (e.g. `set-fan-mode`), which queues `AppCommand::SetFanMode` (`src/app.rs:129-133`).
-2. The worker receives the command (`src/core/worker.rs:222-232`).
-3. `execute_mutating_action` spawns a named `zenomen-ctrl-*` thread and an inner `zenomen-rpc-*` thread, waiting at most 30 s (`src/core/worker.rs:350-380`).
-4. The inner thread calls `HardwareServiceClient::set_fan_mode` (`src/service/client.rs:123-141`), a **blocking** zbus call to `com.zenomen.Hardware1` (`src/service/client.rs:59-68`).
-5. The daemon's `HardwareService::set_fan_mode` calls `authorize(&hdr)`, which asks Polkit for `com.zenomen.hardware.control` with user interaction allowed (`src/service/contract.rs:56-80`, `src/service/contract.rs:117-128`).
-6. `HardwareBackend::set_fan_mode` maps the mode to its sysfs value and calls `write_and_verify` with 3 attempts and exponential backoff (`src/service/backend.rs:12-48`, `src/service/backend.rs:179-193`).
-7. The confirmed value or an error string becomes `AppEvent::FanModeChanged` (`src/core/worker.rs:226-231`).
-8. `AppState::apply` clears `pending_fan_mode` and records either the confirmed mode or `last_control_error` (`src/core/state.rs:162-182`); `apply_to_ui` publishes the banner and mode (`src/app.rs:421-433`).
+1. Slint callback (`set-fan-mode`, `set-power-profile`, `apply-preset`, `apply-rgb-preset`, `set-rgb-power`) is installed as an `AppCommand` sender (`src/app.rs:94-213`).
+2. `send_command` uses `try_send` on a depth-8 `SyncSender`; a full queue drops the click and logs (`src/app.rs:357-369`).
+3. Worker matches the command and calls `execute_mutating_action` (`src/core/worker.rs:227-297`).
+4. One mutation at a time: `AtomicBool` swap rejects concurrent writes with an immediate error event; an `InFlightGuard` releases the slot even if the RPC thread panics/times out (`src/core/worker.rs:390-446`).
+5. A `zenomen-ctrl-*` thread spawns a nested `zenomen-rpc-*` thread and waits at most 30 s (`src/core/worker.rs:413-436`).
+6. `HardwareServiceClient` performs blocking zbus calls on the system bus (`src/service/client.rs:59-98`, `123-141`).
+7. Daemon `HardwareService` method calls `authorize()` → `PolkitVerifier::check_authorization` with `com.zenomen.hardware.control` and `allow_user_interaction=true` (`src/service/contract.rs:56-80`).
+8. `HardwareBackend` writes the sysfs target, sleeps, reads back, retries with exponential backoff (3 attempts, 50 ms initial for fan/power, 10 ms for RGB), and returns the confirmed value (`src/service/backend.rs:12-48`, `179-265`).
+9. `PresetResult` is returned as JSON for combined presets; every leg is reported independently and a total failure becomes a D-Bus error (`src/service/backend.rs:269-355`).
+10. Result → `AppEvent::FanModeChanged` / `PowerProfileChanged` / `PresetApplied` / `RgbProfileApplied` / `RgbPowerChanged` → state → UI.
+11. Before the call, `AppEvent::FanModeRequested` is emitted so the UI shows an in-flight state for the duration of the Polkit prompt (`src/core/events.rs:131-136`, `src/core/worker.rs:232`).
 
-### Tertiary Flow — visibility-gated sampling
+### Startup Path
 
-1. Window close with close-to-tray enabled sends `AppCommand::SetUiVisible(false)` and hides the window (`src/main.rs:122-133`).
-2. Start-minimized does the same before running the loop (`src/main.rs:235-243`).
-3. The worker switches from `recv_timeout(deadline)` to blocking `recv()`; **no periodic sampling occurs while hidden** (`src/core/worker.rs:99-118`).
-4. A tray/desktop `PresentWindow` action shows the window and sends `SetUiVisible(true)` (`src/main.rs:145-155`).
-5. The worker samples immediately and resets its deadline (`src/core/worker.rs:122-134`).
+1. `logging::init()` installs stderr + rotating file layers, never aborting on failure (`src/main.rs:24`, `src/logging.rs:76`).
+2. Root-only `--install-system-integration` / `--uninstall-system-integration` are handled before any UI (`src/main.rs:41-65`).
+3. Config loads from `directories::ProjectDirs` (`~/.config/zenomen/config.toml`), with corrupt-file backup + defaults (`src/config/mod.rs:34-78`).
+4. `ensure_single_instance` requests `com.zenomen.App` on the session bus with `DO_NOT_QUEUE`; a secondary instance invokes `PresentWindow` and exits (`src/desktop/single_instance.rs:67-114`).
+5. Tray SNI + DBusMenu objects are registered; a missing `StatusNotifierWatcher` is non-fatal (`src/desktop/tray.rs:186-220`).
+6. Short-lived OpenOMEN RGB migration runs non-destructively (`src/main.rs:98-112`, `src/rgb/migration.rs`).
+7. `AppWindow::new()`, `ZenOmenApp::new`, callbacks installed, close-to-tray interceptor installed (`src/main.rs:114-136`).
+8. Provider selection: `ZENOMEN_MOCK_SCENARIO` → mock; else Linux provider on Linux; else `UnavailableHardwareProvider` (`src/main.rs:186-211`).
+9. `initialize(capabilities)` applies capabilities and writes the first frame directly (no event loop yet), including OS/kernel/DMI diagnostics (`src/app.rs:292-320`).
+10. Config events are applied; the event pump, monitoring worker, and desktop-action thread start; window shows or starts hidden (`src/main.rs:237-268`).
+11. Teardown sends `Shutdown`, drops senders/UI/app in dependency order, joins the worker, event pump, and action thread (`src/main.rs:270-278`).
 
-### Quaternary Flow — configuration
+### Secondary Flows
 
-1. `main` loads TOML via `load_or_default`; a parse failure backs up the file and returns a notice (`src/main.rs:62-64`, `src/config/mod.rs:34-78`).
-2. `ConfigLoaded`/`ConfigCorrupted` events populate `AppState` and the Settings screen (`src/main.rs:213-216`, `src/app.rs:397-406`).
-3. Settings callbacks queue `AppCommand::Set*` / `UpdateConfig`; the worker mutates a local `AppConfig`, calls `sanitize()`, and `save_atomic()` (temp file + fsync + rename + directory fsync) (`src/core/worker.rs:151-221`, `src/config/mod.rs:85-116`).
-4. The worker echoes `ConfigLoaded` so the core and UI converge on the sanitized values (`src/core/worker.rs:166`, `183`, `195`).
+**Config changes:** Settings callbacks → `AppCommand::UpdateConfig` / `SetPollingInterval` / `SetAutostart` / `SetStartMinimized` / `SetCloseToTray` → worker sanitizes, atomically saves TOML (`src/config/mod.rs:85-116`), writes/removes `~/.config/autostart/zenomen.desktop` (`src/desktop/autostart.rs:67-92`), then emits `AppEvent::ConfigLoaded`.
 
-### Diagnostics export Flow
+**Diagnostics export:** `on_export_diagnostics` snapshots state + registry and spawns `zenomen-diag-export` (`src/app.rs:218-263`); `collect_diagnostics` reads `/etc/os-release`, `/proc/sys/kernel/osrelease`, `/sys/class/dmi/id`, `/sys/class/drm`; JSON is written atomically to `~/.config/zenomen/diagnostics/` (`src/core/diagnostics.rs:59-160`).
 
-1. `export-diagnostics` callback locks a snapshot of `AppState` and clones the registry, then spawns `zenomen-diag-export` (`src/app.rs:220-262`).
-2. `collect_diagnostics` reads OS/kernel/DMI/DRM and formats registry bindings (`src/core/diagnostics.rs:59-100`).
-3. The report is written atomically as JSON (`src/core/diagnostics.rs:145`) and the path is published back with `invoke_from_event_loop` (`src/app.rs:256-260`).
+**Desktop actions:** SNI/menu and `com.zenomen.App` methods push `DesktopAction::{PresentWindow,Quit}` into a depth-16 channel; a dedicated thread calls `invoke_from_event_loop` to show/quit (`src/main.rs:138-168`, `src/desktop/tray.rs:122-183`).
 
-### Daemon Startup Flow
-
-1. `zenomen-hw` initializes `tracing` (`src/bin/zenomen-hw.rs:12-16`).
-2. `zbus::block_on` creates `HardwareBackend::default()` rooted at `/` (`src/bin/zenomen-hw.rs:23-24`, `src/service/backend.rs:56-60`).
-3. It connects to the system bus, or to the session bus when `ZENOMEN_HW_SESSION` is set for tests (`src/bin/zenomen-hw.rs:26-30`).
-4. It owns `com.zenomen.Hardware1` and serves at `/com/zenomen/Hardware1`, then stores the connection for Polkit queries (`src/bin/zenomen-hw.rs:31-40`).
-5. Production activation is via systemd (`data/systemd/zenomen-hw.service`, `Type=dbus`) or D-Bus activation (`data/dbus/com.zenomen.Hardware1.service`).
+**NVIDIA sampling:** `NvidiaSampler` owns a `zenomen-nv-watch` thread with a capacity-1 wake channel; samples older than 3 s are reported unavailable, so a hung driver cannot leave stale numbers on screen (`src/hardware/linux/gpu.rs:191-246`).
 
 **State Management:**
-- `AppState` lives behind `Arc<Mutex<AppState>>`; poisoned locks are recovered with `into_inner()` (`src/app.rs:376-380`).
-- Mutations occur on the pump thread before the UI closure is queued, so the core is always first to know (`src/app.rs:322-353`).
-- The UI is stateless except for Slint properties; it never owns a hardware value.
-- The command channel is `sync_channel(COMMAND_QUEUE_DEPTH = 8)` and uses `try_send`; a full queue drops the request and logs rather than blocking the UI (`src/app.rs:30`, `src/app.rs:356-369`).
-- The window is held as `slint::Weak<AppWindow>` so background threads cannot keep it alive (`src/app.rs:13-14`, `src/app.rs:38`).
+- Canonical state: `Arc<Mutex<AppState>>` inside `ZenOmenApp`; poisoned locks are recovered (`src/app.rs:376-380`).
+- Every event is applied before the UI callback is queued, so the core is always first to know.
+- Navigation is only pushed to Slint on `AppEvent::ScreenChanged`; the sidebar updates immediately on click and the command confirms it asynchronously (`src/app.rs:391-393`).
+- History is bounded at 120 points; `history_window` from config is one of 30/60/120/300 (`src/core/telemetry.rs`, `src/config/schema.rs:98-100`).
 
 ## Key Abstractions
 
-**`HardwareProvider` (port):**
-- Purpose: Make every backend interchangeable and keep hardware out of `core` and `app`.
-- Examples/implementations: `src/hardware/linux/provider.rs:110`, `src/hardware/mock.rs:142`.
-- Pattern: `Send + Sync` trait with `capabilities()` and `sample_telemetry() -> Result<TelemetrySnapshot, String>` (`src/hardware/provider.rs:232-239`). Selected in `src/main.rs:183-195`.
+**`HardwareProvider`** (`src/hardware/provider.rs:235-242`)
+- Purpose: single seam for all sensor reads.
+- Implementations: `LinuxHardwareProvider` (`src/hardware/linux/provider.rs`), `MockHardware` (`src/hardware/mock.rs`), `UnavailableHardwareProvider` (`src/hardware/unavailable.rs`).
+- Pattern: `Send + Sync`, `capabilities()` + `sample_telemetry() -> Result<TelemetrySnapshot, String>`; errors are human-readable and land in the status strip.
 
-**`HardwareCapabilities` (per-subsystem truth):**
-- Purpose: Let each screen name the exact missing interface instead of one coarse unsupported state.
-- Location: `src/hardware/provider.rs:28-145`.
-- Pattern: eight booleans + optional RGB variant; `Default` is `none()`, so an unfilled value degrades the UI rather than inventing hardware.
+**`HardwareCapabilities`** (`src/hardware/provider.rs:28-145`)
+- Purpose: per-subsystem truth (8 booleans + RGB variant), never an aggregate.
+- Pattern: `Default`/`none()` = nothing supported; `all_supported()` for tests; `reported_sensor_count()` counts subsystem flags, not sensors.
 
-**`TelemetrySnapshot` (plain data):**
-- Purpose: One immutable sample crossing thread and process boundaries; `Option` marks absence.
-- Location: `src/hardware/provider.rs:151-220`.
+**`TelemetrySnapshot`** (`src/hardware/provider.rs:152-223`)
+- Purpose: one immutable sample; optional fields mean “not read this tick”.
+- Pattern: `EXPECTED_SENSOR_COUNT = 11`; presence is derived from model names/paths, not from zero values, so idle CPUs still count as reported.
 
-**`SensorRegistry` (canonical sensor bindings):**
-- Purpose: Resolve CPU temperature by driver/label priority and enumerate tachometers/PWM/ACPI once, so dashboard, fan reads, and diagnostics all use the same paths.
-- Location: `src/hardware/registry.rs:17-136`; resolution rules at `:139-222` (k10temp → coretemp → acpitz) and `:225-289` (prefer hp/hp-wmi/platform, then any hwmon).
-- Pattern: scan once at provider construction (`src/hardware/linux/provider.rs:73`), then cheap reads per tick.
+**`AppEvent` / `AppCommand`** (`src/core/events.rs:71-153`)
+- Purpose: the only two directions across the bridge.
+- Pattern: commands carry user intent only; events carry plain data only (no sysfs paths, no commands to run).
 
-**`AppCommand` / `AppEvent` (message vocabulary):**
-- Purpose: The only two directions across the UI boundary.
-- Location: `src/core/events.rs:71-104`, `src/core/events.rs:115-147`.
-- Pattern: Commands are intents; events are facts. `AppState::apply` and the worker's `match` are exhaustive, so adding a variant forces the author to handle it.
+**`AppState::apply`** (`src/core/state.rs:109-266`)
+- Purpose: the single mutation point and the definition of “what is true now”.
+- Pattern: exhaustive match over `AppEvent`; derives status text and degradation from capabilities + latest sample.
 
-**`AppState::apply` (single writer):**
-- Purpose: Guarantee the UI cannot show something the core does not know.
-- Location: `src/core/state.rs:107-260`.
-- Pattern: one exhaustive `match`; derived questions (`status_text`, `is_degraded`) live beside the data (`src/core/state.rs:262-304`).
+**`SensorRegistry`** (`src/hardware/registry.rs:17-152`)
+- Purpose: discover canonical CPU-temp binding (k10temp → coretemp → acpitz), fan tachometers, `pwm1_enable`, `platform_profile`, battery presence once, then share between dashboard and diagnostics.
+- Pattern: `scan_roots(hwmon_root, acpi_root)` for testable filesystem trees; read methods never invent values.
 
-**`HardwareService` / `HardwareServiceClient` (privilege boundary):**
-- Purpose: Narrow API for all mutations: `GetCapabilities`, `GetFanStatus`, `SetFanMode`, `GetPowerProfiles`, `GetPowerProfile`, `SetPowerProfile`, `ApplyPreset`, `ApplyRgbProfile`, `SetRgbEnabled`.
-- Location: server `src/service/contract.rs:83-213`; client `src/service/client.rs:34-343`.
-- Pattern: every mutating method takes `#[zbus(header)]` and calls `authorize` before touching the backend.
+**`HardwareService` / `HardwareBackend`** (`src/service/contract.rs:14`, `src/service/backend.rs:52`)
+- Purpose: D-Bus surface + verified sysfs writer.
+- Pattern: server methods are thin; authorization is centralized in `authorize()`; writes go through `write_and_verify`; the backend is rooted at `/` by default and at a temp dir in tests.
 
-**`HardwareBackend` (verified writer):**
-- Purpose: Keep all sysfs writes in one place with read-back verification.
-- Location: `src/service/backend.rs:52-501`.
-- Pattern: `write_and_verify(path, target, retries, initial_delay)`; RGB has a byte-level variant for the kernel-patch interface (`src/service/backend.rs:464-499`).
+**`FanMode` / `PresetResult`** (`src/service/types.rs:9-103`)
+- Purpose: domain vocabulary shared by daemon, client, and UI state.
+- Pattern: strict request parsing (`auto`/`max` only), sysfs mapping `0=max`, `1=manual`, `2=auto`; presets map to `(platform_profile, fan_mode)` tuples with granular reporting.
 
-**`RgbProfile` / `RgbInterfaceVariant`:**
-- Purpose: One profile model over three incompatible kernel interfaces.
-- Location: `src/rgb/schema.rs:114-150`, `src/hardware/rgb.rs:13-34`.
-- Pattern: detect variant (`FourZone`, `Legacy`, `KernelPatch`) then branch in `apply_rgb_hardware` (`src/service/backend.rs:348-501`).
+**`RgbProfile` / `RgbInterfaceVariant`** (`src/rgb/schema.rs`, `src/hardware/rgb.rs:13-54`)
+- Purpose: 4-zone colour model with strict `#RRGGBB` validation and three kernel interface variants (`FourZone`, `Legacy`, `KernelPatch`).
 
-**`MockScenario`:**
-- Purpose: Exercise nominal, zero-capability, and sensor-gap paths through the real binary.
-- Location: `src/hardware/mock.rs:41-69`; selected by `ZENOMEN_MOCK_SCENARIO` in `src/main.rs:168-195`.
+**`MockScenario`** (`src/hardware/mock.rs:41-87`)
+- Purpose: reproduce nominal, zero-capability, and sensor-gap behaviour without the target laptop.
+- Pattern: selected by `ZENOMEN_MOCK_SCENARIO`; unknown values warn and fall back to real Linux provider selection (in `src/main.rs`) / nominal (in `MockScenario::from_env`).
 
 ## Entry Points
 
-**GUI binary (`zenomen`):**
-- Location: `src/main.rs:19`.
-- Triggers: desktop launcher, `zenomen`, autostart (`zenomen --minimized`), or a second launch that delegates to the primary instance.
-- Responsibilities: locale fix, root-only installer flags, config, single instance/tray, logging/migration, UI construction, bridge installation, provider selection, initial capabilities, event pump, worker, event loop, orderly teardown (`src/main.rs:245-253`).
+**GUI binary — `zenomen`:**
+- Location: `src/main.rs` (`[[bin]]` requires `ui`, `Cargo.toml:40-43`)
+- Triggers: desktop entry `Exec=zenomen %U`, terminal launch, or XDG autostart `zenomen --minimized`.
+- Responsibilities: logging, locale fix-up, root-only install commands, config, single instance, tray, provider selection, worker/pump/action threads, Slint event loop, ordered shutdown.
 
-**Root-only installer flags:**
-- Location: `src/main.rs:35-59`.
-- Triggers: `--install-system-integration`, `--uninstall-system-integration`; handled before any GUI work.
-- Responsibilities: delegate to `src/desktop/system_integration.rs:122-176`, print result, exit 0/1.
+**Daemon binary — `zenomen-hw`:**
+- Location: `src/bin/zenomen-hw.rs:10-46`
+- Triggers: systemd `Type=dbus` unit `data/systemd/zenomen-hw.service`, D-Bus activation via `data/dbus/com.zenomen.Hardware1.service`, or manual `sudo zenomen-hw`.
+- Responsibilities: logging, `HardwareBackend::default()` (root `/`), request `com.zenomen.Hardware1`, serve at `/com/zenomen/Hardware1`, attach the connection for Polkit checks, then `future::pending()` forever.
 
-**Daemon binary (`zenomen-hw`):**
-- Location: `src/bin/zenomen-hw.rs:11`.
-- Triggers: systemd `Type=dbus` unit, D-Bus activation, or a developer running it directly.
-- Responsibilities: serve `com.zenomen.Hardware1` until killed; `ZENOMEN_HW_SESSION` switches to the session bus for integration tests.
+**Session D-Bus service — `com.zenomen.App`:**
+- Location: `src/desktop/single_instance.rs`
+- Triggers: second GUI launch, desktop `Activate`.
+- Responsibilities: `PresentWindow`, `Activate`, `Quit` → `DesktopAction` channel.
 
-**Build script:**
-- Location: `build.rs:8-20`.
-- Triggers: `cargo build`.
-- Responsibilities: compile `ui/app.slint` with style pinned to `fluent`; embed Windows icon under `cfg(windows)`.
+**Tray services:**
+- Location: `src/desktop/tray.rs`
+- Objects: `/StatusNotifierItem` (`org.kde.StatusNotifierItem`), `/MenuBar` (`com.canonical.dbusmenu`).
+- Responsibilities: activation and two menu items (`Open ZenOmen`, `Quit ZenOmen`).
 
-**Session D-Bus names owned by the GUI:**
-- `com.zenomen.App` at `/com/zenomen/App` (`src/desktop/single_instance.rs:10-12`).
-- `org.kde.StatusNotifierItem` at `/StatusNotifierItem` and `com.canonical.dbusmenu` at `/MenuBar` (`src/desktop/tray.rs:14-15`, `:186-220`).
+**Build entry — `build.rs`:**
+- Location: `build.rs:7-25`
+- Triggers: every build.
+- Responsibilities: compile `ui/app.slint` with the pinned `fluent` style only when `CARGO_FEATURE_UI` is set; emit Windows resources under `cfg(windows)`.
 
 ## Architectural Constraints
 
-- **Threading:** The Slint UI thread never touches hardware or D-Bus. Dedicated threads are: `zenomen-monitor-worker` (`src/core/worker.rs:39`), `zenomen-event-pump` (`src/main.rs:222`), `zenomen-desktop-actions` (`src/main.rs:138`), per-request `zenomen-ctrl-*` + `zenomen-rpc-*` (`src/core/worker.rs:359-367`), and `zenomen-diag-export` (`src/app.rs:227`). There is no async runtime in the GUI; the daemon uses `zbus::block_on`.
-- **UI-thread affinity:** Slint properties may only be written on the UI thread. `initialize()` is the one exception because it runs before the event loop starts (`src/app.rs:285-320`). All later writes go through `invoke_from_event_loop` (`src/app.rs:342`).
-- **Single-writer state:** `AppState` changes only through `apply`. Do not add setters or mutate it from UI callbacks.
-- **Privilege split:** The GUI process must never open a sysfs file for writing. Mutations go through `src/service/client.rs` → `HardwareService` → `HardwareBackend`. Reads are intentionally direct and unprivileged (telemetry must work with the daemon absent).
-- **Read/write asymmetry:** Fan RPM, fan mode, power profile, and capabilities are read twice by two independent implementations — `SensorRegistry` in the GUI and `HardwareBackend` in the daemon (`src/hardware/registry.rs:225-289` vs `src/service/backend.rs:77-175`). They can disagree; the GUI's snapshot is what the dashboard shows, the daemon's read-back is what a write is verified against.
-- **Capability source is GUI-local:** `HardwareCapabilities` comes from `SensorRegistry::detect_capabilities` (`src/hardware/registry.rs:117-135`). The daemon's `GetCapabilities` exists (`src/service/contract.rs:86-102`) but the client only uses the call as a liveness probe and discards the body (`src/service/client.rs:78-98`). `battery_metrics` is hardcoded `false` (`src/hardware/registry.rs:134`) even though the UI exposes a battery capability flag.
-- **Non-blocking worker:** Polkit prompts can take arbitrarily long, so mutating calls must go through `execute_mutating_action` (30 s timeout) rather than being awaited on the sampling loop (`src/core/worker.rs:348-380`).
-- **Back-pressure by dropping:** Command sends use `try_send`; a full queue is treated as acceptable loss (`src/app.rs:356-369`). Never replace with `send()` on the UI thread.
-- **Bounded memory:** History is capped by `capacity`, with `pop_front` before `push_back` (`src/core/telemetry.rs:143-149`); SVG paths are regenerated per tick instead of retaining chart models. Release profile is size/RSS oriented (`Cargo.toml:37-44`).
-- **Compile-time UI coupling:** `slint::include_modules!()` lives in `src/lib.rs:14`, so the generated `AppWindow` is part of the library and the daemon binary links it too (types only; no window is ever created). Any `.slint` compile error breaks both binaries.
-- **Screen set is compile-time:** `ScreenId` is an enum with `ALL: [Self; 6]` (`src/core/events.rs:16-34`), and the Slint router validates `0..=5` (`ui/app.slint:191-192`) while the sidebar declares `row-count: 6` (`ui/components/sidebar.slint:52`). Adding a screen requires all three.
-- **Environment switches:** `ZENOMEN_MOCK_SCENARIO` (`src/main.rs:168`), `ZENOMEN_HW_SESSION` (`src/bin/zenomen-hw.rs:26`), `ZENOMEN_BENCHMARK=1` (`src/core/benchmark.rs:245`), `RUST_LOG` (`src/main.rs:88`), and an automatic `LC_CTYPE=C.UTF-8` fallback (`src/main.rs:20-32`).
-- **No network stack:** the only outbound action is `xdg-open` to the releases page (`src/desktop/releases.rs:22-44`); there is no HTTP client dependency.
+- **Threading:** Slint runs on the main thread and is mutated only inside `slint::invoke_from_event_loop`. Named threads in the GUI: `zenomen-monitor-worker`, `zenomen-event-pump`, `zenomen-desktop-actions`, short-lived `zenomen-ctrl-<action>` + nested `zenomen-rpc-<action>`, `zenomen-nv-watch` (provider lifetime), `zenomen-diag-export`. The daemon runs a single zbus async executor via `zbus::block_on`.
+- **Global state:** no module-level mutable `static`s. Shared state is held in `Arc`s: `Arc<Mutex<AppState>>`, `Arc<AtomicBool>` (in-flight mutation and close-to-tray), `Arc<SensorRegistry>`, `Arc<Mutex<Option<Connection>>>` (client cache), `Mutex<CpuSampler>`, `Arc<Mutex<Option<(Instant, GpuTelemetry)>>>`.
+- **Single-writer discipline:** add a new `AppState` field only if it can be changed from `AppState::apply`; the one existing exception is `ZenOmenApp::set_provider_label`, which writes `state.provider_label` directly (`src/app.rs:276-283`).
+- **Privilege boundary:** no `std::fs::write` to sysfs outside `src/service/backend.rs`; the GUI must only read. Root-only install paths live in `src/desktop/system_integration.rs` and are gated by `is_root()`.
+- **Platform separation:** all Linux-specific reads are under `src/hardware/linux/`. `src/hardware/mod.rs:8` compiles that module on every target, but only re-exports `LinuxHardwareProvider` under `cfg(target_os = "linux")` (`src/hardware/mod.rs:16-17`); non-Linux selects `UnavailableHardwareProvider` (`src/main.rs:201-210`). Never add speculative paths to `src/hardware/unavailable.rs`.
+- **No async runtime in the GUI:** `std` threads + `mpsc`; zbus is `blocking`. Do not add Tokio.
+- **Bounded resources:** 120-point history, depth-8 command queue, 30 s mutation timeout, 7 rotating log files, ≤40 MB RSS release profile (`opt-level="s"`, LTO, `panic="abort"`, `strip`).
+- **D-Bus contract is a public API:** bus name `com.zenomen.Hardware1`, object path `/com/zenomen/Hardware1`, interface `com.zenomen.Hardware1`. Changing a method signature requires updating `contract.rs`, `client.rs`, and the daemon/systemd/polkit packaging together.
+- **Feature gating:** anything referencing `crate::AppWindow` or `slint` must be behind `#[cfg(feature = "ui")]` or live in `src/app.rs` (module gated in `src/lib.rs:8-9`).
 
-## Anti-Patterns
+## D-Bus Contract (GUI ↔ daemon)
 
-### Writing hardware from the GUI process
+**System bus, destination/path/interface `com.zenomen.Hardware1`.** The daemon binds the session bus instead when `ZENOMEN_HW_SESSION` is set (`src/bin/zenomen-hw.rs:23-27`).
 
-**What happens:** A handler in `src/hardware/` or `src/app.rs` opens `/sys/...` for writing.
-**Why it's wrong:** It bypasses Polkit, the systemd sandbox, and `write_and_verify` read-back; the GUI runs unprivileged and will fail or, worse, succeed partially.
-**Do this instead:** Add a method to `HardwareBackend` using `write_and_verify`, expose it in `src/service/contract.rs` behind `authorize`, add the blocking client call in `src/service/client.rs`, and invoke it from the worker.
+| Method | Signature | Polkit | Implementation |
+|--------|-----------|--------|----------------|
+| `GetCapabilities` | `() -> s` (JSON: `has_fan_control`, `has_power_profiles`, `has_rgb_lighting`, `rgb_variant`, `service_version`) | No | `src/service/contract.rs:86-102` |
+| `GetFanStatus` | `() -> (s, au)` mode + RPMs | No | `src/service/contract.rs:105-113` |
+| `SetFanMode` | `(s) -> s` confirmed mode | Yes | `src/service/contract.rs:117-128` |
+| `GetPowerProfiles` | `() -> as` | No | `src/service/contract.rs:131-135` |
+| `GetPowerProfile` | `() -> s` | No | `src/service/contract.rs:138-142` |
+| `SetPowerProfile` | `(s) -> s` confirmed profile | Yes | `src/service/contract.rs:146-157` |
+| `ApplyPreset` | `(s) -> s` JSON `PresetResult` | Yes | `src/service/contract.rs:161-172` |
+| `ApplyRgbProfile` | `(s) -> s` JSON `RgbProfile` payload | Yes | `src/service/contract.rs:176-191` |
+| `SetRgbEnabled` | `(b) -> s` | Yes | `src/service/contract.rs:195-213` |
 
-### Touching Slint from a background thread
-
-**What happens:** A worker or spawned thread calls `ui.set_*` directly.
-**Why it's wrong:** Slint is not thread-safe; it panics or corrupts the render state.
-**Do this instead:** Send an `AppEvent` and let `ZenOmenApp::handle_event` queue `apply_to_ui` via `slint::invoke_from_event_loop` (`src/app.rs:340-352`).
-
-### Blocking the sampling loop on authorization
-
-**What happens:** A D-Bus mutation is awaited inline in the worker's `match`.
-**Why it's wrong:** A Polkit password dialog would stop telemetry for as long as the dialog is open.
-**Do this instead:** Follow `execute_mutating_action` (`src/core/worker.rs:350-380`).
-
-### Fabricating a reading for an absent sensor
-
-**What happens:** A parser returns `0.0`/`0` when the file is missing, or the bridge writes `"0"` into a property.
-**Why it's wrong:** It violates the project's core value; the UI must say `Unavailable`.
-**Do this instead:** Return `Option`/empty `Vec`/empty `String` (`src/hardware/provider.rs:149-150`) and let `apply_to_ui` skip the property (`src/app.rs:444-458`, `src/app.rs:531-539`).
-
-### Reading sensors in the bridge or UI
-
-**What happens:** `src/app.rs` or a `.slint` file learns about a sysfs path.
-**Why it's wrong:** It puts blocking I/O on the UI thread and breaks the single sampling cadence.
-**Do this instead:** Add the read to a `hardware/linux/*` module, sample it in `LinuxHardwareProvider`, carry it in `TelemetrySnapshot`, and format it in `apply_to_ui`.
-
-### Duplicating hwmon discovery a third time
-
-**What happens:** A new feature scans `/sys/class/hwmon` itself.
-**Why it's wrong:** CPU-temperature priority, fan ordering, and fan-control selection already live in `SensorRegistry`; a copy drifts silently.
-**Do this instead:** Extend `SensorRegistry::scan_roots` (`src/hardware/registry.rs:42-66`) and read through its accessors. If the daemon needs the same binding, pass the concept through the D-Bus contract rather than re-deriving it in `contract.rs`/`client.rs`.
-
-### Adding an event that skips state
-
-**What happens:** A new `AppEvent` is handled only in `apply_to_ui`, or a new `AppCommand` is handled only by a side effect.
-**Why it's wrong:** `AppState` then disagrees with the window, and Diagnostics/serialization lose the fact.
-**Do this instead:** Add the variant, handle it in `AppState::apply` (the compiler enforces exhaustiveness), then publish it in `apply_to_ui`.
-
-### Adding a screen to Slint only
-
-**What happens:** A new `.slint` screen is instantiated but no enum/index/bound is updated.
-**Why it's wrong:** `current-screen` clamps to `0`, so the screen is unreachable.
-**Do this instead:** Update `ScreenId::ALL`, `index`, `from_index`, `title`; the router bound in `ui/app.slint:191-192`; the sidebar row count/model; and the shell's `if` chain.
+Authorization uses action `com.zenomen.hardware.control` (`data/polkit/com.zenomen.hardware.policy`); the bus policy allows any local user to send to the name, and the daemon enforces Polkit per call (`data/dbus/com.zenomen.Hardware1.conf`). `zbus::fdo::Error` mapping is centralized in `impl From<HardwareControlError> for zbus::fdo::Error` (`src/service/types.rs:133-145`).
 
 ## Error Handling
 
-**Strategy:** Degrade and explain; never panic on missing hardware.
+**Strategy:** typed errors inside the service; human-readable `String` at provider and client boundaries; no panics on the sampling path; the UI shows errors in the status strip or a dismissible control-error banner.
 
 **Patterns:**
-- Provider failures return `Err(String)` and become `AppEvent::TelemetrySamplingFailed`, which marks the state degraded and is shown in the status strip (`src/core/worker.rs:339-344`, `src/core/state.rs:143-145`, `src/core/state.rs:266-282`).
-- Mutations return `Result<_, String>`; the bridge records `last_control_error` and the screens render a dismissible banner (`src/core/state.rs:162-235`, `src/app.rs:433`).
-- The daemon uses `HardwareControlError` (`thiserror`) for interface-missing, IO, invalid parameter, verification failure, and Polkit denial (`src/service/types.rs`, `src/service/backend.rs:22-47`), mapped into `zbus::fdo::Error`.
-- Verified writes retry with exponential backoff and report target/actual/retries on failure (`src/service/backend.rs:12-48`).
-- Config corruption is never fatal: the bad file is copied aside and defaults load (`src/config/mod.rs:47-77`).
-- Thread teardown is explicit: `Shutdown` command, drop senders, join worker and pump (`src/main.rs:245-253`).
+- `HardwareControlError` (`thiserror`) for I/O, verification, unsupported mode, Polkit denial, invalid parameter, missing interface (`src/service/types.rs:106-131`).
+- Provider sampling returns `Result<TelemetrySnapshot, String>`; a failure becomes `AppEvent::TelemetrySamplingFailed` and marks the app degraded (`src/core/worker.rs:353-358`, `src/core/state.rs:143-145`).
+- Mutating operations are wrapped with a 30 s timeout; timeout/disconnect/panic all become an error event, and the in-flight slot is released by `Drop` (`src/core/worker.rs:425-446`).
+- Client turns `ServiceUnknown` into an actionable message telling the user to start or install `zenomen-hw` (`src/service/client.rs:232-249`).
+- Config corruption is non-fatal: backup + defaults + `AppEvent::ConfigCorrupted` notice (`src/config/mod.rs:52-76`).
+- Logging failure degrades to stderr only (`src/logging.rs:39-89`).
 
 ## Cross-Cutting Concerns
 
-**Logging:** `tracing` with `tracing_subscriber::fmt` in both binaries; `RUST_LOG`/`EnvFilter` selects verbosity (`src/main.rs:89`, `src/bin/zenomen-hw.rs:12-16`). Named threads make logs traceable.
+**Logging:** `tracing` with `EnvFilter` (`RUST_LOG`, default `info`), stderr layer plus a daily rotating file layer in the XDG state dir (`~/.local/state/zenomen/logs`), 7 files retained (`src/logging.rs`). The `LoggingGuard` must live for the process lifetime.
 
-**Validation:** `AppConfig::sanitize` clamps polling to 500–5000 ms and whitelists history windows 30/60/120/300 (`src/config/schema.rs:90-106`); the daemon validates power-profile names against `platform_profile_choices` and rejects slashes/newlines/NUL (`src/service/backend.rs:234-258`); RGB colors are strict `#RRGGBB` (`src/rgb/schema.rs:47-77`).
+**Validation:** `AppConfig::sanitize` clamps polling to 500–5000 ms and history to 30/60/120/300 (`src/config/schema.rs:88-106`); `FanMode::parse_requested` permits only `auto`/`max`; power profiles must appear in `platform_profile_choices` and reject `\n`, `\r`, `/`, `\0` (`src/service/backend.rs:234-265`); RGB colours use strict hex parsing (`src/rgb/schema.rs`); `ScreenId::from_index` refuses unknown indices.
 
-**Authentication/Authorization:** Polkit action `com.zenomen.hardware.control` with `auth_admin` / `auth_admin_keep` (`data/polkit/com.zenomen.hardware.policy`); D-Bus policy restricts ownership of `com.zenomen.Hardware1` to root (`data/dbus/com.zenomen.Hardware1.conf`).
+**Authentication:** Polkit on every mutating D-Bus method; getters are unauthenticated for diagnostics; the GUI can query readiness without prompting (`flags = 0`, `src/service/client.rs:251-299`).
 
-**Sandboxing:** `zenomen-hw.service` sets `ProtectSystem=strict`, `ProtectHome=true`, `NoNewPrivileges=true`, empty capability bounding set, `RestrictAddressFamilies=AF_UNIX`, and read-write carve-outs for hp-wmi, ACPI, hwmon, and LEDs.
+**Configuration:** TOML at `~/.config/zenomen/config.toml`, atomic temp-file + fsync + rename + parent-dir sync (`src/config/mod.rs:85-116`). The worker is the only writer during a session.
 
-**Packaging:** Cargo Packager metadata in `Cargo.toml:46-75` ships both binaries and the desktop/D-Bus/Polkit/systemd assets; CI gates formatting, clippy, tests, and `cargo audit` (`.github/workflows/ci.yml`); tag releases verify the tag equals `Cargo.toml` version (`.github/workflows/release.yml`).
+**Memory/perf instrumentation:** `src/core/benchmark.rs` reads `/proc/self/smaps_rollup` (fallback `/proc/self/status`) and logs cold-start, warm-dashboard, tray-minimized, dashboard-restored checkpoints (`src/main.rs:95`, `129`, `155`, `242`).
+
+## Anti-Patterns
+
+### Direct `AppState` mutation outside `apply`
+
+**What happens:** `ZenOmenApp::set_provider_label` locks the state and assigns `state.provider_label` directly (`src/app.rs:276-283`), because no `AppEvent` variant carries a provider label.
+**Why it's wrong:** it is the only write path that bypasses the single-writer invariant; adding more exceptions erodes the guarantee that every visible value is reproducible from an event stream.
+**Do this instead:** add an `AppEvent::ProviderLabelChanged(String)` (handled in `src/core/state.rs::apply`) or document the exception at the field and keep it to provider-selection metadata only.
+
+### Publishing order gated on the first snapshot
+
+**What happens:** `apply_to_ui` returns early when `state.latest_snapshot` is `None` (`src/app.rs:444-446`), before setting `service_status_text`, `polkit_status_text`, RGB profile fields, and preset results (all set after the gate).
+**Why it's wrong:** service/Polkit/RGB properties are independent of telemetry, so on a machine with no sample (zero-capability or sampling failure) they keep their `.slint` defaults even though `AppState` knows better.
+**Do this instead:** move the snapshot-independent publishers above the `let Some(snapshot) = ... else { return; }` gate, and only gate the readings that actually need a snapshot.
+
+### Duplicated fan/RGB discovery in read and write paths
+
+**What happens:** the read path resolves fans and RGB in `SensorRegistry::resolve_fans` / `detect_rgb_interface` (`src/hardware/registry.rs:256-320`, `src/hardware/rgb.rs:34-53`), while the daemon independently re-scans `pwm1_enable`, fan inputs, and the three RGB paths in `HardwareBackend::find_fan_control_path` / `get_fan_rpms` / `find_rgb_interface` (`src/service/backend.rs:77-175`, `358-388`).
+**Why it's wrong:** the two implementations can disagree about priority (hp-wmi first vs class-wide fallback, dedup rules), producing “telemetry says one fan, control says another” behaviour.
+**Do this instead:** when touching discovery, make one side delegate to shared helpers (the registry types are already in the same crate) or add a contract test that asserts both find the same paths for the same fixture tree.
+
+### Public `AppState` fields
+
+**What happens:** every field is `pub` (`src/core/state.rs:31-77`), so any module can assign to it without an event.
+**Why it's wrong:** the type system does not enforce the single-writer rule; only review does.
+**Do this instead:** keep new fields private with `pub(crate)` read accessors, or at minimum add them with a comment naming `apply` as the only writer.
+
+### Hard-coded screen cardinality in three places
+
+**What happens:** six screens are encoded in `ScreenId::ALL` (`src/core/events.rs:27-34`), the router bounds `current-screen <= 5` (`ui/app.slint:191-192`), and the `screen-titles` array (`ui/app.slint:196-203`).
+**Why it's wrong:** adding a seventh screen silently falls back to Overview or indexes past the title array unless all three are edited together.
+**Do this instead:** when adding a screen, update `ScreenId::ALL`/`index`/`title`, the `.slint` bound, the title array, and the router in the same commit; add a test that asserts `ScreenId::ALL.len()` equals the UI bound.
 
 ---
 
-*Architecture analysis: 2026-11-06*
+*Architecture analysis: 2026-11-07*

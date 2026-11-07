@@ -1,403 +1,376 @@
 ---
-last_mapped_commit: 30d62de2cdf6f507822944e5602bdd907539ce38
-last_mapped_at: 2026-11-06
+last_mapped_commit: 761e5f975d7c22d1c48bf777a0bcaa1f2db582ba
+last_mapped_at: 2026-11-07
 ---
+<!-- refreshed: 2026-11-07 -->
+
 # Codebase Concerns
 
-**Analysis Date:** 2026-11-06
+**Analysis Date:** 2026-11-07
+
+**Validation basis:** Static review of the Rust sources, data files, tests, and documentation at commit `HEAD` on 2026-11-07. `cargo` is not installed in the analysis environment, so no `cargo test`, `cargo fmt --check`, or `cargo clippy` run was performed. Nothing below asserts that tests pass; findings were verified by reading source and cross-checking line references.
 
 ## Tech Debt
 
-**Permanent degraded state from a hardcoded capability flag:**
-- Issue: `src/hardware/registry.rs:133` hardcodes `battery_metrics: false` in `detect_capabilities()`, but `HardwareCapabilities` has eight subsystem flags and `src/core/state.rs:23` defines `SUBSYSTEM_COUNT = 8`. `reported_sensor_count()` therefore can never exceed 7 on real Linux, so `AppState::is_degraded()` is permanently `true` (see Known Bugs).
-- Files: `src/hardware/registry.rs`, `src/hardware/provider.rs`, `src/core/state.rs`
-- Impact: The "degraded hardware" warning is always visible on supported machines; the Diagnostics screen's battery row is a hardcoded false claim rather than a measured state. This undermines the project's core value that absence is *measured*, not guessed.
-- Fix approach: Implement real battery detection by probing `/sys/class/power_supply/BAT*` (and populate `battery_metrics` plus a battery field on `TelemetrySnapshot`), or remove `battery_metrics` from the struct and reduce `SUBSYSTEM_COUNT` to 7 until battery telemetry exists. Whichever is chosen, make the count test in `src/core/state.rs` derive from the fields instead of a literal.
+**History-window unit mismatch (UI says seconds, worker stores samples):**
+- Issue: The settings UI labels the chart history options as `30s`, `60s`, `120s`, `300s` and the callback parameter is named `seconds`, but `SetHistoryWindow` is treated as a sample count. The displayed window duration therefore changes whenever `polling_interval_ms` changes, and the configured "seconds" value is never converted.
+- Files: `ui/screens/settings.slint` (history-window options from line 348), `src/app.rs:120-124`, `src/core/worker.rs:156-172`, `src/core/worker.rs:190-201`
+- Impact: At the default 1 s interval a "120s" selection holds 120 samples (≈120 s), but at a 2 s interval it holds 240 s of data. Users cannot reason about the window, and persisted config values are ambiguous.
+- Fix approach: Convert seconds to samples at the command boundary using the active `sampling_interval` (`samples = seconds / interval`), store a duration in config, or rename the setting and labels to "samples". Recompute capacity when the polling interval changes; add a test asserting duration stays constant across interval changes.
 
-**`EXPECTED_SENSOR_COUNT` includes a sensor the Linux provider never sets:**
-- Issue: `TelemetrySnapshot::EXPECTED_SENSOR_COUNT = 12` (`src/hardware/provider.rs:188`) counts `rgb_profile`, but `src/hardware/linux/provider.rs` never populates `rgb_profile` (grep for `rgb_profile:` in the Linux provider returns nothing). A fully healthy Linux machine therefore reports "11 of 12 sensors reported".
-- Files: `src/hardware/provider.rs:183-213`, `src/hardware/linux/provider.rs`, `src/core/state.rs:298-301`
-- Impact: Status-strip text is permanently wrong; the second `is_degraded()` branch reinforces the always-degraded bug above.
-- Fix approach: Populate `rgb_profile` from the active RGB state (the state already exists in `AppState.active_rgb_profile`, but the provider is stateless), or exclude it from the sensor count and publish only the telemetry fields the provider actually emits. Keep `EXPECTED_SENSOR_COUNT` adjacent to `reported_sensor_count()` so the two cannot drift.
+**`SensorRegistry::detect_capabilities` hardcodes the RGB sysfs root:**
+- Issue: Capability detection calls `detect_rgb_interface(Path::new("/"))` instead of deriving the root from the registry's scan roots or the provider's configured root.
+- Files: `src/hardware/registry.rs:139`, `src/hardware/rgb.rs:33-53`
+- Impact: Tests using fixture roots still probe the live host `/sys`, breaking test isolation and making custom-root providers report RGB capabilities they cannot actually control. It also contradicts the configurable-root design of `scan_roots` (`src/hardware/registry.rs:52-82`).
+- Fix approach: Carry a `sysfs_root` (or an explicit RGB root) in `SensorRegistry`, or pass it into `detect_capabilities`; default to `/` only in `scan()`. Add a fixture-root test asserting RGB detection does not escape the root.
 
-**Dead UI state field `pending_fan_mode`:**
-- Issue: `AppState.pending_fan_mode` is read in `src/app.rs:432` and cleared in `src/core/state.rs:163`, but nothing in the codebase ever assigns `Some(...)`. `tests/fan_control_tests.rs:11,17,26` assert it stays `None`.
-- Files: `src/core/state.rs:52,90,163`, `src/app.rs:432`, `tests/fan_control_tests.rs`
-- Impact: The "Applying … and verifying read-back…" UI copy can never appear, so the verified-write behaviour — a headline product promise — has no in-progress affordance. Users see no feedback between clicking and the result event.
-- Fix approach: Set `pending_fan_mode = Some(mode)` when dispatching `AppCommand::SetFanMode`, clear it on `FanModeChanged`/`ControlFailed`, and add a test that exercises the transition. Alternatively delete the field and the UI branch to avoid dead code.
+**Fan-control capability divergence between registry and daemon:**
+- Issue: `SensorRegistry::resolve_fans` accepts `pwm1_enable` on any hwmon device, including a non-HP device, and reports `has_fan_control = true`. The privileged backend only accepts `hp-wmi`/`hp` devices and returns `InterfaceMissing` otherwise.
+- Files: `src/hardware/registry.rs:256-315`, `src/service/backend.rs:77-115`
+- Impact: The UI can advertise fan control, then every mutation fails with `InterfaceMissing`. The two discovery paths are independent implementations of the same rule and can drift again.
+- Fix approach: Make the registry use the same acceptance predicate (hp/hp-wmi only) or have the daemon expose its resolved capability and let the UI consume it. Add a test with a non-HP hwmon `pwm1_enable` fixture asserting `fan_control == false`.
 
-**Duplicated polkit authorization plumbing:**
-- Issue: `src/service/polkit.rs` builds the `CheckAuthorization` call by hand, and `src/service/client.rs:252-300` (`check_polkit_status`) hand-builds the same polkit method call again with its own argument marshalling. Both construct `org.freedesktop.PolicyKit1.Authority` / `CheckAuthorization` strings independently.
-- Files: `src/service/polkit.rs`, `src/service/client.rs`
-- Impact: Any polkit API detail change must be made twice; the client path is not exercised by the service path's tests.
-- Fix approach: Extract one `check_authorization(conn, sender, action, allow_interaction)` helper (the service already has this in `src/service/polkit.rs`) and have the client call it through a shared module rather than re-implementing the call.
+**Battery capability advertised but no battery telemetry exists:**
+- Issue: `battery_metrics` is reported from `has_battery`, but `TelemetrySnapshot` has no battery fields and `LinuxHardwareProvider::sample_telemetry` never samples charge or power draw. The capability doc says "Battery charge/power can be read", while the registry doc says only presence is detected.
+- Files: `src/hardware/registry.rs:30-35`, `src/hardware/registry.rs:149`, `src/hardware/provider.rs:45-46`, `src/hardware/provider.rs:152-181`, `src/hardware/linux/provider.rs:117-205`
+- Impact: Any UI that trusts `has_battery_metrics()` will show a battery affordance with no data behind it. This violates the project rule that capabilities must not be fabricated.
+- Fix approach: Rename the flag to `battery_present` and decouple it from `battery_metrics`, or add real charge/power fields to `TelemetrySnapshot` and sample them. Until sampling exists, return `battery_metrics: false` and document presence separately.
 
-**Stringly-typed D-Bus contract duplicated between client and service:**
-- Issue: `src/service/client.rs` invokes `call_method(..., "ApplyRgbProfile", ...)`, `"SetRgbEnabled"`, `"ApplyPreset"`, etc. as string literals; `src/service/contract.rs` declares the same names via `#[interface(name = "com.zenomen.Hardware1")]` method names. There is no generated zbus proxy, so a rename in the contract compiles cleanly and fails only at runtime.
-- Files: `src/service/client.rs:302-344`, `src/service/contract.rs`
-- Impact: Method-name drift is a silent runtime failure mode; argument-order drift is worse (positional `call_method` tuples).
-- Fix approach: Generate a `#[zbus::proxy]` trait from the service interface (or a shared `const` module with method names and signatures) and call through it. This also removes hand-rolled body deserialization.
+**NVIDIA detection path and invocation path disagree:**
+- Issue: Capability detection checks absolute `/usr/bin/nvidia-smi` and `/bin/nvidia-smi`, but the sampler is constructed with the bare program name `"nvidia-smi"`, which resolves via `PATH`.
+- Files: `src/hardware/linux/provider.rs:66-73`, `src/hardware/linux/gpu.rs:250-257`
+- Impact: If the tool exists only at an absolute path outside the daemon's `PATH` (common under systemd, where `PATH` is minimal), the provider advertises a GPU it can never sample; conversely, a `PATH`-only tool is ignored during detection.
+- Fix approach: Resolve the binary once to an absolute `PathBuf` during detection and pass that path to `NvidiaSampler::new`. Add a test for the detection/invocation path contract.
 
-**Hardcoded filesystem roots bypass the backend test seam:**
-- Issue: `HardwareBackend` has a configurable `sysfs_root` (`src/service/backend.rs:53-73`) used by `with_all_roots`-style tests, but `src/hardware/registry.rs:123` calls `detect_rgb_interface(std::path::Path::new("/"))` with a literal `/`, and `src/hardware/linux/provider.rs` reads `/proc/stat`, `/proc/meminfo`, and `/usr/bin/nvidia-smi` directly.
-- Files: `src/service/backend.rs`, `src/hardware/registry.rs`, `src/hardware/linux/provider.rs`, `src/hardware/linux/gpu.rs`
-- Impact: Capability detection and telemetry cannot be tested against a fixture tree, so tests depend on the host machine's hardware (see Fragile Areas) and CI coverage is weaker than it looks.
-- Fix approach: Thread a `root: &Path` through `detect_capabilities` and the Linux provider constructor; resolve `/proc` and `nvidia-smi` through it. Add fixture-based tests under `tests/`.
+**Offline guidance hardcodes developer build paths:**
+- Issue: When the daemon is absent, the client tells users to run `sudo target/debug/zenomen-hw` and `sudo target/debug/zenomen --install-system-integration`.
+- Files: `src/service/client.rs:232-237`, `src/service/client.rs:239-248`
+- Impact: Packaged users get instructions that cannot work; the message exposes a developer-only layout. It also contradicts `README.md` install guidance.
+- Fix approach: Emit packaged guidance (`sudo systemctl start zenomen-hw` or reinstall the package). Centralize the message in one constant and cover it with a test.
 
-**Configuration loaded twice with divergent fallbacks:**
-- Issue: `src/main.rs:62-64` resolves the config path with a `config.toml` fallback and calls `load_or_default`; `src/core/worker.rs:84` independently calls `default_config_path()` and loads again, with its own fallback behaviour.
-- Files: `src/main.rs:62-64`, `src/core/worker.rs:84-95`, `src/config/mod.rs`
-- Impact: Two sources of truth for the same file can disagree (main uses one config, worker another) and a corrupt-config notice emitted by one path may not reach the other. Startup is also doing redundant disk I/O.
-- Fix approach: Load once in `main`, pass `AppConfig` (and the corrupt notice) into the worker via the command channel or constructor. The worker's later reloads for settings changes should remain, but the initial load should not be duplicated.
+**RGB client methods bypass the offline pre-check:**
+- Issue: `apply_rgb_profile` and `set_rgb_enabled` call `connect()` directly, unlike fan/power/preset methods which call `connect_service()` and produce actionable offline errors.
+- Files: `src/service/client.rs:301-344` vs. `src/service/client.rs:124`, `188`, `209`, `232-237`
+- Impact: RGB failures surface raw zbus errors (`ServiceUnknown`/`UnknownMethod`) instead of the consistent "daemon not running" guidance, making support harder.
+- Fix approach: Route both methods through `connect_service()` and `format_service_error()`; add a test that all mutating client methods share the same offline error prefix.
 
-**Documentation drift against code:**
-- Issue: `README.md:70` says the D-Bus config installs to `/etc/dbus-1/system.d/…` while `Cargo.toml:71` and `src/desktop/system_integration.rs:14` install to `/usr/share/dbus-1/system.d/…`; `README.md:226` says 108 tests, `docs/PARITY.md` cites other counts, and the tree contains 110 `#[test]` attributes. `docs/PARITY.md` marks MON-02 (per-core CPU), MON-06 (VRAM/power draw), and RGB-02 (persistence) as `PARITY (Automated)` though the values are sampled and discarded or never persisted.
-- Files: `README.md`, `docs/PARITY.md`, `docs/PACKAGING.md`, `Cargo.toml`, `src/desktop/system_integration.rs`
-- Impact: Reviewers and the planner trust parity claims that the code does not support; test counts in the README mislead contributors.
-- Fix approach: Derive counts in CI (a job that greps `#[test]` and asserts the README number), and downgrade PARITY rows to "PARTIAL" until the underlying behaviour is implemented. Fix the `/etc` vs `/usr/share` path in the README.
+**Autostart entry is PATH-dependent and deletion is destructive:**
+- Issue: The generated entry uses `Exec=zenomen --minimized` with no absolute path. Disabling autostart unconditionally deletes the file rather than setting `Hidden=true`, discarding any user edits. Startup also never reconciles `config.general.autostart` with the actual file state.
+- Files: `src/desktop/autostart.rs:17-28`, `src/desktop/autostart.rs:78-93`
+- Impact: Autostart silently fails when the desktop session's `PATH` does not include the install location. A user who customizes the entry loses their edits on toggle. A config/file mismatch makes the settings toggle lie about the real state.
+- Fix approach: Write an absolute `Exec` resolved from the installed binary path, or use `Exec=zenomen` only when the desktop file install guarantees it. Disable via `Hidden=true` (or `X-GNOME-Autostart-enabled=false`) instead of deleting. Reconcile state at startup by writing or removing the entry to match config.
 
-**Planning-state drift:**
-- Issue: `.planning/state.json` marks Phase 5 `pending` while `docs/PACKAGING.md` and `docs/RESOURCE-BUDGET.md` describe Phase 5 deliverables as complete. Several prior `.planning/codebase/*.md` files show as deleted in `git status`.
-- Files: `.planning/state.json`, `docs/PACKAGING.md`, `docs/RESOURCE-BUDGET.md`
-- Impact: `/gsd-next` and progress reporting will route work back to a phase whose artifacts already exist or vice versa.
-- Fix approach: Reconcile `state.json` with the actual phase artifacts before the next planning run.
+**Privileged CLI flags are position-agnostic and not platform-gated:**
+- Issue: `--install-system-integration` and `--uninstall-system-integration` are detected with `args().any(...)` anywhere on the command line, and the handlers compile on every platform even though they write Linux paths.
+- Files: `src/main.rs:40-65`
+- Impact: A stray argument triggers a root filesystem mutation instead of launching the GUI; on non-Linux builds the code still attempts Linux integration paths. This is a surprising, destructive CLI surface.
+- Fix approach: Parse arguments with a small explicit parser (only the first positional/subcommand form), and gate the handlers with `#[cfg(target_os = "linux")]`. Return a clear error on unsupported platforms.
+
+**`USER_HZ` hardcoded to 100 in benchmark math:**
+- Issue: `cpu_percent_between` divides jiffies by `USER_HZ = 100`, but `CLK_TCK` is not guaranteed to be 100. The measurement script correctly uses `getconf CLK_TCK`.
+- Files: `src/core/benchmark.rs:142-143`, `src/core/benchmark.rs:232`
+- Impact: CPU percentages reported by the benchmark are wrong by the ratio `CLK_TCK/100` on kernels configured differently, undermining budget verification.
+- Fix approach: Read `getconf CLK_TCK` once (or parse `sysconf(_SC_CLK_TCK)` via libc) and pass it in; keep 100 only as a documented fallback. Add a test with an injected tick rate.
+
+**Diagnostics export temp-name collision and no durability barrier:**
+- Issue: The temp path is only `target.with_extension("tmp.<pid>")`, so two rapid exports in one process target the same file; the write is not `sync_all`ed before rename.
+- Files: `src/core/diagnostics.rs:144-160`
+- Impact: Concurrent/rapid exports can overwrite each other's temp file, and a crash after rename can leave a zero-length or truncated report on some filesystems.
+- Fix approach: Include a monotonic counter or timestamp in the temp name, write via `File` + `write_all` + `sync_all`, then rename, matching `atomic_write_file` in `src/desktop/system_integration.rs:57-75`. Add a test for two sequential exports.
+
+**Stale planning ledger entry:**
+- Issue: `.planning/WINDOWS.md` entry 1 records a "Centred placeholder Text in `ui/app.slint`" that no longer exists; `ui/app.slint` is the full shell and contains no placeholder.
+- Files: `.planning/WINDOWS.md:18`, `.planning/WINDOWS.md:24-34`, `ui/app.slint`
+- Impact: The broken-windows gate reports an open defect that is already resolved, so `/gsd-ship` can block on a false positive and future agents may "fix" a non-issue.
+- Fix approach: Mark entry 1 fixed with a resolution note, or regenerate the ledger from current code.
 
 ## Known Bugs
 
-**`AppState::is_degraded()` is always true on real Linux:**
-- Symptoms: The UI's gold "degraded" warning is permanently shown; Diagnostics claims the battery device is absent even on machines with a battery.
-- Files: `src/core/state.rs:289-303`, `src/hardware/registry.rs:133`, `src/hardware/provider.rs:188`, `src/app.rs:416`
-- Trigger: Start the app on any machine where `detect_capabilities()` is used — `battery_metrics` is always `false`, so `reported_sensor_count()` is 7 < `SUBSYSTEM_COUNT` (8), and the first branch returns `true` before the snapshot count is even considered.
-- Workaround: None; the warning cannot be dismissed.
-- Fix: See Tech Debt's battery item. Add a regression test that builds a fully capable state and asserts `!is_degraded()`; the existing `src/core/state.rs:317-320` test only checks the capability count, not `is_degraded()` itself.
+**Shutdown hangs when session D-Bus is unavailable:**
+- Symptoms: Closing the app never exits when `ensure_single_instance` returns `Disabled` (no session bus). The process stays alive after the event loop ends.
+- Files: `src/main.rs:77-92`, `src/main.rs:138-168`, `src/main.rs:270-278`
+- Trigger: Run ZenOmen in an environment without a session bus (e.g., a bare TTY or a container) and quit the window/press quit.
+- Cause: `action_sender` is moved into `register_tray` only in the `Primary` branch (`src/main.rs:81`). In the `Disabled` branch the original sender remains alive in `main`, so the `for action in action_receiver` loop (`src/main.rs:144`) never observes disconnection. `desktop_action_thread.join()` at `src/main.rs:278` then blocks forever.
+- Workaround: Kill the process; there is no graceful path in this mode.
+- Fix approach: `drop(action_sender)` explicitly after the match (or clone for tray and drop the original in all branches) so the receiver disconnects. Add a test that constructs the `Disabled` path with a fake sender and asserts the listener thread terminates.
 
-**`apply_preset` reports success when both power and fan writes fail:**
-- Symptoms: `HardwareService::apply_preset` (`src/service/contract.rs:161-178`) returns `Ok(PresetResult)` whenever the backend returns `Ok`, and `HardwareBackend::apply_preset` (`src/service/backend.rs:269-350`) returns `Ok` even when `power_applied == false && fan_applied == false`. The message says "failed", but the D-Bus call is a success and `partial_success` is `false`.
-- Files: `src/service/contract.rs:161-178`, `src/service/backend.rs:315-350`
-- Trigger: Run `apply_preset("balanced")` on a machine with no `platform_profile` and no `pwm1_enable`; both legs error, the result is `Ok`.
-- Impact: The client's error path is never taken for a total failure; the UI can show a benign state for a no-op. Contradicts "every write is verified".
-- Workaround: Inspect `PresetResult.power_applied`/`fan_applied` on the client.
-- Fix: Return `Err(HardwareControlError::VerificationFailed/InterfaceMissing)` when neither leg applied, and keep `Ok` only for at least one confirmed application. Add a test for the double-failure case.
+**`SetRgbEnabled(true)` destroys the active profile with hardcoded white:**
+- Symptoms: Turning RGB back on paints all four zones white, regardless of the profile the user had selected before turning it off.
+- Files: `src/service/contract.rs:195-213`, `src/core/state.rs:223-241`
+- Trigger: Apply a non-white RGB profile, toggle RGB off, then on.
+- Cause: The D-Bus method has no memory of the previous profile; `enabled == true` always writes `RgbColor::new(255, 255, 255)` to four zones. On the UI side, `RgbPowerChanged` only updates `rgb_power_enabled` and leaves `active_rgb_profile` and its colors stale, so the UI shows the old profile while hardware is white.
+- Workaround: Re-apply the desired profile after re-enabling.
+- Fix approach: Have the daemon (or app) persist the last non-off profile and restore it on enable, or change the contract to `SetRgbEnabled(enabled, profile)` / `RestoreRgbProfile`. Update `RgbPowerChanged` handling to clear or refresh `active_rgb_profile` when the power state changes. Add a daemon test with a fixture root asserting the previous zone colors are written.
 
-**`set_rgb_enabled(true)` destroys the selected profile:**
-- Symptoms: Enabling RGB writes hardcoded white to all four zones (`src/service/contract.rs:199-206`) instead of restoring the user's selected profile.
-- Files: `src/service/contract.rs:195-212`
-- Trigger: Select "Gaming" in the UI, toggle lighting off then on — the keyboard comes back white.
-- Impact: RGB selection is not durable across power toggles; the UI's `active_rgb_profile` and hardware state diverge.
-- Fix: Have the service accept a profile payload for enable, or have the client re-apply `active_rgb_profile` after enabling. At minimum, document that enable means "white".
+**Legacy RGB parsing can panic on non-ASCII content:**
+- Symptoms: A legacy `keyboardleds` file with 24 bytes of non-ASCII text causes a panic at a byte-index slice, aborting the daemon (`panic = "abort"` in release).
+- Files: `src/service/backend.rs:409-427`
+- Trigger: A malformed or vendor-specific `keyboardleds` value whose byte length is 24 but whose character boundaries do not fall on multiples of 6.
+- Cause: `trimmed.len() == 24` validates bytes, then `&trimmed[i * 6..(i + 1) * 6]` slices at byte offsets that may not be UTF-8 boundaries.
+- Workaround: None from the UI; the daemon aborts and systemd restarts it.
+- Fix approach: Parse the legacy value as bytes (`fs::read`, check `len == 24`, slice `&bytes[i*6..(i+1)*6]`) and reject non-ASCII/hex content with `InvalidParameter`. Add a test with 24-byte multibyte input.
 
-**RGB selection and power state are never persisted:**
-- Symptoms: `AppState` defaults to the first built-in preset (`src/core/state.rs:95`) and `rgb_power_enabled: true`; no state file is written. Only the legacy-import path touches `~/.config/zenomen/rgb/` (`src/rgb/migration.rs`).
-- Files: `src/core/state.rs:95-96`, `src/app.rs`, `src/rgb/migration.rs`, `src/config/mod.rs`
-- Trigger: Restart the app after choosing a profile — the default returns.
-- Impact: RGB-02 ("persist active profile") is claimed in `docs/PARITY.md` but not implemented; the configuration system already exists and is unused for this.
-- Fix: Add `rgb.active_profile` and `rgb.power_enabled` to `AppConfig` (`src/config/schema.rs`) and load them into `AppState` at startup; save on selection.
+**History capacity is not recomputed when the polling interval changes:**
+- Symptoms: Changing the polling interval silently changes the wall-clock span of the chart, even though the selected "seconds" label is unchanged.
+- Files: `src/core/worker.rs:190-201`, `src/core/worker.rs:156-172`, `src/core/state.rs:245-248`
+- Trigger: Select `120s`, then change polling from 1 s to 2 s.
+- Cause: Capacity is stored in samples (`AppEvent::ConfigLoaded` calls `history.set_capacity(config.telemetry.history_window)` at `src/core/state.rs:248`), but the interval change only updates `sampling_interval`, not the capacity.
+- Workaround: Re-select the history window after changing polling.
+- Fix approach: Store the history window as a duration and recompute samples whenever the interval changes; emit `ConfigLoaded`/`HistoryWindowChanged` with the recalculated value. Cover with a test.
 
-**Uninstall leaves the privileged daemon binary behind:**
-- Symptoms: `uninstall_from_prefix` (`src/desktop/system_integration.rs:176-192`) removes the desktop entry, systemd unit, D-Bus conf/service, and polkit policy, but never removes `/usr/bin/zenomen-hw`, which the install path writes (`install_daemon_binary_from` with `target_bin`).
-- Files: `src/desktop/system_integration.rs:176-192`, `src/desktop/system_integration.rs:87-119`
-- Trigger: `zenomen --uninstall-system-integration` followed by `ls /usr/bin/zenomen-hw`.
-- Impact: A root-owned binary remains executable after uninstall; re-installs can silently run a stale daemon (see next item).
-- Fix: Add `prefix.join("usr/bin/zenomen-hw")` (or the resolved target) to `targets`, and add a packaging test.
+**Unexpected `RequestName` reply codes silently exit the app:**
+- Symptoms: A second launch can exit with status 0 and no window, even though no primary instance is handling `PresentWindow`.
+- Files: `src/desktop/single_instance.rs:87-113`
+- Trigger: A `RequestName` reply other than 1/2/3/4 (e.g., a protocol error or a proxy returning an unexpected code).
+- Cause: The catch-all arm `_ => SingleInstanceResult::AlreadyRunning` (`src/desktop/single_instance.rs:112`) treats unknown replies as "already running". Additionally, failure to register `ApplicationService` is only logged (`src/desktop/single_instance.rs:91-93`), so the app can become primary without serving `PresentWindow`.
+- Workaround: Launch again after killing stray processes.
+- Fix approach: Treat only `1|4` as primary, `2|3` as already running, and everything else as `Disabled` with a warning. If `object_server().at` fails, degrade to standalone mode rather than claiming primary. Add tests for reply codes 0/5/unknown.
 
-**Installer silently accepts a stale daemon binary:**
-- Symptoms: `install_daemon_binary_from` returns `Ok(())` when `candidate` is `None` but `target_bin.exists()` (`src/desktop/system_integration.rs:111-112`), with no version check.
-- Files: `src/desktop/system_integration.rs:87-119`
-- Trigger: Upgrade the GUI without shipping/placing a new `zenomen-hw`; the old daemon keeps running against the new client contract.
-- Impact: Version skew between `zenomen` and `zenomen-hw`; the client already ignores `service_version` (see below), so mismatch is invisible.
-- Fix: Compare `CARGO_PKG_VERSION` against a version reported by the daemon and refuse (or warn loudly) on mismatch; make the "target exists" branch an explicit opt-in.
-
-**Client ignores the service version:**
-- Symptoms: `src/service/contract.rs:98` publishes `"service_version": env!("CARGO_PKG_VERSION")` in capabilities, but `src/service/client.rs` never reads it.
-- Files: `src/service/client.rs`, `src/service/contract.rs:98`
-- Impact: A stale `zenomen-hw` (see above) is undetectable; new methods fail with opaque D-Bus "unknown method" errors.
-- Fix: Parse `service_version` from `get_capabilities` in `status()` and surface a mismatch in `ServiceConnectionStatus`/Diagnostics.
-
-**RGB client methods bypass the shared connection path:**
-- Symptoms: `apply_rgb_profile` (`src/service/client.rs:302`) and `set_rgb_enabled` (`src/service/client.rs:325`) call `self.connect()` instead of `self.connect_service()`. The latter (line 232) presumably carries retry/service-activation handling used by the other methods.
-- Files: `src/service/client.rs:302,325,232`
-- Impact: RGB writes fail differently from fan/power writes when the daemon is not yet activated or the bus is briefly unavailable; no retry.
-- Fix: Route both through `connect_service()`.
-
-**Logging initialized after D-Bus setup, losing early diagnostics:**
-- Symptoms: `src/main.rs:72-85` creates the single-instance connection and registers the tray, then `src/main.rs:89` calls `tracing_subscriber::fmt::init()`. Any `tracing::warn!` before line 89 (e.g. the `Disabled(e)` branch at line 83) is dropped.
-- Files: `src/main.rs:63-91`
-- Trigger: Run without a session bus; the "running in standalone mode" warning never appears.
-- Impact: Hard-to-diagnose startup failures in exactly the environment where logging matters most.
-- Fix: Initialize the subscriber before single-instance/tray setup.
-
-**Teardown can hang joining the desktop-action thread:**
-- Symptoms: `src/main.rs:245-253` drops the session connection and then `let _ = desktop_action_thread.join();` with no timeout.
-- Files: `src/main.rs:138,245-253`
-- Trigger: Close the window while a `DesktopAction` handler is blocked on a D-Bus call to a wedged session bus.
-- Impact: The process does not exit; tray/desktop integration appears hung.
-- Fix: Give the action thread a shutdown signal and a bounded join, or use a channel `recv_timeout` in the loop so it exits promptly when the sender is dropped.
-
-**`nvidia-smi` query thread/process leak on timeout:**
-- Symptoms: `sample_nvidia_smi` (`src/hardware/linux/gpu.rs:187-219`) spawns a thread per tick, waits 200 ms, and on timeout deliberately does not join ("let thread detach"). The detached thread's `Command::output()` may still be running `nvidia-smi`.
-- Files: `src/hardware/linux/gpu.rs:187-219`, `src/hardware/linux/provider.rs`
-- Trigger: A dGPU in D3cold or a slow driver where `nvidia-smi` takes > 200 ms (common on first call and on hybrid laptops).
-- Impact: At 1 Hz sampling, up to one thread + one `nvidia-smi` process per second can accumulate during a slow period; this directly threatens the ≤40 MB RSS and ≤0.1% idle CPU budgets and is invisible to the current measurement script (which samples only the parent process).
-- Fix: Run `nvidia-smi` on a single long-lived watcher thread with a bounded queue (drop stale requests), or use `tokio::process` with kill-on-timeout. Record child-process RSS/CPU in `scripts/measure-budget.sh`.
-
-**`nvidia-smi` timeout is too aggressive for first call:**
-- Symptoms: 200 ms is below typical cold `nvidia-smi` latency (often 300 ms–1 s).
-- Files: `src/hardware/linux/gpu.rs:187`
-- Impact: First samples after boot/resume report "Unavailable" even though the GPU is healthy, which the UI then presents as a sensor failure.
-- Fix: Use a longer timeout (e.g. 1–2 s) on a dedicated thread with stale-result dropping, rather than a short timeout on a per-tick thread.
-
-**Sampled values discarded before reaching the UI:**
-- Symptoms: `src/hardware/linux/provider.rs:127` destructures `(aggregate_pct, _per_core)` and drops per-core utilization; `sample_amd_gpu` reads `mem_info_vram_used`/`mem_info_vram_total` (`src/hardware/linux/gpu.rs:166-177`) and `parse_nvidia_smi_output` reads VRAM (`gpu.rs:237-245`) but `TelemetrySnapshot` (`src/hardware/provider.rs:152-181`) has no VRAM or power-draw fields.
-- Files: `src/hardware/linux/provider.rs:127`, `src/hardware/linux/cpu.rs:114-152`, `src/hardware/linux/gpu.rs`, `src/hardware/provider.rs:152-181`
-- Impact: MON-02 and MON-06 are claimed as PARITY in `docs/PARITY.md` but the values never reach the snapshot; the work is paid for and thrown away.
-- Fix: Add `per_core_utilization: Vec<f32>`, `gpu_vram_used_mb`/`gpu_vram_total_mb`, and `gpu_power_w` to `TelemetrySnapshot`, populate them, and render them (or stop sampling them until the UI exists).
+**`apply_rgb_profile` / `set_rgb_enabled` report raw errors when offline:**
+- Symptoms: RGB actions fail with `ApplyRgbProfile failed: ...ServiceUnknown...` instead of the friendly offline message used by fan/power controls.
+- Files: `src/service/client.rs:301-344`
+- Trigger: Click an RGB control while `zenomen-hw` is not running.
+- Cause: Direct `connect()` usage and `format!("... {e}")` instead of `connect_service()`/`format_service_error()`.
+- Workaround: Read the fan/power error path for the correct guidance.
+- Fix approach: Same as the tech-debt item above; route through the shared helpers.
 
 ## Security Considerations
 
-**Polkit policy demands admin authentication for every control change:**
-- Risk: `data/polkit/com.zenomen.hardware.policy` sets `allow_active` to `auth_admin_keep` for `com.zenomen.hardware.control`; every fan/power/RGB change prompts for an administrator password (cached briefly). This is not a bypass, but it is a UX/design mismatch for a "quiet, premium system utility" and encourages users to keep a root shell open instead.
-- Files: `data/polkit/com.zenomen.hardware.policy`, `src/service/contract.rs:56-77`
-- Current mitigation: Polkit is enforced on every mutating method via `authorize()`, which fails closed if the caller sender is missing.
-- Recommendations: Decide the intended trust model. If the local active user should be able to change fans without a password, use `allow_active=yes` for the control action (still `auth_admin` for inactive/remote). If admin auth is intended, surface the prompt reason clearly and avoid re-prompting within the `auth_admin_keep` window. Add an integration test that asserts an unauthenticated caller is denied (none exists — see Test Coverage Gaps).
+**D-Bus activation bypasses the systemd sandbox:**
+- Risk: The activation file declares `Exec=/usr/bin/zenomen-hw` and `User=root` but has no `SystemdService=zenomen-hw.service`. When dbus-daemon activates the name, it can exec the binary directly as root, outside `ProtectSystem=strict`, `ProtectHome`, `CapabilityBoundingSet=`, `NoNewPrivileges`, and the rest of the unit hardening.
+- Files: `data/dbus/com.zenomen.Hardware1.service:1-4`, `data/systemd/zenomen-hw.service:14-32`, `Cargo.toml:90-99` (packaged files)
+- Current mitigation: Only root may own the bus name (`data/dbus/com.zenomen.Hardware1.conf:5-9`), and the unit is installed. But the packaged DEB has no `postinst` to enable/start the unit (see `Cargo.toml` packaging metadata), so activation is a realistic path on a fresh install.
+- Recommendations: Add `SystemdService=zenomen-hw.service` to the activation file so dbus-daemon delegates to systemd, and add a `postinst`/preset that enables the unit. Add a test asserting the activation file names the unit.
 
-**Read methods are unauthenticated and expose hardware telemetry to every local user:**
-- Risk: `get_capabilities`, `get_fan_status`, `get_power_profile`, `get_rgb_status`, etc. in `src/service/contract.rs` have no `authorize()` call, and `data/dbus/com.zenomen.Hardware1.conf` allows `send_destination` for the default policy. Any local user can read fan speeds, temperatures, and hardware model strings.
-- Files: `src/service/contract.rs`, `data/dbus/com.zenomen.Hardware1.conf`
-- Current mitigation: The D-Bus name is root-owned (`<policy user="root">`), so only root can impersonate the service.
-- Recommendations: This is probably acceptable (telemetry is not secret), but document it explicitly. If a multi-user host is a target, add a `get_capabilities`-level restriction or a separate read action with `allow_any=yes`.
+**Systemd unit grants broader sysfs write access than the daemon needs:**
+- Risk: `ReadWritePaths` includes entire directories (`/sys/devices/platform/hp-wmi`, `/sys/firmware/acpi`, `/sys/class/hwmon`, `/sys/class/leds`), so any bug or compromised code path can write any file in those trees, not just `pwm1_enable`/`platform_profile`/RGB attributes. Hardening directives such as `PrivateDevices`, `ProtectClock`, `ProtectKernelLogs`, `ProcSubset=pid`, and `UMask` are absent.
+- Files: `data/systemd/zenomen-hw.service:14-32`
+- Current mitigation: `ProtectSystem=strict`, empty `CapabilityBoundingSet`, `NoNewPrivileges`, `SystemCallFilter=@system-service`, `MemoryDenyWriteExecute`.
+- Recommendations: Narrow `ReadWritePaths` to the specific files/directories the backend uses, add the missing hardening directives, and set `UMask=0077`. Re-test fan/power/RGB writes under the tightened unit.
 
-**Systemd sandbox does not actually bound sysfs writes:**
-- Risk: `data/systemd/zenomen-hw.service` uses `ProtectSystem=strict` plus `ReadWritePaths=-/sys/devices/platform/hp-wmi …`. `ProtectSystem=strict` remounts most of the filesystem read-only but explicitly exempts `/sys`, so the `ReadWritePaths` carve-outs are not the effective boundary — the daemon can write anywhere in sysfs the kernel permits, including unrelated devices. The comment at lines 20-22 acknowledges `ProtectKernelTunables` was omitted for this reason.
-- Files: `data/systemd/zenomen-hw.service:14-22`
-- Current mitigation: The Rust backend only ever writes to hardcoded paths resolved under `/` (`src/service/backend.rs:64-73`), so application-level path control is the real boundary.
-- Recommendations: Add `ProtectKernelTunables=yes` and rely on the service's own path allow-list for writes (test that fan/power/RGB still work), or drop the misleading `ReadWritePaths` entries and document that `/sys` is writable. Validate the unit under a real systemd boot, not just a unit-file lint.
+**Root daemon file logging silently fails under `ProtectHome=true`:**
+- Risk: The daemon initializes the same file logger as the GUI, which resolves to `~/.local/state/zenomen/logs`. Under `ProtectHome=true` the root service cannot see `/home`, so file logging silently degrades to stderr-only. Support reports from the daemon then have no persisted evidence.
+- Files: `data/systemd/zenomen-hw.service:16`, `src/logging.rs:23-33`, `src/logging.rs:76-103`, `src/bin/zenomen-hw.rs:10-13`
+- Current mitigation: `logging::init()` degrades gracefully and journald still captures stderr.
+- Recommendations: Give the daemon a system log path (e.g., `/var/log/zenomen` via `LogsDirectory=zenomen` and `StateDirectory=zenomen`) or explicitly document journald-only logging. Add a test or startup log line that states which sink is active.
 
-**Privileged binary replacement without signature or hash verification:**
-- Risk: `install_daemon_binary_from` (`src/desktop/system_integration.rs:87-119`) copies a candidate `zenomen-hw` to `/usr/bin` and chmods it `0755`. The install path runs as root (`--install-system-integration` requires it). There is no signature, hash, or package-manager ownership check.
-- Files: `src/desktop/system_integration.rs:87-119`, `src/main.rs:35-56`
-- Current mitigation: The candidate is expected to sit next to the GUI binary or come from the `.deb`; the release workflow builds both.
-- Recommendations: Prefer installing the daemon only from the package (remove the manual copy path), or verify a SHA-256 manifest shipped alongside the binary. At minimum, log the source path and hash to the journal.
+**Root installer copies any sibling file named `zenomen-hw`:**
+- Risk: `install_daemon_binary_from` takes `current_exe().with_file_name("zenomen-hw")` and `fs::copy`s it to `/usr/bin/zenomen-hw` as root after only `Path::is_file()`. If the user runs the installer from an attacker-writable directory containing a malicious `zenomen-hw`, or via a symlink, root installs attacker code. `uninstall_from_prefix` removes only the five text files and leaves `/usr/bin/zenomen-hw` behind, so a stale privileged binary persists after uninstall.
+- Files: `src/desktop/system_integration.rs:78-119`, `src/desktop/system_integration.rs:176-192`
+- Current mitigation: The installer requires root and is normally run from the packaged install location; `current_exe` is the running binary.
+- Recommendations: Verify the source is a regular file (not a symlink), verify ownership/permissions, and prefer installing from the package payload or a path derived from a trusted prefix. Remove `DAEMON_BIN_TARGET` during uninstall. Add tests for symlink rejection and uninstall completeness.
 
-**Self-install writes to system paths from the GUI process:**
-- Risk: The GUI, normally an unprivileged process, can invoke `install_system_integration`/`uninstall` (via CLI flags) that write to `/usr/bin`, `/usr/lib/systemd`, `/usr/share/dbus-1`, and `/usr/share/polkit-1`. The privilege boundary is the user's `sudo`, not the D-Bus service the project designed for privileged writes.
-- Files: `src/main.rs:35-56`, `src/desktop/system_integration.rs:121-175`
-- Current mitigation: These are explicit CLI flags, not reachable from the Slint UI.
-- Recommendations: Keep installer actions in the package's `postinst`/`prerm` scripts instead of the GUI binary, or gate them behind a dedicated polkit action so the privilege path is auditable.
+**`systemctl` falls back to `PATH` resolution while running as root:**
+- Risk: If neither `/usr/bin/systemctl` nor `/bin/systemctl` exists, `run_systemctl` executes bare `"systemctl"`, which a root `PATH` could resolve to an attacker-controlled binary.
+- Files: `src/desktop/system_integration.rs:194-220`
+- Current mitigation: Standard distributions provide `/usr/bin/systemctl`, so the fallback is rarely reached.
+- Recommendations: Fail closed with `Command("systemctl not found in /usr/bin or /bin")` instead of falling back to `PATH`. Add a unit test for the resolver.
 
-**Input validation is solid where it exists, but incomplete:**
-- Risk: `set_power_profile` rejects newline/slash/NUL (`src/service/backend.rs:234-250`) and RGB colors are parsed through `RgbColor::from_hex` (`src/rgb/schema.rs:102-108`), so the previous Python `int(col[0:2], 16)` crash class is gone. However, `apply_rgb_profile` deserializes arbitrary JSON and trusts `profile.zones` length (fixed array `[RgbColor; 4]`), and `set_rgb_enabled` hardcodes white — no validation issue today, but no fuzz/property tests either.
-- Files: `src/service/backend.rs:234-250`, `src/service/contract.rs:180-193`, `src/rgb/schema.rs`
-- Current mitigation: Serde type-checking plus explicit character checks.
-- Recommendations: Add a test that feeds malformed/hostile JSON to `apply_rgb_profile` and asserts `InvalidArgs` rather than a panic; consider `#[serde(deny_unknown_fields)]` if forward-compat is not required.
+**Polkit authorization path is effectively untested:**
+- Risk: The only polkit test checks response-signature serialization (`src/service/polkit.rs:74-105`). `HardwareService::authorize` (`src/service/contract.rs:56-80`) and the `with_polkit_required(false)` test helper (`src/service/contract.rs:44-48`) are never exercised, so a regression that skips authorization or mishandles a denial would not be caught.
+- Files: `src/service/polkit.rs:74-105`, `src/service/contract.rs:44-48`, `src/service/contract.rs:56-80`, `src/service/contract.rs:117-213`
+- Current mitigation: All mutating methods call `self.authorize(&hdr).await?` before touching the backend.
+- Recommendations: Add tests for missing sender, missing connection, authorized, denied, and challenge responses, plus an integration test that invokes a mutating method without authorization and asserts the backend was not called.
+
+**Read-only methods are unauthenticated by design:**
+- Risk: `GetCapabilities`, `GetFanStatus`, `GetPowerProfiles`, `GetPowerProfile` are callable by any local user (`data/dbus/com.zenomen.Hardware1.conf:11-16`). They expose hardware model/state and service version.
+- Files: `src/service/contract.rs:86-142`, `data/dbus/com.zenomen.Hardware1.conf:11-16`
+- Current mitigation: Mutating calls are polkit-gated; read-only exposure is intentional for the UI.
+- Recommendations: Confirm this is an accepted information-disclosure trade-off; if not, restrict read methods to the active session or document the exposure in `docs/`.
+
+**Release `panic = "abort"` in a root daemon:**
+- Risk: Any panic in a D-Bus handler kills the privileged daemon instead of unwinding to a per-request error. Combined with the legacy RGB slicing bug, malformed hardware content can take the service down until systemd restarts it.
+- Files: `Cargo.toml:61-68`, `src/service/backend.rs:409-427`
+- Current mitigation: `Restart=on-failure` in the unit (`data/systemd/zenomen-hw.service:11-12`).
+- Recommendations: Keep `panic = "abort"` for the UI if size matters, but consider `panic = "unwind"` for the `zenomen-hw` profile, or audit handlers to eliminate panic paths (byte slicing, `unwrap`, indexing). At minimum, fix the known panic and add a fuzz/fixture test for malformed sysfs content.
 
 ## Performance Bottlenecks
 
-**`nvidia-smi` subprocess at 1 Hz:**
-- Problem: Every telemetry tick spawns `nvidia-smi` (`src/hardware/linux/gpu.rs:187-219`) plus a thread, even when the GPU is idle or absent. Process spawn is the dominant per-tick cost and also counts toward RSS via the child.
-- Files: `src/hardware/linux/gpu.rs`, `src/hardware/linux/provider.rs`
-- Cause: No caching, no watcher thread, no capability gate (it runs whenever a dGPU is detected, and the 200 ms timeout means a slow call is retried next tick).
-- Improvement path: A single `nvidia-smi` watcher thread (or `nvidia-smi --loop=1 --query-gpu=... --format=csv` streaming) publishing the latest sample over a channel; sample becomes a lock-free read. Disable entirely when no NVIDIA device is present.
+**Blocking D-Bus calls on the monitoring worker have no timeout:**
+- Problem: `HardwareServiceClient::status()` performs a synchronous `GetCapabilities`, and `check_polkit_status()` performs a synchronous polkit query. Both run on the worker thread every 5 samples. If the bus or daemon hangs, telemetry and command handling stop indefinitely, including `Shutdown`.
+- Files: `src/service/client.rs:77-98`, `src/core/worker.rs:66-86`, `src/core/worker.rs:313-328`
+- Cause: `zbus` blocking calls with default timeouts (or none) and no worker-side deadline.
+- Improvement path: Use `zbus` async calls with an explicit timeout, or a dedicated status thread with a bounded channel and a watchdog. Add a test with a stub service that delays `GetCapabilities` and assert the worker still processes `Shutdown`.
 
-**Blocking `std::thread::sleep` inside async zbus methods:**
-- Problem: `write_and_verify` (`src/service/backend.rs:12-48`) sleeps between write and read-back (`50 ms` for fan, `10 ms` for RGB) and is called from `async fn` handlers in `src/service/contract.rs`. `std::thread::sleep` blocks the executor thread, and `HardwareBackend` is called directly (not `spawn_blocking`), so concurrent D-Bus requests serialize behind each sleep.
-- Files: `src/service/backend.rs:12-48`, `src/service/contract.rs:120-212`
-- Cause: Synchronous backend API used from async handlers.
-- Improvement path: Make the backend methods `async` and use `tokio::time::sleep`, or wrap calls in `tokio::task::spawn_blocking`. With retries (3 × backoff), a single failing fan write can block the executor for ~350 ms.
+**Blocking filesystem I/O and `thread::sleep` inside async D-Bus handlers:**
+- Problem: Every mutating method is `async` but calls synchronous `fs::write`, `fs::read_to_string`, and `thread::sleep` in the retry loop. This blocks the zbus executor thread, serializing all requests (including reads) behind a polkit prompt or a slow sysfs write.
+- Files: `src/service/contract.rs:117-213`, `src/service/backend.rs:12-48`
+- Cause: The backend is synchronous and has no async boundary; `write_and_verify` sleeps between retries.
+- Improvement path: Move backend work to `zbus::blocking`/`spawn_blocking` (or a dedicated worker) and await it, replace `thread::sleep` with an async delay, and add a concurrency test asserting a read completes while a slow write is in flight.
 
-**D-Bus status and polkit checks block the sampling thread every five ticks:**
-- Problem: `src/core/worker.rs:299-308` calls `client.status()` and `client.check_polkit_status()` on the same thread that samples telemetry. Both are synchronous `zbus::blocking` calls (`src/service/client.rs:78,252`) that create a fresh connection each time (`self.connect()`), and `check_polkit_status` performs a full polkit `CheckAuthorization` round-trip.
-- Files: `src/core/worker.rs:95,299-308`, `src/service/client.rs:59,78,232,252`
-- Cause: Service health is polled inline with sampling instead of on its own cadence/thread.
-- Improvement path: Move status/polkit probes to a separate low-frequency (e.g. 30 s) thread or an async task, and reuse a persistent connection. This also removes a per-call connection setup cost from the idle path.
+**`nvidia-smi` query has no timeout:**
+- Problem: The watcher thread runs `Command::output()` with no timeout. A hung `nvidia-smi` (driver issue, GPU in a bad state) blocks the only watcher thread forever; `request()` then no-ops and `latest()` goes stale forever.
+- Files: `src/hardware/linux/gpu.rs:235-264`
+- Cause: `std::process::Command::output()` waits indefinitely.
+- Improvement path: Wrap the child in a timeout (spawn + `try_wait` loop with a deadline, or `wait_timeout`), kill on expiry, and log a rate-limited warning. Add a test with a sleep script.
 
-**Resource budgets are not met and the measurement method masks it:**
-- Problem: `docs/RESOURCE-BUDGET.md` claims PASS on a ≤40 MB UI budget, but its own table and `dist/budget-*.csv` show VmRSS of 132.71 MB (warm dashboard) and 95.57 MB (tray), with the doc substituting `Private_Dirty` (16.56/16.59 MB) for the requirement's RSS metric. The CPU row cites a 5-sample 0.0914% while the 60-sample artifact in the same CSV records 6.0233%. `scripts/measure-budget.sh` samples only the parent process (missing `nvidia-smi` children) and always exits 0, so it cannot gate anything.
-- Files: `docs/RESOURCE-BUDGET.md`, `dist/budget-dashboard-open.csv`, `dist/budget-hw-daemon.csv`, `dist/budget-tray-minimized.csv`, `scripts/measure-budget.sh`
-- Cause: Methodology redefines the metric after failing it; no CI gate; short sampling window; no child-process accounting.
-- Improvement path: Decide whether the requirement is VmRSS or Private_Dirty (the PROJECT constraint says "peak RSS"), measure with the same definition, run a ≥300 s window, sum child processes, and make the script exit non-zero when a threshold is exceeded so CI can enforce it. Re-measure on real GPU hardware (llvmpipe inflates VmRSS, but may not explain 132 MB of file-backed pages alone).
+**RGB migration runs synchronously before window creation:**
+- Problem: On every startup, `migrate_openomen_profiles` scans and copies legacy OpenOMEN profiles before the Slint window is created. Large profile directories delay first paint on the cold-start path that the RSS/startup budget measures.
+- Files: `src/main.rs:97-112`, `src/rgb/` migration code
+- Cause: Migration is unconditional and on the main thread.
+- Improvement path: Run migration on a background thread after the window is shown, or gate it to run once via a version marker. Measure cold start before/after.
 
-**Two threads per mutating action, leaked on timeout:**
-- Problem: `execute_mutating_action` (`src/core/worker.rs:350-380`) spawns a control thread and an RPC thread per action, waits 30 s, and on timeout drops the receiver — the RPC thread and any in-flight D-Bus/hardware write continue. There is no guard against a second action starting while the first is still in flight.
-- Files: `src/core/worker.rs:350-380`
-- Cause: Timeout implemented by abandoning the worker rather than cancelling it.
-- Improvement path: Use a single control executor with a request queue and a cancellation token; if the hardware write must complete, report "still in progress" rather than timing out and letting a late success mutate state behind the UI's back. At minimum, keep the RPC `JoinHandle` and refuse new actions until it resolves.
-
-**History and telemetry allocations per tick:**
-- Problem: `TelemetrySnapshot` is cloned into `TelemetryHistory` (bounded `VecDeque`, `HISTORY_WINDOW = 120`) and into `AppState.latest_snapshot`; vectors (`fan_rpms`, `power_profiles`) are reallocated each sample, and SVG path strings are regenerated in `src/core/state.rs`/`src/app.rs` on every update.
-- Files: `src/core/telemetry.rs`, `src/core/state.rs`, `src/app.rs`
-- Cause: Snapshot is a plain cloneable struct; no `Arc` or reuse.
-- Improvement path: Wrap the snapshot in `Arc<TelemetrySnapshot>` and clone the pointer; keep chart paths only for the visible screen. This is a secondary optimization behind the `nvidia-smi` and blocking-call fixes.
+**History memory grows with configured capacity but the chart cost is unbounded by duration:**
+- Problem: Capacity can be configured up to 300 samples (`src/core/telemetry.rs:104-121`), and every `ConfigLoaded` regenerates all chart/sparkline paths (`src/core/state.rs:245-252`). Combined with the unit mismatch, users can unintentionally hold a much longer window than the label implies, increasing per-frame path generation cost.
+- Files: `src/core/telemetry.rs:104-137`, `src/core/state.rs:245-261`
+- Cause: Path regeneration is O(samples) on every config/state change.
+- Improvement path: Recompute paths only when the point set changes, and cap capacity by a duration budget rather than an arbitrary sample count.
 
 ## Fragile Areas
 
-**Worker control concurrency and timeout semantics:**
-- Files: `src/core/worker.rs:350-380`
-- Why fragile: Detached RPC threads, no in-flight guard, and a 30 s timeout that can fire before polkit interaction completes. A late success emits an event the UI no longer correlates with the original request, and two rapid toggles can race.
-- Safe modification: Add a state machine (Idle → Pending → Applied/Failed) keyed by action, reject concurrent actions with a visible message, and only clear pending on a terminal event. Add `pending_fan_mode`/`pending_power_profile` state to make the lifecycle explicit.
-- Test coverage: `tests/fan_control_tests.rs` asserts `pending_fan_mode` stays `None` (the opposite of the desired behaviour); no concurrency or timeout test exists.
+**Sysfs layout assumptions for HP hardware:**
+- Files: `src/hardware/rgb.rs:33-53`, `src/service/backend.rs:77-115`, `src/hardware/registry.rs:256-315`, `src/hardware/linux/provider.rs:36-43`
+- Why fragile: Three mutually exclusive RGB variants (`rgb_zones/zone00`, `keyboardleds`, `leds/hp_omen::kbd_backlight/zone_colors`), two fan-control discovery paths, and hardcoded `/sys/devices/platform/hp-wmi` / `/sys/class/hwmon` assumptions. A kernel or firmware change, or a non-HP machine with a `pwm1_enable`, changes behavior without a code change.
+- Safe modification: Always go through the registry/backend discovery helpers; add fixture trees for each variant and a "non-HP pwm device" case. Never add a new hardcoded path outside `src/hardware/linux/` and `src/service/backend.rs`.
+- Test coverage: Variants are covered by fixture tests (`tests/rgb_tests.rs`, `tests/fan_control_tests.rs`, `tests/degradation_tests.rs`), but real-host coverage is absent and the registry/daemon divergence is untested.
 
-**Service contract ↔ backend coupling and error mapping:**
-- Files: `src/service/contract.rs`, `src/service/backend.rs`, `src/service/types.rs`
-- Why fragile: `HardwareControlError` is converted to `zbus::fdo::Error` via `From`, and several handlers return `Ok` for partial failure (see Known Bugs). The `apply_preset` message is built by string concatenation, so the UI parses prose rather than structured fields.
-- Safe modification: Change `apply_preset` to return `Err` on total failure, and add structured `PresetResult` fields to the event path instead of parsing `message`. Add tests per error variant.
-- Test coverage: `tests/hardware_service_tests.rs` and `tests/power_preset_tests.rs` cover success and some errors, but not the total-failure contract.
+**Legacy RGB exact-length contract:**
+- Files: `src/service/backend.rs:409-427`
+- Why fragile: The code requires exactly 24 bytes and slices by byte offset; vendor kernels may emit different lengths, whitespace, or non-ASCII. This is both a correctness and a daemon-availability risk.
+- Safe modification: Parse bytes, validate hex characters, and treat unexpected content as `InvalidParameter` rather than slicing. Add malformed-input tests.
+- Test coverage: No test covers the legacy read path with malformed/non-ASCII content.
 
-**Capability detection heuristics and hardware assumptions:**
-- Files: `src/hardware/registry.rs:117-160`, `src/hardware/linux/hwmon.rs`, `src/hardware/linux/gpu.rs`
-- Why fragile: `detect_capabilities` hardcodes `battery_metrics: false` and probes RGB at `/` regardless of test roots; CPU temperature resolution is a priority list of driver names (`k10temp`, `zenpower`, …) that omits `hp-wmi`, so some OMEN/Victus models fall through to `acpitz` or `None`.
-- Safe modification: Thread a root through detection, add `hp-wmi` to the temperature priority (after `k10temp`, before `acpitz`), and read battery presence from `/sys/class/power_supply`. Add fixture-based tests for each driver name.
-- Test coverage: `tests/sensor_registry_tests.rs` covers priority logic with synthetic devices, but not the `hp-wmi` path or battery detection.
+**Fan-mode sysfs encoding:**
+- Files: `src/service/types.rs:21-39`, `src/hardware/registry.rs:99-114`
+- Why fragile: `0/1/2` is mapped to `max/manual/auto`; if firmware uses a different encoding or adds a value, both the UI and daemon misreport state. `read_fan_mode` passes unknown non-empty strings through (`src/hardware/registry.rs:111`), while `FanMode::from_sysfs` may behave differently.
+- Safe modification: Centralize the mapping in one type (`FanMode`) and have the registry reuse it. Add round-trip tests for every value.
 
-**Host-dependent integration tests:**
-- Files: `tests/hardware_service_tests.rs`, `tests/degradation_tests.rs`, `tests/desktop_integration_tests.rs`
-- Why fragile: Some tests attempt real system-bus connections or depend on `nvidia-smi`/sysfs presence; they pass or fail based on the machine and whether a session bus is available in CI.
-- Safe modification: Gate hardware-dependent tests behind `#[ignore]` or an env var (`ZENOMEN_HW_TESTS=1`), and make the default suite use fixtures/`with_all_roots`. Add a CI job that runs the ignored set on a self-hosted runner if real-hardware coverage is wanted.
-- Test coverage: See Test Coverage Gaps.
+**D-Bus service lifecycle and activation:**
+- Files: `data/dbus/com.zenomen.Hardware1.service`, `data/systemd/zenomen-hw.service`, `src/bin/zenomen-hw.rs:20-44`, `src/desktop/single_instance.rs:87-113`
+- Why fragile: The daemon relies on `std::future::pending()` to stay alive, systemd `Type=dbus`, and name ownership. The activation file and unit are two independent lifecycle definitions; the app-side single-instance logic has a silent fallback to "already running".
+- Safe modification: Keep activation and unit metadata in sync; add a packaging test that asserts `SystemdService` points at the unit. Treat unknown bus replies as errors.
 
-**RGB interface variant branching:**
-- Files: `src/hardware/rgb.rs`, `src/service/backend.rs:439-500`, `src/rgb/migration.rs`
-- Why fragile: Three incompatible interfaces (`FourZone`, `Legacy`, `KernelPatch`) are selected by filesystem probing; the `KernelPatch` branch writes 12 raw bytes with a single read-back and no retry/backoff, unlike the other branches which use `write_and_verify`.
-- Safe modification: Route the `KernelPatch` branch through an equivalent retry helper (`write_and_verify_bytes`) and surface `VerificationFailed` consistently. Add a fixture tree per variant.
-- Test coverage: `tests/rgb_tests.rs` covers schema/migration; variant detection and the raw-write path are under-tested.
+**Live-host tests:**
+- Files: `tests/sensor_registry_tests.rs:246-262`, `tests/linux_procfs_tests.rs:55-76`, `tests/degradation_tests.rs:136-155`, `tests/fan_control_tests.rs:99-119`
+- Why fragile: These tests instantiate `LinuxHardwareProvider::new()`, read `/proc`/`/sys`, or probe the system bus. They depend on the host having `k10temp`, a battery, or no production daemon; results differ between CI containers and developer laptops and violate the project rule to isolate tests from live hardware.
+- Safe modification: Gate them behind `#[ignore]` or a `live-hardware` feature and run only in a dedicated job; keep fixture-based tests as the default suite.
+- Test coverage: Live tests currently run unconditionally in `cargo test --all` (`ci.yml`), so CI can pass or fail based on the runner's hardware.
 
-**Single-instance and tray lifecycle:**
-- Files: `src/main.rs:72-91,138-160`, `src/desktop/single_instance.rs`, `src/desktop/tray.rs`
-- Why fragile: Logging init happens after registration; the tray/session connection is held in `_session_conn` and dropped at an unspecified point; teardown joins threads without timeouts. A second instance exits after triggering the primary over D-Bus, so any failure there is silent.
-- Safe modification: Initialize logging first, hold the session connection in an explicit struct, and add bounded shutdown with a cancellation flag. Test "second instance exits and presents the first" under a private session bus (`dbus-run-session`).
-- Test coverage: `tests/desktop_integration_tests.rs` covers some helpers; the full lifecycle is not exercised.
+**Platform separation is incomplete:**
+- Files: `src/hardware/linux/` (compiled unconditionally under `LinuxHardwareProvider`), `src/desktop/releases.rs:42-44`, `src/desktop/autostart.rs`, `src/desktop/system_integration.rs`, `src/core/diagnostics.rs:162-182`
+- Why fragile: The project claims cross-platform behavior, but Linux-specific sysfs code lives in `src/hardware/linux/` and desktop helpers assume XDG/Linux. Diagnostics returns "Linux" when `/etc/os-release` is missing, which can mislabel other platforms.
+- Safe modification: Gate Linux-only modules with `#[cfg(target_os = "linux")]`, use `xdg-open`/platform equivalents behind a small opener abstraction, and make OS detection return the actual platform fallback. Add a compile check for `--no-default-features` and non-Linux targets.
+
+**Autostart reconciliation and user edits:**
+- Files: `src/desktop/autostart.rs:30-93`, `src/core/worker.rs:181-183`, `src/core/worker.rs:202-210`
+- Why fragile: Enabling always overwrites the file with the template; disabling deletes it. Any user customization is lost, and the config flag can disagree with disk state after manual edits or a failed write.
+- Safe modification: Write `Hidden=true`/`X-GNOME-Autostart-enabled=false` on disable and preserve unknown keys on enable; reconcile at startup. Add tests for round-trip preservation.
 
 ## Scaling Limits
 
-**Telemetry history:** Bounded at 120 samples (`HISTORY_WINDOW` in `src/core/state.rs`), which is correct for the 2-minute requirement, but chart path regeneration walks the whole window on every tick (O(120) string building at 1 Hz). Fine today; if the window becomes configurable or the sample rate rises, move rendering off the sampling thread.
+**Memory budget vs. measured RSS:**
+- Current capacity: `docs/RESOURCE-BUDGET.md:10-22` records `Private_Dirty` of 7.15–28.50 MB and claims PASS for the ≤40 MB target, while the same table's measured `VmRSS` under Xvfb is 132.71–141.20 MB.
+- Limit: The budget verdict is based on `Private_Dirty`, but `scripts/measure-budget.sh` samples `VmRSS` only and no CI gate enforces either metric. The 2-hour soak is explicitly `NOT MEASURED` (`docs/RESOURCE-BUDGET.md:48-55`).
+- Scaling path: Decide which metric the budget means, make the script report both, add a CI budget check with a documented threshold, and run the soak on a real desktop. The integration test's `< 500 MB` assertion (`tests/benchmark_tests.rs:33-35`) is far too loose to catch regressions.
 
-**Sensor/fan counts:** `fan_rpms` is a `Vec<u32>` sized by discovery, and `power_profiles` is a `Vec<String>`. The UI iterates both without a cap; a pathological hwmon tree with dozens of fans would grow the status strip. Cap at the number of UI slots or paginate.
+**Single-threaded daemon executor:**
+- Current capacity: One async executor drives all D-Bus methods; each mutation performs synchronous I/O and sleeps.
+- Limit: Concurrent callers queue behind the slowest write/polkit prompt; a hung filesystem operation stalls every request.
+- Scaling path: Offload backend work to blocking tasks (see performance section) and bound the number of concurrent mutations.
 
-**D-Bus connections:** The client opens a new connection for every `status()`, `check_polkit_status()`, `get_fan_status()`, and control call (`src/service/client.rs:59,232`). Each connection costs a socket and a round-trip; at 1 Hz status polling plus control actions this is measurable. A single persistent connection (or a zbus proxy) removes the limit.
-
-**Process/thread growth under slow `nvidia-smi`:** See Known Bugs; at 1 Hz with a 200 ms timeout and detached threads, growth is unbounded for the duration of the slow period. This is the most likely path to breaching the RSS budget in the field.
-
-**Log/event retention:** `TelemetryHistory` is bounded, but `AppState.power_profile_choices` and `last_control_error` are not; a service that returns a growing choices list would grow memory. Low risk.
+**History buffer growth:**
+- Current capacity: 2–300 samples (`src/core/telemetry.rs:104-121`), with per-update path generation.
+- Limit: Memory is modest, but per-frame CPU grows with capacity and the unit mismatch can multiply the effective duration.
+- Scaling path: Cap by duration and invalidate paths only when data changes.
 
 ## Dependencies at Risk
 
-**`nvidia-smi` (external binary):**
-- Risk: Not a Cargo dependency, but a hard runtime dependency for dGPU telemetry. Missing, old, or slow versions degrade or leak (see above); the 200 ms timeout assumes a fast binary.
-- Impact: NVIDIA telemetry unavailable or the sampling loop stalls/leaks.
-- Migration plan: Treat as optional (already returns `None`), add a capability probe at startup, and prefer reading `/sys/class/drm/card*/device/` where possible (utilization/power are not always exposed, so `nvidia-smi` stays for those fields).
-
 **`zbus` 5 with the `blocking` feature:**
-- Risk: The synchronous client (`src/service/client.rs`) and async service (`src/service/contract.rs`) share the same crate but different execution models; the `blocking` feature pulls in a nested runtime, and blocking calls from async contexts are a known footgun (see the perf section).
-- Impact: Executor stalls, hard-to-debug deadlocks during teardown.
-- Migration plan: Standardize on the async API with `tokio` (or zbus's own executor) for the service and a dedicated blocking thread for the UI, or move the client behind a channel-based actor. Pin the minor version until the migration.
+- Risk: The blocking client and async service share one crate; the worker uses blocking calls while the daemon uses async methods with blocking internals. Version upgrades can change timeout defaults or executor behavior.
+- Files: `Cargo.toml:34`, `src/service/client.rs`, `src/service/contract.rs`, `src/bin/zenomen-hw.rs`
+- Impact: A silent behavior change in timeouts or name-request replies can reintroduce hangs or the single-instance false-positive.
+- Migration plan: Pin the minor version, add contract tests for timeout/name-reply behavior, and prefer explicit timeouts over defaults.
 
-**`slint` 1.17 with `renderer-femtovg` + `backend-winit`:**
-- Risk: The RSS budget depends on this feature set; enabling `renderer-software` or additional backends would change memory characteristics. Upstream minor bumps can change defaults.
-- Impact: Budget regression after an upgrade.
-- Migration plan: Keep the feature set explicit (already done in `Cargo.toml`) and add a CI job that runs the budget script against the release profile on a fixed runner.
+**Slint 1.17 pinned with `renderer-femtovg`:**
+- Risk: The UI stack is pinned and uses a software-rendering fallback under Xvfb; measured `VmRSS` is dominated by llvmpipe mappings.
+- Files: `Cargo.toml:16-24`, `docs/RESOURCE-BUDGET.md:24`
+- Impact: Upgrades may change RSS or rendering behavior; the budget documentation is already sensitive to the environment.
+- Migration plan: Re-measure the budget on real GPU hardware before upgrading; keep the `--no-default-features` daemon build working independently of Slint.
 
-**`directories` 6.0 and `Cargo.toml` path assumptions:**
-- Risk: Config paths (`~/.config/zenomen`) are stable, but the legacy migration reads `~/.config/openomen/rgb`; a future `directories` major could change `config_dir()` behaviour on some platforms.
-- Impact: Profiles silently not found.
-- Migration plan: Pin the major version and assert the resolved path in `tests/config_tests.rs`.
-
-**`cargo-packager` / packaging metadata:**
-- Risk: The `.deb` file mappings in `Cargo.toml:67-77` are the source of truth for installed paths, but `src/desktop/system_integration.rs` embeds its own copies of those paths. They agree today (`/usr/share/dbus-1/system.d/…`) but the README disagrees (`/etc/...`).
-- Impact: A path change in one place installs files where the daemon does not look.
-- Migration plan: Generate both from a single `const` module or assert equality in `tests/packaging_tests.rs` (which already compares embedded vs disk contents).
+**`tracing-appender` file logging in the daemon:**
+- Risk: The daemon and GUI share one logging initializer and path, but the unit's `ProtectHome` makes the daemon's file sink fail.
+- Files: `Cargo.toml:35`, `src/logging.rs`, `data/systemd/zenomen-hw.service:16`
+- Impact: Silent loss of daemon logs.
+- Migration plan: Add a daemon-specific sink or use journald; test the resolved path in both processes.
 
 ## Missing Critical Features
 
-**Battery telemetry:**
-- Problem: `HardwareCapabilities.battery_metrics` exists and `src/app.rs:416` binds it to the UI (`set_has_battery_metrics`), but no provider sets it to `true` and `TelemetrySnapshot` has no battery fields.
-- Blocks: The "unavailable vs measured" contract for battery; the always-degraded bug; a truthful Diagnostics battery row.
-- Fix: Probe `/sys/class/power_supply/BAT*` (`capacity`, `status`, `power_now`), add fields to the snapshot, and render them.
+**No daemon-side authorization tests:**
+- Problem: There is no test that exercises `HardwareService` methods end to end, including `authorize` allow/deny and backend invocation. `with_polkit_required` exists but is unused.
+- Blocks: Confidence in the security boundary; any refactor of `contract.rs` can silently drop a polkit check.
 
-**Per-core CPU utilization in the UI:**
-- Problem: `sample_proc_stat` returns per-core values (`src/hardware/linux/cpu.rs:114-152`) but the provider discards them (`_per_core`).
-- Blocks: MON-02 parity and any per-core chart.
-- Fix: Add `per_core_utilization` to `TelemetrySnapshot` and a UI view; or remove the computation and downgrade PARITY.
+**No shutdown/lifecycle tests for `main.rs`:**
+- Problem: The `Disabled` hang, tray registration failure, and CLI flag handling have no tests because `main.rs` is a binary with inline logic.
+- Blocks: Preventing the known shutdown hang from regressing and validating the single-instance fallbacks.
 
-**GPU VRAM and power draw:**
-- Problem: AMD sysfs and `nvidia-smi` both read VRAM (`src/hardware/linux/gpu.rs:166-177,237-245`), but the snapshot has no fields and the UI cannot show them.
-- Blocks: MON-06 parity.
-- Fix: Add `gpu_vram_used_mb`, `gpu_vram_total_mb`, `gpu_power_w` to `TelemetrySnapshot` (and parse `power.draw` from `nvidia-smi`), then render.
+**No activation/unit consistency test:**
+- Problem: Tests check that the D-Bus conf contains a root policy and that the unit has `Type=dbus`, but nothing asserts that the activation file delegates to the unit (`SystemdService=`) or that the packaged install enables it.
+- Blocks: Catching the sandbox bypass on a fresh DEB install.
 
-**RGB state persistence:**
-- Problem: See Known Bugs. No `rgb.*` keys in `AppConfig`; active profile resets on restart.
-- Blocks: RGB-02 parity.
-- Fix: Extend `src/config/schema.rs`, load into `AppState`, save on change.
+**No real battery telemetry:**
+- Problem: `battery_metrics` is advertised but no charge/power fields exist in `TelemetrySnapshot` or the provider.
+- Blocks: Any battery UI or diagnostics metric; the capability is currently misleading.
 
-**Automated polkit enforcement:**
-- Problem: `with_polkit_required` (`src/service/contract.rs:45-48`) exists only in `#[cfg(test)]` and is never called by a test; no test asserts that an unauthorized caller is denied.
-- Blocks: Confidence in the SVC-03 security claim.
-- Fix: Add a test that constructs `HardwareService` with `require_polkit = true` and a fake sender, asserting `AccessDenied`; run it under a private bus if possible.
-
-**Two-hour soak and real-hardware budget validation:**
-- Problem: `docs/RESOURCE-BUDGET.md` §3 marks the soak NOT MEASURED and the budget numbers are from Xvfb/llvmpipe.
-- Blocks: Any credible claim that the ≤40 MB / ≤0.1% targets are met.
-- Fix: Run the soak on a real laptop, record the CSV in `dist/`, and make the result a release checklist item.
-
-**CI gates for budgets and end-to-end D-Bus:**
-- Problem: `.github/workflows/ci.yml` runs fmt, clippy, tests under Xvfb, and `cargo audit` — no release-profile test, no coverage, no budget gate, no D-Bus service activation test. Unlike `release.yml`, the CI actions are not SHA-pinned (`actions/checkout@v4`, `taiki-e/install-action@…` without a digest).
-- Blocks: Regressions in the exact areas the project cares about (memory, privilege path) pass CI silently.
-- Fix: Add a `--release` test job, a budget script gate on a fixed runner, a `dbus-run-session` integration job, and pin actions by SHA.
+**No cross-platform opener abstraction:**
+- Problem: `releases.rs` hardcodes `xdg-open` (`src/desktop/releases.rs:42-44`) despite cross-platform claims; autostart and system integration are Linux-only.
+- Blocks: Honest non-Linux builds and a credible cross-platform story.
 
 ## Test Coverage Gaps
 
-**Polkit authorization enforcement:**
-- What's not tested: That mutating D-Bus methods reject unauthorized callers; `with_polkit_required` is defined but unused. `tests/hardware_service_tests.rs:265-268` only greps the policy XML for `auth_admin_keep`.
-- Files: `src/service/contract.rs:45-48,56-77`, `tests/hardware_service_tests.rs`, `tests/power_preset_tests.rs:223`
-- Risk: A regression that skips `authorize()` (or a future method added without it) ships undetected — a privilege-escalation bug.
+**Privileged service and polkit path:**
+- What's not tested: `HardwareService` D-Bus methods, `authorize`, polkit denial/challenge, and the `with_polkit_required(false)` path.
+- Files: `src/service/contract.rs:44-213`, `src/service/polkit.rs:28-105`
+- Risk: A regression could allow unauthorized mutations or break all authorized ones without a failing test.
 - Priority: High
 
-**Fan/power control concurrency and timeout:**
-- What's not tested: Two rapid actions, the 30 s timeout path, and late-success-after-timeout in `execute_mutating_action`. `tests/fan_control_tests.rs` asserts `pending_fan_mode` stays `None`, i.e. it tests the absence of the feature.
-- Files: `src/core/worker.rs:350-380`, `tests/fan_control_tests.rs`
-- Risk: Races and orphaned hardware writes reach users.
+**Application lifecycle and CLI:**
+- What's not tested: `main.rs` shutdown wiring (especially the `Disabled` branch), tray registration failure, `--install-system-integration`/`--uninstall-system-integration` argument handling, and `--minimized`.
+- Files: `src/main.rs:40-168`, `src/main.rs:259-281`
+- Risk: The known shutdown hang and destructive flag behavior can regress unnoticed.
 - Priority: High
 
-**Total-failure contract for presets and RGB enable:**
-- What's not tested: `apply_preset` returning `Ok` when both legs fail; `set_rgb_enabled(true)` overwriting the profile.
-- Files: `src/service/backend.rs:315-350`, `src/service/contract.rs:161-212`
-- Risk: The UI reports success for no-ops, violating the core verification promise.
+**Systemd/D-Bus activation semantics:**
+- What's not tested: The activation file's `SystemdService`, the unit's `ReadWritePaths`/hardening directives, `ProtectHome` vs. logging path, and packaged enablement.
+- Files: `data/dbus/com.zenomen.Hardware1.service`, `data/systemd/zenomen-hw.service`, `Cargo.toml:90-99`, `tests/hardware_service_tests.rs:255-275`
+- Risk: Security hardening can be bypassed or silently broken by a packaging change.
 - Priority: High
 
-**Battery and capability-count invariants:**
-- What's not tested: That a fully capable real-Linux state is not degraded; battery detection; `EXPECTED_SENSOR_COUNT` matching what providers actually set.
-- Files: `src/core/state.rs:289-320`, `src/hardware/registry.rs`, `tests/sensor_registry_tests.rs`
-- Risk: The always-degraded bug persists unnoticed.
+**Legacy RGB malformed input:**
+- What's not tested: Non-ASCII/24-byte content, wrong-length content, and partial zone data in the legacy read path.
+- Files: `src/service/backend.rs:409-427`
+- Risk: A malformed sysfs value panics the root daemon (abort profile).
 - Priority: High
 
-**`nvidia-smi` timeout/leak behaviour:**
-- What's not tested: Slow/missing `nvidia-smi` under repeated sampling; thread/process accumulation. `tests/linux_gpu_tests.rs` covers parsing, not the spawn/timeout path.
-- Files: `src/hardware/linux/gpu.rs:187-219`, `tests/linux_gpu_tests.rs`
-- Risk: The RSS/CPU budget silently degrades on hybrid laptops.
+**Live-hardware tests are the default, not isolated:**
+- What's not tested in isolation: Host-dependent behavior in `tests/sensor_registry_tests.rs:246-262`, `tests/linux_procfs_tests.rs:55-76`, `tests/degradation_tests.rs:136-155`, and `tests/fan_control_tests.rs:99-119`.
+- Files: `tests/sensor_registry_tests.rs`, `tests/linux_procfs_tests.rs`, `tests/degradation_tests.rs`, `tests/fan_control_tests.rs`
+- Risk: CI results depend on the runner's hardware and whether a production daemon is active; the suite can pass locally and fail in CI (or vice versa). This also violates the project rule to use isolated temp dirs and mock hardware.
+- Priority: High
+
+**Budget thresholds:**
+- What's not tested: The ≤40 MB / ≤15 MB budget claims; the only assertion is `< 500 MB` in `tests/benchmark_tests.rs:33-35`.
+- Files: `tests/benchmark_tests.rs`, `scripts/measure-budget.sh`, `docs/RESOURCE-BUDGET.md`
+- Risk: Memory regressions up to 500 MB pass CI, and the documented PASS verdicts use a different metric than the script samples.
 - Priority: Medium
 
-**Real-hardware / system-bus integration:**
-- What's not tested in CI: Service activation via D-Bus, polkit in a real session, systemd unit sandboxing, install/uninstall round-trip. Some tests connect to the host bus and are environment-dependent.
-- Files: `tests/hardware_service_tests.rs`, `tests/desktop_integration_tests.rs`, `tests/packaging_tests.rs`, `.github/workflows/ci.yml`
-- Risk: Packaging and privilege-path regressions are found only by users.
+**History-window semantics:**
+- What's not tested: Duration stability across polling-interval changes, capacity recalculation, and the seconds-vs-samples contract.
+- Files: `src/core/worker.rs:156-201`, `src/app.rs:120-124`, `src/core/state.rs:245-248`, `tests/telemetry_history_tests.rs`
+- Risk: The UI label and actual data window diverge silently.
 - Priority: Medium
 
-**Release-profile behaviour and resource budgets:**
-- What's not tested: `cargo test --release`, the `panic = "abort"` profile interacting with tests, and any budget assertion. CI runs debug tests only.
-- Files: `.github/workflows/ci.yml`, `Cargo.toml:36-42`, `scripts/measure-budget.sh`
-- Risk: Release-only failures (optimizations, abort semantics) and budget regressions.
+**Autostart round-trip:**
+- What's not tested: Preserving user edits, disable semantics (`Hidden=true` vs. delete), and startup reconciliation between config and file state.
+- Files: `src/desktop/autostart.rs`, `tests/desktop_integration_tests.rs`
+- Risk: User configuration loss and a toggle that misreports state.
 - Priority: Medium
 
-**RGB interface variants and raw `KernelPatch` write:**
-- What's not tested: Detection of all three variants against fixture trees; the retry/read-back path for the 12-byte `KernelPatch` write.
-- Files: `src/hardware/rgb.rs`, `src/service/backend.rs:459-500`, `tests/rgb_tests.rs`
-- Risk: A variant-specific write silently fails on some models.
-- Priority: Medium
-
-**Config corruption and dual-load divergence:**
-- What's not tested: That `main` and the worker resolve the same file and agree on defaults when the config is corrupt; `tests/config_tests.rs` covers load/save but not the two call sites.
-- Files: `src/main.rs:62-64`, `src/core/worker.rs:84`, `tests/config_tests.rs`
-- Risk: Users see settings that do not take effect.
+**Diagnostics export concurrency/durability:**
+- What's not tested: Two rapid exports, crash between write and rename, and fsync behavior.
+- Files: `src/core/diagnostics.rs:144-160`, `tests/diagnostics_tests.rs`
+- Risk: Corrupt or lost support reports; low frequency but hard to diagnose.
 - Priority: Low
 
 ---
 
-*Concerns audit: 2026-11-06*
+*Concerns audit: 2026-11-07*
