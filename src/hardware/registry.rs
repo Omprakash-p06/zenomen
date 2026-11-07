@@ -27,6 +27,12 @@ pub struct SensorRegistry {
     pub has_platform_profiles: bool,
     /// All discovered hwmon device names.
     pub discovered_devices: Vec<String>,
+    /// A battery exposes a readable `capacity` file.
+    ///
+    /// Only presence is detected: battery *telemetry* (charge level, power
+    /// draw) is not sampled yet, so this must not be reported as a full
+    /// metric. It exists because the capability flag may not be guessed.
+    pub has_battery: bool,
 }
 
 impl SensorRegistry {
@@ -39,6 +45,10 @@ impl SensorRegistry {
     }
 
     /// Scan custom directory roots (enables testing and mocking).
+    ///
+    /// The `power_supply` class directory is derived from the hwmon root's
+    /// parent (`/sys/class/hwmon` → `/sys/class/power_supply`), so existing
+    /// callers and fixture trees keep working unchanged.
     pub fn scan_roots(hwmon_root: &Path, acpi_root: &Path) -> Self {
         let devices = scan_hwmon_devices(hwmon_root);
         let discovered_devices = devices.iter().map(|d| d.name.clone()).collect();
@@ -55,6 +65,11 @@ impl SensorRegistry {
         // 3. Check ACPI platform profiles
         let has_platform_profiles = acpi_root.join("platform_profile").exists();
 
+        // 4. Check battery presence (capability only, no sampling)
+        let has_battery = hwmon_root
+            .parent()
+            .is_some_and(|class_dir| scan_battery_present(&class_dir.join("power_supply")));
+
         Self {
             cpu_temp,
             fan_tachometers,
@@ -62,6 +77,7 @@ impl SensorRegistry {
             fan_control_path,
             has_platform_profiles,
             discovered_devices,
+            has_battery,
         }
     }
 
@@ -130,9 +146,24 @@ impl SensorRegistry {
             power_profiles: self.has_platform_profiles,
             rgb_lighting: rgb_variant.is_some(),
             rgb_variant,
-            battery_metrics: false,
+            battery_metrics: self.has_battery,
         }
     }
+}
+
+/// True when a `BAT*` power-supply device exposes a readable `capacity` file.
+///
+/// An unreadable directory means "no battery detected", not "sampling failed":
+/// desktops and VMs legitimately have no `power_supply` entries at all.
+fn scan_battery_present(power_supply_root: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(power_supply_root) else {
+        return false;
+    };
+
+    entries.flatten().any(|entry| {
+        entry.file_name().to_string_lossy().starts_with("BAT")
+            && entry.path().join("capacity").exists()
+    })
 }
 
 /// Resolve canonical CPU temperature sensor based on driver and label priority (MON-04).

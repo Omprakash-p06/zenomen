@@ -1,10 +1,12 @@
 //! Tests for Linux GPU DRM enumeration and telemetry parsing.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zenomen::hardware::linux::gpu::{
-    GpuVendor, enumerate_drm_gpus, is_card_device_name, parse_nvidia_smi_output,
+    GpuVendor, NvidiaSampler, enumerate_drm_gpus, is_card_device_name, parse_nvidia_smi_output,
 };
 
 struct TestDir(PathBuf);
@@ -80,4 +82,94 @@ fn parse_nvidia_smi_csv_handles_nominal_and_empty_output() {
 
     assert!(parse_nvidia_smi_output("").is_none());
     assert!(parse_nvidia_smi_output("NVIDIA Driver Not Loaded\n").is_none());
+}
+
+/// Write an executable shell script standing in for `nvidia-smi`.
+fn fake_nvidia_smi(dir: &std::path::Path, body: &str) -> PathBuf {
+    let path = dir.join("fake-nvidia-smi");
+    fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake tool");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod fake tool");
+    path
+}
+
+#[test]
+fn nvidia_watcher_reports_the_sample_its_program_prints() {
+    let dir = TestDir::new("zenomen-nv-watcher");
+    let program = fake_nvidia_smi(
+        dir.path(),
+        "echo 'NVIDIA GeForce RTX 3060 Laptop GPU, 24, 65, 1450, 6144'",
+    );
+
+    let sampler = NvidiaSampler::new(program);
+    // No sample before the first request: the tick reads unavailable, not zero.
+    assert!(sampler.latest().is_none());
+
+    sampler.request();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let sample = loop {
+        if let Some(sample) = sampler.latest() {
+            break sample;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "watcher never produced a sample"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    assert_eq!(sample.name, "NVIDIA GeForce RTX 3060 Laptop GPU");
+    assert_eq!(sample.utilization, Some(24.0));
+    assert_eq!(sample.temperature_c, Some(65.0));
+}
+
+#[test]
+fn nvidia_watcher_stays_unavailable_when_the_program_is_missing() {
+    let dir = TestDir::new("zenomen-nv-missing");
+    let sampler = NvidiaSampler::new(dir.path().join("does-not-exist"));
+
+    sampler.request();
+    std::thread::sleep(Duration::from_millis(200));
+
+    // A missing/failing tool is absence of a sensor, never a zero reading.
+    assert!(sampler.latest().is_none());
+}
+
+#[test]
+fn nvidia_watcher_stays_unavailable_when_program_fails() {
+    let dir = TestDir::new("zenomen-nv-fail");
+    let program = fake_nvidia_smi(dir.path(), "exit 1");
+    let sampler = NvidiaSampler::new(program);
+
+    sampler.request();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(sampler.latest().is_none());
+}
+
+#[test]
+fn nvidia_watcher_stale_reading_expires_to_none() {
+    let dir = TestDir::new("zenomen-nv-stale");
+    let program = fake_nvidia_smi(
+        dir.path(),
+        "echo 'NVIDIA GeForce RTX 3060 Laptop GPU, 24, 65, 1450, 6144'",
+    );
+    let sampler = NvidiaSampler::new(program);
+    sampler.request();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while sampler.latest().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected initial sample"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(sampler.latest().is_some());
+
+    // Without further requests, after MAX_AGE (3s) the sample must expire to None
+    std::thread::sleep(Duration::from_millis(3100));
+    assert!(
+        sampler.latest().is_none(),
+        "stale reading must expire to None"
+    );
 }

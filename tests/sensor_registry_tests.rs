@@ -190,6 +190,59 @@ fn discovers_fans_and_pwm_control_on_hp_wmi() {
 }
 
 #[test]
+fn battery_presence_is_measured_not_hardcoded() {
+    let tree = TestHwmonTree::new("zenomen-battery-present");
+    // Nested layout so the derived `power_supply` sibling stays inside the
+    // fixture instead of touching the shared temp directory.
+    let hwmon_root = tree.path().join("hwmon");
+    let acpi_root = tree.path().join("acpi");
+    fs::create_dir_all(&hwmon_root).unwrap();
+    fs::create_dir_all(&acpi_root).unwrap();
+    fs::create_dir_all(tree.path().join("power_supply/BAT0")).unwrap();
+    fs::write(tree.path().join("power_supply/BAT0/capacity"), "87\n").unwrap();
+
+    let registry = SensorRegistry::scan_roots(&hwmon_root, &acpi_root);
+
+    assert!(registry.has_battery);
+    assert!(
+        registry
+            .detect_capabilities(true, true, true)
+            .has_battery_metrics()
+    );
+}
+
+#[test]
+fn battery_capability_is_false_without_a_battery_device() {
+    let tree = TestHwmonTree::new("zenomen-battery-absent");
+    let hwmon_root = tree.path().join("hwmon");
+    let acpi_root = tree.path().join("acpi");
+    fs::create_dir_all(&hwmon_root).unwrap();
+    fs::create_dir_all(&acpi_root).unwrap();
+
+    let registry = SensorRegistry::scan_roots(&hwmon_root, &acpi_root);
+
+    assert!(!registry.has_battery);
+    assert!(
+        !registry
+            .detect_capabilities(true, true, true)
+            .has_battery_metrics()
+    );
+}
+
+#[test]
+fn a_fully_capable_machine_is_not_degraded() {
+    use zenomen::core::events::AppEvent;
+    use zenomen::core::state::AppState;
+
+    let mut state = AppState::default();
+    state.apply(&AppEvent::CapabilitiesLoaded(
+        zenomen::hardware::HardwareCapabilities::all_supported(),
+    ));
+
+    assert!(!state.is_degraded());
+}
+
+#[test]
 fn live_host_initialization_resolves_real_sensors() {
     let provider = LinuxHardwareProvider::new();
     let capabilities = provider.capabilities();

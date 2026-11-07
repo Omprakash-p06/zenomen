@@ -197,6 +197,33 @@ fn test_state_handles_power_and_preset_events() {
 }
 
 #[test]
+fn test_preset_without_any_interface_fails_instead_of_reporting_success() {
+    // A sysfs root with neither `pwm1_enable` nor `platform_profile_choices`.
+    let root = std::env::temp_dir().join(format!("zenomen_test_pwr_nohw_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    let backend = HardwareBackend::new(&root);
+    let result = backend.apply_preset("gaming");
+    let _ = fs::remove_dir_all(&root);
+
+    match result {
+        Err(HardwareControlError::VerificationFailed {
+            target,
+            actual,
+            retries,
+        }) => {
+            assert_eq!(target, "gaming");
+            assert_eq!(retries, 0);
+            // Both legs must be named, so the operator can see what is missing.
+            assert!(actual.contains("Power profile"), "actual: {actual}");
+            assert!(actual.contains("Fan mode"), "actual: {actual}");
+        }
+        other => panic!("expected VerificationFailed, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_diagnostics_report_includes_hardware_service() {
     let mock = MockSysfs::new("diag_service");
     let state = AppState::default();

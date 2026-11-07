@@ -44,6 +44,39 @@ fn test_fan_mode_state_transitions() {
 }
 
 #[test]
+fn test_pending_fan_mode_marks_the_write_in_flight() {
+    let mut state = AppState::default();
+    state.apply(&AppEvent::FanModeChanged(Ok("auto".to_string())));
+    state.apply(&AppEvent::ControlErrorDismissed);
+
+    // The request announces itself before the D-Bus call returns.
+    state.apply(&AppEvent::FanModeRequested("max".to_string()));
+    assert_eq!(state.pending_fan_mode.as_deref(), Some("max"));
+    // The verified mode has not changed yet — only the request is known.
+    assert_eq!(state.fan_mode, "auto");
+
+    // Confirmed read-back clears the in-flight marker.
+    state.apply(&AppEvent::FanModeChanged(Ok("max".to_string())));
+    assert_eq!(state.pending_fan_mode, None);
+    assert_eq!(state.fan_mode, "max");
+}
+
+#[test]
+fn test_pending_fan_mode_is_cleared_by_a_failed_verification() {
+    let mut state = AppState::default();
+
+    state.apply(&AppEvent::FanModeRequested("max".to_string()));
+    assert_eq!(state.pending_fan_mode.as_deref(), Some("max"));
+
+    state.apply(&AppEvent::FanModeChanged(Err(
+        "Hardware write verification failed for target '0'".to_string(),
+    )));
+
+    assert_eq!(state.pending_fan_mode, None);
+    assert!(state.last_control_error.is_some());
+}
+
+#[test]
 fn test_service_status_state_transitions() {
     let mut state = AppState::default();
     assert_eq!(state.service_status, ServiceConnectionStatus::Disconnected);

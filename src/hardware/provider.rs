@@ -183,11 +183,14 @@ pub struct TelemetrySnapshot {
 impl TelemetrySnapshot {
     /// The number of sensors a fully populated sample is expected to carry.
     ///
-    /// Matches the status strip copy in `01-UI-SPEC.md` ("12 of 12 sensors
-    /// reported"). Keep the two in step if a sensor is added.
-    pub const EXPECTED_SENSOR_COUNT: usize = 12;
+    /// `rgb_profile` is deliberately excluded. The active lighting profile is
+    /// presentation state owned by `AppState::active_rgb_profile`, not a sensor
+    /// the Linux provider samples, so counting it made a healthy machine report
+    /// "11 of 12" forever. Keep this in step with the status strip if a real
+    /// sensor is added.
+    pub const EXPECTED_SENSOR_COUNT: usize = 11;
 
-    /// How many of the twelve expected sensors this sample actually carries.
+    /// How many of the eleven expected sensors this sample actually carries.
     ///
     /// Absence is measured, not guessed: a zero utilization reading still
     /// counts as reported (the CPU is merely idle), which is why presence is
@@ -205,7 +208,7 @@ impl TelemetrySnapshot {
             !self.fan_rpms.is_empty(),
             !self.fan_mode.is_empty(),
             !self.power_profile.is_empty(),
-            self.rgb_profile.is_some(),
+            // `rgb_profile` is not counted — see EXPECTED_SENSOR_COUNT.
         ]
         .iter()
         .filter(|reported| **reported)

@@ -6,13 +6,12 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::hardware::linux::cpu::{
     CpuSampler, read_cpu_freq_from_cpuinfo, read_cpu_freq_mhz, read_cpu_model,
 };
 use crate::hardware::linux::gpu::{
-    GpuDevice, GpuVendor, enumerate_drm_gpus, sample_amd_gpu, sample_nvidia_smi,
+    GpuDevice, GpuVendor, NvidiaSampler, enumerate_drm_gpus, sample_amd_gpu,
 };
 use crate::hardware::linux::memory::read_memory_snapshot;
 use crate::hardware::registry::SensorRegistry;
@@ -25,7 +24,9 @@ pub struct LinuxHardwareProvider {
     cpufreq_path: PathBuf,
     acpi_root: PathBuf,
     gpu_devices: Vec<GpuDevice>,
-    has_nvidia: bool,
+    /// Watcher for `nvidia-smi`, present only when an NVIDIA GPU or the tool was
+    /// detected. One thread for the provider's lifetime, not one per sample.
+    nvidia: Option<NvidiaSampler>,
     registry: Arc<SensorRegistry>,
     capabilities: HardwareCapabilities,
 }
@@ -69,6 +70,7 @@ impl LinuxHardwareProvider {
         let has_cpu = !cpu_model.is_empty();
         let has_gpu = !gpu_devices.is_empty() || has_nvidia;
         let has_ram = Path::new("/proc/meminfo").exists();
+        let nvidia = has_nvidia.then(|| NvidiaSampler::new("nvidia-smi"));
 
         let registry = Arc::new(SensorRegistry::scan_roots(hwmon_root, acpi_root));
         let capabilities = registry.detect_capabilities(has_cpu, has_gpu, has_ram);
@@ -79,7 +81,7 @@ impl LinuxHardwareProvider {
             cpufreq_path: cpufreq_path.to_path_buf(),
             acpi_root: acpi_root.to_path_buf(),
             gpu_devices,
-            has_nvidia,
+            nvidia,
             registry,
             capabilities,
         }
@@ -160,11 +162,13 @@ impl HardwareProvider for LinuxHardwareProvider {
         // Check NVIDIA first if present (often discrete gaming GPU), then AMD/Intel DRM
         let mut gpu_telemetry = None;
 
-        // Try NVIDIA non-blocking query with 200ms timeout only if NVIDIA GPU/tool is detected
-        if self.has_nvidia
-            && let Some(nv) = sample_nvidia_smi(Duration::from_millis(200))
-        {
-            gpu_telemetry = Some(nv);
+        // Ask the NVIDIA watcher for a sample and take whatever it has. The tick
+        // never waits on `nvidia-smi`; a stale sample reads as unavailable.
+        if let Some(nvidia) = &self.nvidia {
+            nvidia.request();
+            if let Some(nv) = nvidia.latest() {
+                gpu_telemetry = Some(nv);
+            }
         }
 
         // If no NVIDIA reading, sample discovered DRM devices

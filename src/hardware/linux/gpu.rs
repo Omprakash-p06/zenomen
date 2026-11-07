@@ -2,13 +2,14 @@
 //!
 //! Complies with MON-05 and MON-06:
 //! - Dynamically discovers DRM cards in `/sys/class/drm/card*` without hardcoding `card0`.
-//! - Supports AMD (amdgpu sysfs), Intel, and NVIDIA (non-blocking fallback via nvidia-smi).
+//! - Supports AMD (amdgpu sysfs), Intel, and NVIDIA (cached watcher around nvidia-smi).
 //! - Missing or sleeping GPUs degrade to `None` without blocking or erroring.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 /// Detected GPU vendor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,43 +180,87 @@ pub fn sample_amd_gpu(device: &GpuDevice) -> GpuTelemetry {
     telemetry
 }
 
-/// Query NVIDIA telemetry non-blockingly using `nvidia-smi`.
+/// One long-lived `nvidia-smi` watcher, shared by every telemetry tick.
 ///
-/// Runs with a short timeout (e.g. 200ms) to ensure sampling never hangs if the
-/// driver or device is suspended in D3cold. If the driver is absent or fails to
-/// communicate, returns `None` without blocking or erroring.
-pub fn sample_nvidia_smi(timeout: Duration) -> Option<GpuTelemetry> {
-    let (tx, rx) = mpsc::channel();
+/// Querying used to spawn a named thread *and* a process per tick. When the
+/// driver was suspended in D3cold the query exceeded its 200 ms budget and the
+/// thread was detached rather than joined, so a slow dGPU accumulated one thread
+/// and one process per second for the life of the app. A single watcher thread
+/// holds no per-sample resource, so a hung query now costs staleness instead of
+/// threads — and the tick itself never blocks.
+pub struct NvidiaSampler {
+    latest: Arc<Mutex<Option<(Instant, GpuTelemetry)>>>,
+    /// Capacity one: many ticks during a slow query coalesce into one request.
+    wake: mpsc::SyncSender<()>,
+    /// Kept so the watcher lives as long as the provider. Dropping the sender
+    /// ends it; the handle itself is only held for that lifetime.
+    _thread: JoinHandle<()>,
+}
 
-    let worker = std::thread::Builder::new()
-        .name("zenomen-nv-query".to_string())
-        .spawn(move || {
-            let output = Command::new("nvidia-smi")
-                .args([
-                    "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
-                    "--format=csv,noheader,nounits",
-                ])
-                .output();
-            let _ = tx.send(output);
-        });
+impl NvidiaSampler {
+    /// A sample older than this is reported as unavailable rather than current.
+    ///
+    /// Without it, a driver that stops answering would leave the last reading on
+    /// screen indefinitely, which is the fabrication the project forbids.
+    const MAX_AGE: Duration = Duration::from_secs(3);
 
-    let Ok(join_handle) = worker else {
-        return None;
-    };
+    /// Start the watcher. `program` is injectable so tests never invoke the tool.
+    pub fn new<P: Into<PathBuf>>(program: P) -> Self {
+        let program = program.into();
+        let latest: Arc<Mutex<Option<(Instant, GpuTelemetry)>>> = Arc::new(Mutex::new(None));
+        let (wake, requests) = mpsc::sync_channel::<()>(1);
+        let slot = Arc::clone(&latest);
 
-    let (result, should_join) = match rx.recv_timeout(timeout) {
-        Ok(Ok(output)) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            (parse_nvidia_smi_output(&stdout), true)
+        let thread = std::thread::Builder::new()
+            .name("zenomen-nv-watch".to_string())
+            .spawn(move || {
+                // Ends when the provider drops the sender.
+                while requests.recv().is_ok() {
+                    let Some(sample) = query_nvidia_smi(&program) else {
+                        continue;
+                    };
+                    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+                    *guard = Some((Instant::now(), sample));
+                }
+            })
+            .expect("spawning the nvidia-smi watcher must succeed");
+
+        Self {
+            latest,
+            wake,
+            _thread: thread,
         }
-        Ok(_) => (None, true),
-        Err(_) => (None, false), // Timed out: do not block worker on join(); let thread detach
-    };
-
-    if should_join {
-        let _ = join_handle.join();
     }
-    result
+
+    /// Ask for a fresh sample. Never blocks: a pending request absorbs this one.
+    pub fn request(&self) {
+        let _ = self.wake.try_send(());
+    }
+
+    /// The most recent sample, or `None` when there is none or it has gone stale.
+    pub fn latest(&self) -> Option<GpuTelemetry> {
+        let guard = self.latest.lock().unwrap_or_else(|e| e.into_inner());
+        let (at, sample) = guard.as_ref()?;
+        (at.elapsed() <= Self::MAX_AGE).then(|| sample.clone())
+    }
+}
+
+/// Run one `nvidia-smi` query and parse it. Any failure is `None`, never a panic
+/// and never a fabricated reading.
+fn query_nvidia_smi(program: &Path) -> Option<GpuTelemetry> {
+    let output = Command::new(program)
+        .args([
+            "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_nvidia_smi_output(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Parse CSV output from `nvidia-smi`:

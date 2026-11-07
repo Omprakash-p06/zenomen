@@ -333,6 +333,16 @@ impl HardwareBackend {
             )
         };
 
+        // Neither leg applied: the D-Bus call must fail, not return success with
+        // a message that happens to contain the word "failed".
+        if !power_applied && !fan_applied {
+            return Err(HardwareControlError::VerificationFailed {
+                target: normalized,
+                actual: error_messages.join("; "),
+                retries: 0,
+            });
+        }
+
         Ok(PresetResult {
             preset_name: normalized,
             power_applied,
