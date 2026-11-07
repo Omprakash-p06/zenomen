@@ -1,5 +1,5 @@
 ---
-last_mapped_commit: 4baf4bdbfc56a9755e48c37893d7515f1ffa172d
+last_mapped_commit: 206cdc2634e0a9d0a07a90f0580927ad5b1c554e
 last_mapped_at: 2026-11-07
 ---
 # Codebase Structure
@@ -10,358 +10,330 @@ last_mapped_at: 2026-11-07
 
 ```text
 zenomen/
-├── Cargo.toml              # Single crate; two [[bin]] targets; `ui` default feature
-├── Cargo.lock              # Committed on purpose (application, cargo-audit input)
-├── build.rs                # Compiles ui/app.slint only when CARGO_FEATURE_UI is set
-├── AGENTS.md               # Non-negotiable engineering rules
-├── README.md               # User-facing install/security/architecture overview
+├── Cargo.toml                  # Single crate; two [[bin]] targets; `ui` feature; Windows dependencies
+├── Cargo.lock                  # Committed lockfile (application dependency pinning & audit)
+├── build.rs                    # Slint compilation under `ui` feature; Win32 resource embedding
+├── AGENTS.md                   # Non-negotiable engineering rules & architectural invariants
+├── README.md                   # User-facing installation, security, and architecture guide
 ├── src/
-│   ├── lib.rs              # Module tree; `ui`-gated `app` module + include_modules!()
-│   ├── main.rs             # `zenomen` GUI entry point and thread orchestration
-│   ├── app.rs              # Slint ↔ core bridge (only file that touches AppWindow)
-│   ├── logging.rs          # Early non-blocking rotating file appender (used by both bins)
+│   ├── lib.rs                  # Module tree; feature-gated `app` & `ui` modules
+│   ├── main.rs                 # `zenomen` desktop GUI entry point and thread orchestration
+│   ├── app.rs                  # Slint ↔ core event bridge (only file touching Slint AppWindow)
+│   ├── logging.rs              # Early non-blocking rolling file appender (used by both bins)
 │   ├── bin/
-│   │   └── zenomen-hw.rs   # `zenomen-hw` root daemon entry point
+│   │   └── zenomen-hw.rs       # Dual-OS `zenomen-hw` privileged hardware daemon entry point
 │   ├── core/
-│   │   ├── mod.rs          # Re-exports the core surface
-│   │   ├── events.rs       # AppCommand, AppEvent, ScreenId
-│   │   ├── state.rs        # AppState + apply(&AppEvent) + status derivation
-│   │   ├── worker.rs       # 1 Hz monitoring worker + InFlightGuard atomic mutation handling
-│   │   ├── telemetry.rs    # Bounded history + SVG path generation
-│   │   ├── diagnostics.rs  # Report assembly + atomic JSON export
-│   │   └── benchmark.rs    # RSS/PSS instrumentation and checkpoints
+│   │   ├── mod.rs              # Re-exports the core application surface
+│   │   ├── events.rs           # AppCommand, AppEvent, ScreenId message contracts
+│   │   ├── state.rs            # AppState single-writer state machine + apply(&AppEvent)
+│   │   ├── worker.rs           # 1 Hz monitoring worker + InFlightGuard atomic mutation slot
+│   │   ├── telemetry.rs        # Bounded telemetry history (120 points) + SVG path generation
+│   │   ├── diagnostics.rs      # System diagnostics report assembly + atomic JSON export
+│   │   └── benchmark.rs        # Process RSS/PSS memory instrumentation and checkpoints
 │   ├── hardware/
-│   │   ├── mod.rs          # Re-exports; cfg-gated Linux provider / unavailable fallback
-│   │   ├── provider.rs     # HardwareProvider trait + capabilities/snapshot types
-│   │   ├── registry.rs     # Canonical sensor discovery (hwmon/ACPI/battery)
-│   │   ├── mock.rs         # MockHardware + MockScenario
-│   │   ├── unavailable.rs  # Zero-capability stub for non-Linux/Windows builds
-│   │   ├── rgb.rs          # RgbInterfaceVariant detection (read side)
-│   │   └── linux/
-│   │       ├── mod.rs      # Linux backend module tree
-│   │       ├── provider.rs # LinuxHardwareProvider
-│   │       ├── cpu.rs      # /proc/stat, cpufreq, /proc/cpuinfo parsers
-│   │       ├── gpu.rs      # DRM enumeration, AMD sysfs, NVIDIA watcher
-│   │       ├── memory.rs   # /proc/meminfo parser
-│   │       └── hwmon.rs    # /sys/class/hwmon scanner + sensor readers
+│   │   ├── mod.rs              # Hardware abstraction boundary re-exports
+│   │   ├── provider.rs         # HardwareProvider trait, HardwareCapabilities, TelemetrySnapshot
+│   │   ├── registry.rs         # Linux canonical sensor discovery (hwmon/ACPI/battery)
+│   │   ├── mock.rs             # MockHardware provider + MockScenario fixtures
+│   │   ├── unavailable.rs      # Honest zero-capability fallback stub for unsupported OSes
+│   │   ├── rgb.rs              # RGB interface detection (read side)
+│   │   ├── linux/              # Linux-specific native sensor implementations
+│   │   │   ├── mod.rs          # Linux hardware module tree
+│   │   │   ├── provider.rs     # LinuxHardwareProvider
+│   │   │   ├── cpu.rs          # /proc/stat, cpufreq, and /proc/cpuinfo parsers
+│   │   │   ├── gpu.rs          # DRM sysfs enumeration, AMD sensors, NVIDIA watcher
+│   │   │   ├── memory.rs       # /proc/meminfo parser
+│   │   │   └── hwmon.rs        # /sys/class/hwmon discovery and sensor readers
+│   │   └── windows/            # Windows native telemetry engine (Win32, DXGI 1.3, PDH, WMI)
+│   │       ├── mod.rs          # Windows hardware module tree
+│   │       ├── provider.rs     # WindowsHardwareProvider
+│   │       ├── cpu.rs          # Monotonic FILETIME GetSystemTimes calculation & registry model
+│   │       ├── memory.rs       # GlobalMemoryStatusEx RAM telemetry
+│   │       ├── gpu.rs          # DXGI 1.3 EnumAdapters1 & dedicated VRAM query
+│   │       ├── battery.rs      # GetSystemPowerStatus battery metrics
+│   │       ├── sensors.rs      # MSAcpi_ThermalZoneTemperature WMI query
+│   │       └── device.rs       # BaseBoard identification & DMI extraction
 │   ├── service/
-│   │   ├── mod.rs          # D-Bus + control subsystem re-exports
-│   │   ├── contract.rs     # #[interface] com.zenomen.Hardware1 + polkit gate
-│   │   ├── backend.rs      # Verified sysfs writes, presets, RGB variants
-│   │   ├── client.rs       # Blocking zbus client used by the GUI worker
-│   │   ├── polkit.rs       # PolicyKit1 CheckAuthorization
-│   │   └── types.rs        # FanMode, PresetResult, HardwareControlError
+│   │   ├── mod.rs              # Control & IPC subsystem re-exports
+│   │   ├── contract.rs         # Linux D-Bus #[interface] com.zenomen.Hardware1
+│   │   ├── backend.rs          # Linux verified sysfs writes, retries, and presets
+│   │   ├── client.rs           # Linux blocking zbus client for the desktop worker
+│   │   ├── polkit.rs           # Linux PolicyKit1 CheckAuthorization integration
+│   │   ├── protocol.rs         # Shared IPC protocol primitives
+│   │   ├── types.rs            # FanMode, PresetResult, HardwareControlError
+│   │   └── windows/            # Windows privileged hardware control service & Named Pipe IPC
+│   │       ├── mod.rs          # Windows service module tree
+│   │       ├── lifecycle.rs    # SCM service lifecycle (ZenOmenHardwareService, register/run)
+│   │       ├── pipe.rs         # \\.\pipe\ZenOmen.Hardware.v1 server pipe creation & framing
+│   │       ├── server.rs       # Named pipe request handler and dispatch
+│   │       ├── client.rs       # WindowsServiceClient named-pipe client for the GUI
+│   │       ├── protocol.rs     # Length-prefixed (4-byte BE) JSON frame codec (max 64 KB)
+│   │       ├── security.rs     # DACL SDDL security descriptor & active session authentication
+│   │       ├── authorization.rs # Board profile safety validation & mutation gating
+│   │       ├── hp_wmi.rs       # HP ACPI BIOS WMI driver (hpqBIntM / hpqBMtdx)
+│   │       └── profiles.rs     # BoardProfile database and motherboard matching
 │   ├── desktop/
-│   │   ├── mod.rs          # Desktop integration re-exports
-│   │   ├── single_instance.rs  # com.zenomen.App session service
-│   │   ├── tray.rs         # StatusNotifierItem + DBusMenu
-│   │   ├── autostart.rs    # XDG ~/.config/autostart/zenomen.desktop
-│   │   ├── releases.rs     # xdg-open releases page (no networking)
-│   │   └── system_integration.rs  # Root installer; embeds data/** via include_str!
+│   │   ├── mod.rs              # Cross-platform desktop integration re-exports
+│   │   ├── single_instance.rs  # Linux session D-Bus single instance
+│   │   ├── tray.rs             # Linux StatusNotifierItem + DBusMenu tray
+│   │   ├── autostart.rs        # Linux XDG autostart file management
+│   │   ├── releases.rs         # Linux browser release opener (xdg-open)
+│   │   ├── system_integration.rs # Linux root installer embedding system assets
+│   │   └── windows/            # Windows native desktop integration
+│   │       ├── mod.rs          # Windows desktop module tree
+│   │       ├── single_instance.rs # Win32 named Mutex single-instance enforcement
+│   │       ├── tray.rs         # Shell_NotifyIconW with dedicated Win32 message pump thread
+│   │       ├── autostart.rs    # HKCU Run registry autostart management
+│   │       ├── notifications.rs # Win32 native balloon/toast notifications
+│   │       ├── releases.rs     # Win32 ShellExecuteW release page launch
+│   │       ├── paths.rs        # Windows known folder paths (RoamingAppData, LocalAppData)
+│   │       └── installer.rs    # Windows service installation wrappers
 │   ├── config/
-│   │   ├── mod.rs          # Load/atomic-save/corrupt recovery
-│   │   └── schema.rs       # AppConfig, GeneralConfig, TelemetryConfig + sanitize
-│   └── rgb/
-│       ├── mod.rs          # RGB subsystem re-exports
-│       ├── schema.rs       # RgbColor/RgbProfile strict validation
-│       └── migration.rs    # OpenOMEN profile migration + built-in presets
-├── ui/
-│   ├── app.slint           # AppWindow shell, properties, callbacks, screen router
-│   ├── screens/            # one file per ScreenId (overview, cooling, performance,
-│   │                       #   lighting, settings, diagnostics)
-│   ├── components/         # sidebar, status-strip, telemetry-chart, sparkline,
-│   │                       #   metric-card, value-readout, action-button, etc.
-│   └── theme/              # colors/typography/metrics tokens + bundled fonts
-├── tests/                  # 16 integration test files (see Testing below)
-├── data/
+│   │   ├── mod.rs              # TOML config load, atomic save, and corrupt-file backup
+│   │   └── schema.rs           # AppConfig, GeneralConfig, TelemetryConfig validation & bounds
+│   ├── rgb/
+│   │   ├── mod.rs              # RGB domain re-exports
+│   │   ├── schema.rs           # RgbColor & RgbProfile strict hex validation
+│   │   └── migration.rs        # OpenOMEN profile migration & built-in presets
+│   └── ui/                     # Target GPUI-CE cross-platform presentation architecture
+│       ├── mod.rs              # GPUI scaffold module tree
+│       ├── app.rs              # GpuiApp root element tree and view-model bridge
+│       ├── theme/              # Design tokens and theme styling
+│       │   ├── mod.rs          # Theme definitions
+│       │   ├── colors.rs       # Canonical RGB/RGBA color tokens
+│       │   ├── spacing.rs      # Padding, margin, corner radius tokens
+│       │   └── typography.rs   # Type scale, font weights, line heights
+│       ├── components/         # Reusable presentation widgets
+│       │   ├── mod.rs          # Component re-exports
+│       │   ├── action_button.rs # Primary and ghost action buttons
+│       │   ├── metric_card.rs  # Live sensor cards with status indicators
+│       │   ├── sidebar.rs      # 6-screen navigation sidebar
+│       │   ├── status_strip.rs # Service health and degradation banner
+│       │   ├── telemetry_chart.rs # Multi-series historical chart with SVG rendering
+│       │   └── value_readout.rs # Formatted metric readouts
+│       └── screens/            # Screen view models
+│           ├── mod.rs          # Screen re-exports
+│           ├── overview.rs     # Dashboard overview view model
+│           ├── cooling.rs      # Fan curves & manual/max mode view model
+│           ├── performance.rs  # Power profile switching view model
+│           ├── lighting.rs     # 4-zone RGB keyboard control view model
+│           ├── settings.rs     # User preferences & intervals view model
+│           └── diagnostics.rs  # Hardware report & export view model
+├── ui/                         # Active production Slint 1.9 / 1.17 presentation layer
+│   ├── app.slint               # AppWindow declarative shell, callbacks, screen router
+│   ├── screens/                # Slint screens (overview, cooling, performance, lighting, settings, diagnostics)
+│   ├── components/             # Slint components (sidebar, status-strip, telemetry-chart, metric-card)
+│   └── theme/                  # Slint visual tokens and bundled offline Inter & JetBrains fonts
+├── packaging/
+│   └── windows/                # WiX Toolset v4/v5 Windows installer packaging
+│       ├── ZenOmen.wxs         # WiX source manifest for GUI, SCM service, shortcuts
+│       └── wix/                # WiX project build configuration
+│           └── ZenOmen.wxs
+├── tests/                      # 18 subsystem integration test suites
+│   ├── benchmark_tests.rs
+│   ├── config_tests.rs
+│   ├── degradation_tests.rs
+│   ├── desktop_integration_tests.rs
+│   ├── diagnostics_tests.rs
+│   ├── fan_control_tests.rs
+│   ├── hardware_service_tests.rs
+│   ├── linux_gpu_tests.rs
+│   ├── linux_procfs_tests.rs
+│   ├── logging_tests.rs
+│   ├── mock_hardware_tests.rs
+│   ├── packaging_tests.rs
+│   ├── power_preset_tests.rs
+│   ├── rgb_tests.rs
+│   ├── sensor_registry_tests.rs
+│   ├── telemetry_history_tests.rs
+│   ├── windows_service_tests.rs # Windows named pipe protocol, board profiles, authorization
+│   └── windows_telemetry_tests.rs # Windows native CPU, RAM, GPU, Battery calculation tests
+├── data/                       # Packaged system integration assets
 │   ├── applications/zenomen.desktop
 │   ├── dbus/com.zenomen.Hardware1.{conf,service}
 │   ├── polkit/com.zenomen.hardware.policy
 │   ├── systemd/zenomen-hw.service
-│   └── icons/              # hicolor PNG sizes (16..512 incl 24x24) + SVG + zenomen.ico
-├── docs/
-│   ├── PACKAGING.md
-│   ├── PARITY.md
-│   ├── RESOURCE-BUDGET.md
-│   └── decisions/ADR-001-ui-framework.md
-├── scripts/                # generate-icons.sh, validate-icons.py, measure-budget.sh
-├── logo/                   # source SVGs for branding
-├── dist/                   # generated packaging output + budget CSVs (gitignored)
-├── .github/
-│   ├── CODEOWNERS          # Code owners per subsystem
-│   ├── PULL_REQUEST_TEMPLATE.md # PR description & verification checklist
-│   └── workflows/          # ci.yml, release.yml
-└── .planning/              # GSD project state (PROJECT, ROADMAP, codebase maps, phases)
+│   └── icons/                  # Multi-resolution icons (hicolor 16..512 + SVG + zenomen.ico)
+├── docs/                       # Technical architecture, decisions, and testing protocols
+│   ├── PACKAGING.md            # Cross-platform distribution & package formats
+│   ├── PARITY.md               # Linux vs Windows feature parity matrix
+│   ├── RESOURCE-BUDGET.md      # Memory budget verification (<=40 MB RSS)
+│   ├── architecture/           # System architecture specifications
+│   │   ├── CROSS_PLATFORM_ARCHITECTURE.md # Three-tier cross-platform design
+│   │   ├── HP_WMI_PROTOCOL.md  # HP ACPI BIOS WMI firmware protocol specification
+│   │   ├── IPC_SECURITY.md     # Cross-platform threat model & DACL security
+│   │   └── WINDOWS_HARDWARE.md # Windows native telemetry subsystem details
+│   ├── decisions/              # Architecture Decision Records
+│   │   ├── ADR-001-ui-framework.md # Initial Slint evaluation
+│   │   ├── ADR-002-gpui-ce-migration.md # Decision to migrate production UI to GPUI-CE
+│   │   ├── ADR-002-windows-hardware-interface.md # Direct WMI/Win32 over WinRing0
+│   │   ├── ADR-003-windows-service-security.md # Named pipe DACL SDDL & session isolation
+│   │   └── ADR-004-cross-platform-ui.md # GPUI-CE multi-platform strategy
+│   └── testing/                # Quality assurance and validation documents
+│       ├── WINDOWS_TEST_MATRIX.md # Windows 10/11 build support & automated suite
+│       ├── HP_BOARD_VALIDATION.md # Motherboard onboarding and safety verification
+│       └── GEMINI_TESTING_HANDOFF.md # QA verification handoff and pipeline
+├── scripts/                    # Asset automation & measurement scripts
+│   ├── generate-icons.sh
+│   ├── validate-icons.py
+│   └── measure-budget.sh
+├── logo/                       # Source vector SVGs
+├── .github/                    # CI/CD workflows, CODEOWNERS, PR templates
+└── .planning/                  # Project planning, roadmaps, and codebase documentation
 ```
+
+---
 
 ## Directory Purposes
 
-**`src/core/`:**
-- Purpose: the application's truth and cadence, independent of Slint and of any OS path.
-- Contains: typed messages, `AppState`, the monitoring worker with `InFlightGuard` ensuring atomic mutation handling across caller timeouts, bounded telemetry history, diagnostics, RSS instrumentation.
-- Key files: `src/core/events.rs`, `src/core/state.rs`, `src/core/worker.rs`.
-- Rule: nothing here touches hardware directly; `src/hardware` owns sensors, `src/app.rs` owns rendering.
+**`src/hardware/windows/`:**
+- Purpose: Windows native telemetry engine and hardware discovery.
+- Contains: Non-elevated sensor polling using Win32, DirectX 1.3, PDH, and WMI.
+  - `provider.rs`: `WindowsHardwareProvider` implementing `HardwareProvider`.
+  - `cpu.rs`: Monotonic `FILETIME` delta calculation from `GetSystemTimes` and registry processor string.
+  - `memory.rs`: Total and available physical RAM via `GlobalMemoryStatusEx`.
+  - `gpu.rs`: Adapter enumeration via DXGI 1.3 `EnumAdapters1` and dedicated VRAM reporting.
+  - `battery.rs`: Battery percentage, AC status, and battery flags via `GetSystemPowerStatus`.
+  - `sensors.rs`: Motherboard thermal zone queries via WMI.
+  - `device.rs`: Board model and manufacturer extraction for board profile matching.
+- Rule: strictly unprivileged; never requires administrator rights or kernel drivers.
 
-**`src/hardware/`:**
-- Purpose: the only place that reads sensors.
-- Contains: the `HardwareProvider` seam, canonical registry, mock/unavailable implementations (`UnavailableHardwareProvider` for non-Linux/Windows builds), platform backend directory.
-- Key files: `src/hardware/provider.rs`, `src/hardware/registry.rs`, `src/hardware/unavailable.rs`, `src/hardware/linux/provider.rs`.
-- Rule: Linux-specific paths stay under `src/hardware/linux/`; non-Linux/Windows builds select `UnavailableHardwareProvider`.
+**`src/service/windows/`:**
+- Purpose: Elevated hardware control service and secure named pipe IPC on Windows.
+- Contains:
+  - `lifecycle.rs`: SCM service dispatch, service registration, and service uninstallation (`SERVICE_NAME = "ZenOmenHardwareService"`).
+  - `pipe.rs`: Win32 named pipe creation at `\\.\pipe\ZenOmen.Hardware.v1` with explicit DACL security descriptors.
+  - `server.rs`: Named pipe message loop dispatching requests to board profiles and HP WMI driver.
+  - `client.rs`: `WindowsServiceClient` used by the unprivileged GUI to send IPC commands.
+  - `protocol.rs`: 64 KB bounded length-prefixed JSON serialization for `HardwareRequest` and `HardwareResponse`.
+  - `security.rs`: SDDL DACL construction (`D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`) and active console session verification (`WTSGetActiveConsoleSessionId`).
+  - `authorization.rs`: Motherboard safety validation ensuring fan and power mutations match board capabilities.
+  - `hp_wmi.rs`: HP ACPI BIOS WMI driver communicating through `hpqBIntM` class and `hpqBMtdx` method.
+  - `profiles.rs`: Motherboard profile database defining supported modes and thermal limits.
+- Rule: all mutating hardware commands must cross this boundary and undergo safety authorization.
 
-**`src/service/`:**
-- Purpose: everything that mutates hardware or speaks D-Bus about it.
-- Contains: server interface, verified sysfs backend, Polkit verifier, blocking client, control domain types.
-- Key files: `src/service/contract.rs`, `src/service/backend.rs`, `src/service/client.rs`.
-- Rule: this is the only module allowed to write sysfs; it must not import Slint or `src/app.rs`.
+**`src/desktop/windows/`:**
+- Purpose: Windows-specific desktop shell and OS lifecycle integration.
+- Contains:
+  - `single_instance.rs`: Win32 named Mutex (`Local\ZenOmen_SingleInstance_Mutex_{username}`) with window restoration.
+  - `tray.rs`: System tray notification icon (`Shell_NotifyIconW`) running on a dedicated thread (`zenomen-win32-tray-pump`) to satisfy Win32 message loop affinity.
+  - `autostart.rs`: Registry autostart management under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+  - `notifications.rs`: Native desktop notifications.
+  - `releases.rs`: Release URL launching via `ShellExecuteW`.
+  - `paths.rs`: Known folder path resolution (`SHGetKnownFolderPath`).
+  - `installer.rs`: Service registration helper commands.
+- Rule: Win32 message pumps must never block core worker threads or the main GUI loop.
 
-**`src/logging.rs`:**
-- Purpose: process-wide non-blocking logging infrastructure.
-- Contains: `tracing` registry initialization with stderr layer and `tracing-appender` daily rotating file appender in platform state directory (`~/.local/state/zenomen/logs`, 7-day retention).
-- Rule: must be initialized as the first statement in both `zenomen` and `zenomen-hw`; degrades gracefully to stderr if log file directory creation fails.
+**`src/ui/`:**
+- Purpose: Target GPUI-CE cross-platform presentation architecture scaffold ([ADR-002](file:///home/omprakash/Documents/zenomen/docs/decisions/ADR-002-gpui-ce-migration.md)).
+- Contains:
+  - `app.rs`: `GpuiApp` view-model container and event bridge.
+  - `theme/`: Standardized color tokens, typography scales, and spacing units.
+  - `components/`: Modular widgets (action buttons, metric cards, sidebar, status strip, telemetry charts, value readouts).
+  - `screens/`: Typed screen view models (overview, cooling, performance, lighting, settings, diagnostics).
+- Rule: pure presentation; decoupled from hardware drivers, communicating only via `AppCommand` and `AppEvent`.
 
-**`src/desktop/`:**
-- Purpose: session-bus and XDG integration that is not hardware-related.
-- Contains: single-instance service, tray, autostart, release link, root installer embedding `data/**`.
-- Key files: `src/desktop/single_instance.rs`, `src/desktop/tray.rs`, `src/desktop/system_integration.rs`.
+**`packaging/windows/`:**
+- Purpose: WiX Toolset v4/v5 installer authoring for Windows deployment.
+- Contains:
+  - `ZenOmen.wxs`: Comprehensive MSI package definition installing `zenomen.exe` (per-user/per-machine desktop app), `zenomen-hw.exe` (SCM Windows Service with auto-start and uninstall lifecycle), start menu shortcuts, and application icon.
 
-**`src/config/`:**
-- Purpose: persistent user preferences and validation.
-- Contains: TOML schema with serde defaults, atomic save, backup-on-corrupt.
-- Key files: `src/config/mod.rs`, `src/config/schema.rs`.
+**`docs/architecture/`:**
+- Purpose: Cross-platform architecture specifications and technical whitepapers.
+- Contains:
+  - `CROSS_PLATFORM_ARCHITECTURE.md`: High-level multi-tier platform decoupling and invariants.
+  - `HP_WMI_PROTOCOL.md`: Clean-room specification of the HP ACPI BIOS WMI communication protocol (`hpqBIntM`).
+  - `IPC_SECURITY.md`: Threat model, DACL SDDL security, Polkit rules, and session impersonation.
+  - `WINDOWS_HARDWARE.md`: Win32, DXGI 1.3, PDH, and WMI telemetry architecture.
 
-**`src/rgb/`:**
-- Purpose: lighting domain model independent of sysfs.
-- Contains: colour/profile validation, built-in presets, non-destructive OpenOMEN migration.
-- Key files: `src/rgb/schema.rs`, `src/rgb/migration.rs`.
+**`docs/decisions/`:**
+- Purpose: Architecture Decision Records (ADRs) tracking foundational design choices.
+- Contains:
+  - `ADR-001-ui-framework.md`: Initial Slint evaluation.
+  - `ADR-002-gpui-ce-migration.md`: Ratified decision to adopt GPUI-CE as the unified cross-platform UI.
+  - `ADR-002-windows-hardware-interface.md`: Direct ACPI WMI over third-party kernel drivers.
+  - `ADR-003-windows-service-security.md`: Local named pipe security, SDDL DACL, and session verification.
+  - `ADR-004-cross-platform-ui.md`: GPUI-CE multi-platform strategy.
 
-**`ui/`:**
-- Purpose: declarative presentation only.
-- Contains: one `AppWindow` shell, six screens, reusable components, theme tokens and fonts.
-- Key files: `ui/app.slint`, `ui/screens/*.slint`, `ui/components/status-strip.slint`.
-- Rule: no timers, no file access, no hardware calls — only properties, callbacks, and bindings.
+**`docs/testing/`:**
+- Purpose: Test matrices, motherboard onboarding procedures, and QA verification handoff protocols.
+- Contains:
+  - `WINDOWS_TEST_MATRIX.md`: Supported Windows 10/11 versions and automated test definitions.
+  - `HP_BOARD_VALIDATION.md`: Step-by-step verification protocol for onboarding new HP board IDs.
+  - `GEMINI_TESTING_HANDOFF.md`: Independent QA testing pipeline and verification commands.
 
-**`docs/`:**
-- Purpose: technical specifications, packaging guides, resource budget benchmarks, and Architecture Decision Records.
-- Key files: `docs/PACKAGING.md`, `docs/PARITY.md`, `docs/RESOURCE-BUDGET.md`, `docs/decisions/ADR-001-ui-framework.md`.
-
-**`scripts/`:**
-- Purpose: utility scripts for asset generation, format validation, and performance measurement.
-- Key files: `scripts/generate-icons.sh`, `scripts/validate-icons.py`, `scripts/measure-budget.sh`.
-
-**`.github/`:**
-- Purpose: repository governance and automation workflows.
-- Key files: `.github/CODEOWNERS`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/ci.yml`.
-
-**`tests/`:**
-- Purpose: integration tests across module boundaries using temp filesystem trees and mocks.
-- Contains: one file per subsystem area (see “Testing” below).
-- Key files: `tests/hardware_service_tests.rs`, `tests/sensor_registry_tests.rs`, `tests/degradation_tests.rs`.
-
-**`data/`:**
-- Purpose: files installed to fixed system paths and embedded into the root installer.
-- Contains: systemd unit, D-Bus config/service, Polkit policy, desktop entry, multi-resolution icons.
-- Key files: `data/systemd/zenomen-hw.service`, `data/dbus/com.zenomen.Hardware1.conf`, `data/polkit/com.zenomen.hardware.policy`, `data/icons/zenomen.ico`.
-- Rule: `src/desktop/system_integration.rs` embeds these with `include_str!`; `tests/packaging_tests.rs` asserts embedded copies equal the on-disk files.
+---
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/main.rs`: GUI binary `zenomen` (requires `ui` feature, `Cargo.toml:40-43`).
-- `src/bin/zenomen-hw.rs`: daemon binary `zenomen-hw`.
-- `build.rs`: Slint compilation and Windows resource embedding.
-- `src/lib.rs`: crate module tree; `slint::include_modules!()` under `cfg(feature = "ui")`.
+- `src/main.rs`: Desktop GUI binary `zenomen` (requires `ui` feature).
+- `src/bin/zenomen-hw.rs`: Privileged hardware daemon binary `zenomen-hw` (D-Bus on Linux, SCM service on Windows).
+- `build.rs`: Compiles Slint UI definitions and embeds Win32 resources.
+- `src/lib.rs`: Root crate module tree.
 
-**Configuration:**
-- `Cargo.toml`: features (`ui`), zbus/serde/tracing deps, release memory profile, `[package.metadata.packager]`.
-- `src/config/schema.rs`: runtime user configuration schema and bounds.
-- `data/systemd/zenomen-hw.service`: sandbox and sysfs carve-outs.
-- `data/dbus/com.zenomen.Hardware1.conf`: bus policy (root owns the name; anyone may call).
-- `data/polkit/com.zenomen.hardware.policy`: `com.zenomen.hardware.control` action.
-- `ui/theme/*.slint`: visual tokens.
+**Windows Subsystems:**
+- `src/hardware/windows/provider.rs`: `WindowsHardwareProvider` implementation.
+- `src/service/windows/lifecycle.rs`: SCM service control and lifecycle.
+- `src/service/windows/pipe.rs`: `\\.\pipe\ZenOmen.Hardware.v1` endpoint.
+- `src/service/windows/security.rs`: SDDL DACL and console session verification.
+- `src/service/windows/authorization.rs`: Motherboard profile mutation authorization.
+- `src/service/windows/hp_wmi.rs`: HP BIOS WMI firmware driver.
+- `src/desktop/windows/tray.rs`: Win32 system tray message pump (`zenomen-win32-tray-pump`).
 
-**Core Logic:**
-- `src/core/state.rs`: single-writer state machine.
-- `src/core/worker.rs`: sampling loop, mutation offload, and `InFlightGuard` atomic mutation handling.
-- `src/core/telemetry.rs`: history bound and SVG geometry.
-- `src/hardware/registry.rs`: canonical sensor selection.
-- `src/hardware/unavailable.rs`: honest zero-capability fallback provider for non-Linux/Windows builds.
-- `src/logging.rs`: early non-blocking rotating file appender for both GUI and daemon.
-- `src/service/backend.rs`: verified hardware writes.
-- `src/service/contract.rs`: D-Bus API surface.
+**GPUI-CE Presentation Scaffold:**
+- `src/ui/app.rs`: Root `GpuiApp` view model.
+- `src/ui/theme/colors.rs`: Canonical color tokens.
+- `src/ui/components/telemetry_chart.rs`: Historical metric SVG renderer.
+- `docs/decisions/ADR-002-gpui-ce-migration.md`: GPUI-CE migration decision and release gates.
 
-**Testing:**
-- `tests/hardware_service_tests.rs`: backend writes/presets/RGB against a temp sysfs tree.
-- `tests/sensor_registry_tests.rs`: hwmon/ACPI discovery priority.
-- `tests/degradation_tests.rs`: zero/partial capability honesty.
-- `tests/packaging_tests.rs`: embedded assets match `data/**`.
-- `tests/linux_procfs_tests.rs`, `tests/linux_gpu_tests.rs`: parser and DRM fixtures.
-
-## Naming Conventions
-
-**Files:**
-- Rust modules: `snake_case.rs`, one concern per file (`single_instance.rs`, `write_and_verify` lives in `backend.rs`).
-- Binary targets: hyphenated names matching the installed command (`zenomen-hw`, file `src/bin/zenomen-hw.rs`).
-- Slint components: `kebab-case.slint` (`status-strip.slint`, `telemetry-chart.slint`); screens named after the `ScreenId` in lowercase (`overview.slint` ↔ `ScreenId::Overview`).
-- Integration tests: `<area>_tests.rs` (`fan_control_tests.rs`, `power_preset_tests.rs`).
-- Docs: uppercase hyphenated (`RESOURCE-BUDGET.md`, `PACKAGING.md`); ADRs use `ADR-NNN-topic.md`.
-
-**Functions:**
-- `snake_case`, verb-first, domain-specific: `sample_telemetry`, `apply`, `write_and_verify`, `ensure_single_instance`, `find_fan_control_path`.
-- Constructors: `new`, `with_capacity`, `with_all_roots`, `scan_roots`, `from_snapshot`, `from_sysfs`.
-
-**Variables:**
-- `snake_case`; short-lived channel ends named by role (`event_sender`, `command_receiver`, `action_sender`).
-- Shared state named for the owned concept (`state`, `registry_slot`, `mutation_in_flight`, `close_to_tray_flag`).
-
-**Types:**
-- `PascalCase` nouns; enum variants describe outcomes, not implementation (`FanModeChanged`, `TelemetrySamplingFailed`, `InterfaceMissing`).
-- Traits are capability nouns (`HardwareProvider`); option structs end in `Config`/`Result`/`Snapshot`/`Capabilities`/`Descriptor`.
-- Slint: components `PascalCase`; properties and callbacks `kebab-case` (`in-out property <string> status-text`, `callback set-fan-mode(string)`), referenced from Rust as `set_status_text`, `on_set_fan_mode`.
-
-**D-Bus:**
-- Bus/interface name: reverse-DNS `com.zenomen.Hardware1`; object path `/com/zenomen/Hardware1`.
-- Methods `PascalCase` (`GetCapabilities`, `SetFanMode`, `ApplyPreset`).
-- Session app: `com.zenomen.App`, path `/com/zenomen/App`, methods `PresentWindow`/`Activate`/`Quit`.
-
-**Constants:**
-- `SCREAMING_SNAKE_CASE` (`EXPECTED_SENSOR_COUNT`, `POLKIT_ACTION_CONTROL`, `SAMPLING_INTERVAL`, `COMMAND_QUEUE_DEPTH`); filesystem targets live beside the installer in `src/desktop/system_integration.rs`.
-
-## Where to Add New Code
-
-**New telemetry sensor / reading:**
-1. Read it in the platform backend: `src/hardware/linux/` (parser helpers in `cpu.rs`/`gpu.rs`/`memory.rs`/`hwmon.rs`; discovery in `src/hardware/registry.rs`).
-2. Add the field to `TelemetrySnapshot` (`src/hardware/provider.rs:152`). Use `Option`/empty for “not read”; never a fabricated zero.
-3. Update `TelemetrySnapshot::reported_sensor_count` and `EXPECTED_SENSOR_COUNT` if it is a counted sensor (`src/hardware/provider.rs:191-216`).
-4. Add the capability flag to `HardwareCapabilities` and its `has_*` accessor (`src/hardware/provider.rs`), and set it in `SensorRegistry::detect_capabilities` / `MockHardware` / `UnavailableHardwareProvider`.
-5. Format it in `apply_to_ui` (`src/app.rs`) and add a `.slint` property/binding (`ui/app.slint`, screen/component files).
-6. Cover with tests in `tests/mock_hardware_tests.rs`, `tests/linux_procfs_tests.rs`, or `tests/sensor_registry_tests.rs`.
-
-**New hardware backend (another OS or validation tier):**
-1. Create `src/hardware/<platform>/` with a provider implementing `HardwareProvider` (`Send + Sync`).
-2. Re-export it from `src/hardware/mod.rs` behind `#[cfg(target_os = "...")]`.
-3. Extend the provider selection in `src/main.rs:186-211`; keep `UnavailableHardwareProvider` as the fallback.
-4. Leave `src/hardware/unavailable.rs` as zero-capability; do not add speculative reads there.
-5. Add capability/telemetry tests that fail honestly when paths are absent.
-
-**New user-facing hardware control (fan/power/RGB/etc.):**
-1. Add the typed operation to `HardwareBackend` in `src/service/backend.rs` using `write_and_verify` (never a raw `fs::write`).
-2. Expose it in `src/service/contract.rs` with `#[interface]`; call `self.authorize(&hdr).await?` first if it mutates.
-3. Add a client wrapper in `src/service/client.rs` (blocking zbus, actionable errors).
-4. Add `AppCommand` + `AppEvent` variants in `src/core/events.rs`, handle the command in `src/core/worker.rs`, and fold the event in `src/core/state.rs::apply`.
-5. Publish it in `src/app.rs::apply_to_ui` and wire the callback in `install_callbacks`.
-6. Add the `.slint` callback/property and screen UI.
-7. If a new Polkit-gated method appears, no policy file change is needed unless the action ID changes; keep `POLKIT_ACTION_CONTROL` (`src/service/polkit.rs:10`).
-
-**New screen:**
-1. Add a variant to `ScreenId` and update `ALL`, `index`, `title` (`src/core/events.rs:16-67`).
-2. Create `ui/screens/<name>.slint` with an `export component`.
-3. Import it in `ui/app.slint`, extend `screen-titles`, the `current-screen` bound, and add an `if root.current-screen == N :` branch.
-4. Add the sidebar row (`ui/components/sidebar.slint`) and any callbacks.
-5. Update the `AppState` default screen only if the new screen should be the landing page.
-
-**New `AppEvent`/`AppCommand` variant:**
-- `src/core/events.rs` (definition) → `src/core/state.rs::apply` (exhaustive match; add a test) → `src/app.rs::apply_to_ui` (publish) → `src/core/worker.rs` (produce/consume). Never mutate UI state from a worker thread directly.
-
-**New setting:**
-1. Add the field to `GeneralConfig`/`TelemetryConfig` with a serde default (`src/config/schema.rs`).
-2. Add bounds to `AppConfig::sanitize`.
-3. Add a command in `src/core/events.rs` and a persistence branch in `src/core/worker.rs`.
-4. Add the `.slint` property/callback in `ui/app.slint` and the Settings screen, and set it in `initialize`/`apply_to_ui`.
-5. Extend `tests/config_tests.rs`.
-
-**New desktop integration:**
-- Session-bus services: `src/desktop/` (new module) + re-export in `src/desktop/mod.rs`; wire the action into `DesktopAction` handling in `src/main.rs` if it affects the window.
-- Root-installable assets: add the file under `data/<kind>/`, embed it with `include_str!` in `src/desktop/system_integration.rs`, add an install target constant, and extend `tests/packaging_tests.rs`.
-- Packaging mapping: add to `[package.metadata.packager.deb.files]` in `Cargo.toml`.
-
-**New test:**
-- Integration: `tests/<area>_tests.rs`; use a `TempTree`/`MockSysfs` struct under `std::env::temp_dir()` with a `Drop` cleanup (see `tests/hardware_service_tests.rs:9-53`). Never touch live `/sys` or `/proc`.
-- Unit: `#[cfg(test)] mod tests` at the bottom of the module (see `src/core/state.rs:313`, `src/hardware/linux/hwmon.rs:88`).
-- GUI-free tests should use `MockHardware` rather than constructing `AppWindow`.
-
-**Where NOT to add code:**
-- No sysfs writes outside `src/service/backend.rs`.
-- No `slint` imports outside `src/app.rs` and the gated `src/lib.rs` include.
-- No hardware reads in `.slint` files or `src/app.rs`.
-- No OS-specific path strings outside `src/hardware/linux/`, `src/service/backend.rs`, and `src/core/diagnostics.rs` (the latter only for report metadata).
-- No new async runtime; the GUI stays on `std::thread` + `mpsc` and `zbus::blocking`.
+---
 
 ## Testing Layout
 
-`tests/` contains 16 integration files, each targeting one subsystem:
+The `tests/` directory contains 18 comprehensive integration and unit test suites:
 
-| File | Focus |
-|------|-------|
-| `hardware_service_tests.rs` | verified writes, fan parsing, presets, RGB against temp sysfs |
-| `sensor_registry_tests.rs` | k10temp/coretemp/acpitz priority, fan/ACPI/battery discovery |
-| `degradation_tests.rs` | zero/partial capability behaviour and honest UI state |
-| `fan_control_tests.rs` | fan mode mapping and D-Bus surface |
-| `power_preset_tests.rs` | preset mapping and partial-success semantics |
-| `rgb_tests.rs` | hex validation, profiles, migration, variant writes |
-| `linux_procfs_tests.rs` | `/proc/stat`, `/proc/meminfo`, cpufreq parsers |
-| `linux_gpu_tests.rs` | DRM enumeration and nvidia-smi parsing |
-| `diagnostics_tests.rs` | report assembly and JSON export |
-| `telemetry_history_tests.rs` | bound, gap handling, SVG paths |
-| `mock_hardware_tests.rs` | scenario behaviour |
-| `config_tests.rs` | load/save/corruption/sanitize |
-| `logging_tests.rs` | log directory and rotation contract |
-| `desktop_integration_tests.rs` | autostart, single instance, tray assets |
-| `packaging_tests.rs` | embedded assets match `data/**`, root gating |
-| `benchmark_tests.rs` | RSS instrumentation and checkpoints |
+| Test File | Target Subsystem & Purpose |
+|-----------|---------------------------|
+| `benchmark_tests.rs` | RSS/PSS memory instrumentation, budget checkpoints, and memory limits |
+| `config_tests.rs` | Config schema bounds, TOML load/save, and corrupt file backup recovery |
+| `degradation_tests.rs` | Honest absence handling and zero/partial capability behaviour |
+| `desktop_integration_tests.rs` | Desktop actions, autostart, and tray asset integration |
+| `diagnostics_tests.rs` | System diagnostics assembly, DMI parsing, and JSON report export |
+| `fan_control_tests.rs` | Fan mode mapping and control IPC verification |
+| `hardware_service_tests.rs` | Linux backend sysfs writes, retries, and RGB variants against temp trees |
+| `linux_gpu_tests.rs` | Linux DRM enumeration, AMD sysfs parsing, and NVIDIA watcher |
+| `linux_procfs_tests.rs` | Linux `/proc/stat`, `/proc/meminfo`, and cpufreq parsers |
+| `logging_tests.rs` | Non-blocking rotating file appender and retention policies |
+| `mock_hardware_tests.rs` | Mock scenario execution (`nominal`, `zero-capability`, `overheating`) |
+| `packaging_tests.rs` | Embedded packaging assets match disk files; root installer gating |
+| `power_preset_tests.rs` | Power profile mapping, presets, and partial success semantics |
+| `rgb_tests.rs` | 4-zone RGB validation, hex parsing, and profile migration |
+| `sensor_registry_tests.rs` | Linux hwmon/ACPI canonical sensor discovery priority |
+| `telemetry_history_tests.rs` | Bounded telemetry history, gap handling, and SVG geometry |
+| `windows_service_tests.rs` | Windows named pipe protocol roundtrip, 64 KB bounds, and board profile authorization |
+| `windows_telemetry_tests.rs` | Windows CPU `FILETIME` monotonic math, RAM calculations, GPU discovery, and battery flags |
 
-CI runs `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `xvfb-run --auto-servernum cargo test --all`, and `cargo audit` (`.github/workflows/ci.yml`). Tests that construct the Slint window require Xvfb.
+---
 
-## Special Directories
+## Where to Add New Code
 
-**`data/`:**
-- Purpose: installable system assets and their embedded copies.
-- Generated: No.
-- Committed: Yes.
+**New Windows telemetry metric:**
+1. Implement the reader in [`src/hardware/windows/`](file:///home/omprakash/Documents/zenomen/src/hardware/windows/) using Win32 or DXGI APIs.
+2. Add the field to `TelemetrySnapshot` ([`src/hardware/provider.rs`](file:///home/omprakash/Documents/zenomen/src/hardware/provider.rs)). Use `Option` for missing sensors.
+3. Incorporate the metric into `WindowsHardwareProvider::sample_telemetry` ([`src/hardware/windows/provider.rs`](file:///home/omprakash/Documents/zenomen/src/hardware/windows/provider.rs)).
+4. Add verification unit tests to [`tests/windows_telemetry_tests.rs`](file:///home/omprakash/Documents/zenomen/tests/windows_telemetry_tests.rs).
 
-**`dist/`:**
-- Purpose: packager output and resource-budget CSVs (`budget-dashboard-open.csv`, `budget-hw-daemon.csv`, `budget-tray-minimized.csv`).
-- Generated: Yes.
-- Committed: No (`.gitignore` ignores `dist/`).
+**New Windows hardware mutation or board model:**
+1. Onboard the board ID and supported modes into [`src/service/windows/profiles.rs`](file:///home/omprakash/Documents/zenomen/src/service/windows/profiles.rs) following [`docs/testing/HP_BOARD_VALIDATION.md`](file:///home/omprakash/Documents/zenomen/docs/testing/HP_BOARD_VALIDATION.md).
+2. Implement WMI command dispatch in [`src/service/windows/hp_wmi.rs`](file:///home/omprakash/Documents/zenomen/src/service/windows/hp_wmi.rs).
+3. Ensure authorization rules in [`src/service/windows/authorization.rs`](file:///home/omprakash/Documents/zenomen/src/service/windows/authorization.rs) validate requests.
+4. Add contract tests in [`tests/windows_service_tests.rs`](file:///home/omprakash/Documents/zenomen/tests/windows_service_tests.rs).
 
-**`ui/theme/fonts/`:**
-- Purpose: bundled Inter and JetBrains Mono fonts with licenses, so rendering is deterministic offline.
-- Generated: No.
-- Committed: Yes.
-
-**`logo/` and `data/icons/`:**
-- Purpose: brand sources (`logo/*.svg`) and packaged icon sizes (`data/icons/hicolor/<size>/apps/zenomen.png` across 8 sizes: 16, 24, 32, 48, 64, 128, 256, 512, plus multi-resolution `zenomen.ico` containing 7 embedded resolutions).
-- Generated: Partly (`scripts/generate-icons.sh`, `scripts/validate-icons.py`); outputs are committed.
-- Committed: Yes.
-
-**`scripts/`:**
-- Purpose: icon generation (`generate-icons.sh`), PNG dimension/IHDR and ICO header validation (`validate-icons.py`), and RSS-budget measurement (`measure-budget.sh`).
-- Generated: No.
-- Committed: Yes.
-
-**`docs/`:**
-- Purpose: packaging, platform parity, resource budget, and Architecture Decision Records (`docs/decisions/ADR-001-ui-framework.md`). Update these when interfaces or build requirements change (AGENTS.md rule 10).
-- Generated: No.
-- Committed: Yes.
-
-**`.github/`:**
-- Purpose: repository governance (`CODEOWNERS`), standardized PR checklist (`PULL_REQUEST_TEMPLATE.md`), and CI/release automation (`.github/workflows/ci.yml`, `release.yml`).
-- Generated: No.
-- Committed: Yes.
-
-**`.planning/`:**
-- Purpose: GSD project state (`PROJECT.md`, `ROADMAP.md`, `REQUIREMENTS.md`, phases, this `codebase/` map).
-- Generated: By GSD commands.
-- Committed: Yes.
-
-**`target/`:**
-- Purpose: Cargo build artifacts (dev/test profiles disable debuginfo and incremental to limit size).
-- Generated: Yes.
-- Committed: No.
-
-**`.claude/`, `.agents/`, `.gemini/`, `.gsd/`, `.freebuff/`, `.mcp.json`:**
-- Purpose: local agent/tooling configuration; not part of the shipped application.
-- Generated: Tooling.
-- Committed: Only `.mcp.json` is tracked; the rest are local.
+**New GPUI-CE presentation component:**
+1. Define component struct and element tree under [`src/ui/components/`](file:///home/omprakash/Documents/zenomen/src/ui/components/).
+2. Use theme tokens from [`src/ui/theme/`](file:///home/omprakash/Documents/zenomen/src/ui/theme/).
+3. Connect view models in [`src/ui/app.rs`](file:///home/omprakash/Documents/zenomen/src/ui/app.rs) to `AppEvent` and `AppCommand`.
 
 ---
 
