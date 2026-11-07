@@ -5,7 +5,14 @@
 
 ## v1 Requirements
 
-Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
+Requirements for the cross-platform ZenOmen application (Linux + Windows 10/11). Each maps to exactly one roadmap phase.
+
+> **Amendment 2026-11-07 (Phase 6):** the product scope was widened from a Linux GUI MVP to a
+> single cross-platform release. Windows telemetry is promoted from v2 into v1; Windows
+> firmware control is in scope but ships **disabled** until a verified board profile exists.
+> Previously undefined IDs cited by `ROADMAP.md` and the Phase 6 plans (`WIN-03..05`,
+> `SEC-01..03`, `ARCH-01`, `TEST-01`) are now defined below. See
+> `.planning/phases/06-cross-platform-windows-linux-release/06-CONTEXT.md` for the authority.
 
 ### Foundation
 
@@ -107,6 +114,59 @@ Requirements for the Linux GUI MVP. Each maps to exactly one roadmap phase.
 - [x] **PERF-04**: Telemetry memory is bounded and RSS stays flat across long sessions rather than growing
 - [x] **PERF-05**: No combination of missing sensors, missing external tools or missing service causes a crash — every absence degrades gracefully
 - [x] **PERF-06**: The hardware service process has its own measured budget (≤15 MB RSS), reported separately from the UI process and never summed into the 40 MB figure
+- [ ] **PERF-07**: On Windows, the GUI process working set stays within the same ≤40 MB budget measured with `GetProcessMemoryInfo` (never compared to Linux `Private_Dirty`), and the service reports its own working set separately.
+
+### Cross-Platform UI (Phase 6)
+
+- [ ] **UI-01**: The production UI is rebuilt in GPUI-CE 0.3.0; Slint source and dependencies are removed only after parity is verified on Linux and Windows.
+- [ ] **UI-02**: All six screens (Overview, Cooling, Performance, Lighting, Settings, Diagnostics), the sidebar, status strip, telemetry charts and theme tokens are reproduced with the same information density and dark-theme styling.
+- [ ] **UI-03**: UI state still changes only through typed `AppEvent`; the UI framework never owns hardware domain state.
+- [ ] **UI-04**: GPUI-CE builds and runs on Linux (X11 and Wayland) and Windows 10/11 (Win32/DirectX), with keyboard navigation and accessible focus order.
+
+### Windows Telemetry (Phase 6)
+
+- [ ] **WIN-01**: Windows provider reports real CPU identity, aggregate and per-core utilization from `GetSystemTimes` deltas, and frequency from `CallNtPowerInformation`.
+- [ ] **WIN-02**: Windows provider reports real physical RAM total and used memory from `GlobalMemoryStatusEx`.
+- [ ] **WIN-03**: Windows provider enumerates GPU adapters via DXGI, reports dedicated VRAM from `DXGI_ADAPTER_DESC1` and per-adapter utilization from PDH `GPU Engine` counters, filtering software adapters.
+- [ ] **WIN-04**: Windows provider reports battery presence, charge percentage, charging state and remaining time from `GetSystemPowerStatus`.
+- [ ] **WIN-05**: Windows provider reports CPU/GPU temperature and fan RPM only from a verified source (HP WMI read, vendor sensor API, or an explicitly evaluated adapter); otherwise the metric is `Unavailable` with a reason.
+- [ ] **WIN-06**: Windows system identity (manufacturer, model, baseboard product, BIOS version) is read via WMI/SMBIOS and drives board-profile resolution.
+
+### Windows Hardware Service (Phase 6)
+
+- [ ] **WIN-07**: Privileged hardware mutations run in a Windows service registered with the Service Control Manager; the GUI never requires administrator rights.
+- [ ] **WIN-08**: GUI↔service IPC uses a versioned, typed, length-bounded protocol over `\\.\pipe\ZenOmen.Hardware.v1`, with an explicit DACL and caller session/user validation.
+- [ ] **WIN-09**: HP firmware commands execute only when the board product ID, BIOS generation and firmware read-back match a verified board profile; unknown boards report `fan_control = false` and refuse mutating writes.
+- [ ] **WIN-10**: Every Windows hardware write is read back and verified; partial failure is reported honestly and never as success.
+- [ ] **WIN-11**: Fan, power, RGB and MUX controls ship disabled until physical-device validation evidence is recorded; the disabled state is explicit in capabilities and UI.
+
+### Windows Desktop & Packaging (Phase 6)
+
+- [ ] **WIN-12**: Native tray (`Shell_NotifyIconW`), single-instance mutex, user-level autostart (HKCU Run), notifications, releases-page opener and per-user/per-service data paths (`SHGetKnownFolderPath`) are implemented.
+- [ ] **WIN-13**: A signed x64 installer and uninstaller install and remove the GUI, the hardware service, icons and version resources, with upgrade and rollback behavior.
+- [ ] **WIN-14**: Windows 10 22H2 and Windows 11 (24H2/25H2) build and test in CI; hardware-mutation tests are opt-in and never required by default CI.
+
+### Linux Hardening (Phase 6)
+
+- [ ] **SEC-01**: D-Bus activation delegates to `zenomen-hw.service` via `SystemdService=`, so activation never starts an unconfined root process.
+- [ ] **SEC-02**: The systemd unit restricts writable paths to exactly the sysfs interfaces the daemon needs, without breaking fan, power or RGB writes.
+- [ ] **SEC-03**: The root daemon logs to an operator-readable location (journald or an ACL-protected path) instead of an inaccessible home directory.
+- [ ] **SEC-04**: Installer actions validate canonical executable path, ownership and symlink status before any privileged use.
+- [ ] **SEC-05**: Privileged helper execution resolves absolute binaries and fails closed instead of trusting `PATH`.
+- [ ] **SEC-06**: Polkit allow/deny/challenge behavior is covered by integration tests against a controlled bus.
+
+### Cross-Platform Architecture (Phase 6)
+
+- [ ] **ARCH-01**: Platform selection is compile-time (`cfg(target_os)`); no Linux-only type, zbus reference, sysfs path or systemd code is reachable on Windows, and no Win32/WMI code is reachable on Linux.
+- [ ] **ARCH-02**: Shared domain contracts (`TelemetrySnapshot`, `HardwareCapabilities`, `PresetResult`, `AppEvent`) stay UI- and platform-neutral, and every provider conforms to one trait.
+- [ ] **ARCH-03**: Capability honesty — a missing sensor, service or firmware command is represented as unavailable with a reason, never zero or a fabricated capability.
+
+### Testing & Quality (Phase 6)
+
+- [ ] **TEST-01**: Default CI is deterministic and host-independent; tests use temp-directory fixtures and mock providers, never live `/sys`, root paths or an HP laptop.
+- [ ] **TEST-02**: Hardware-dependent tests are explicitly marked opt-in and documented with the device they require.
+- [ ] **TEST-03**: Windows protocol serialization, pipe ACL/session rejection, board-profile rejection, WMI timeout and service lifecycle have coverage runnable on CI.
+- [ ] **TEST-04**: Test counts in `README.md`, `TESTING.md` and the codebase maps match actual `#[test]` enumeration.
 
 ## v2 Requirements
 
@@ -130,8 +190,8 @@ Deferred to a future release. Tracked but not in the current roadmap.
 
 ### Platform
 
-- **WIN-01**: Windows builds show CPU and RAM telemetry with tray and startup
-- **WIN-02**: Windows hardware control for validated OEM interfaces only
+- **COMP-WIN-01**: (Promoted) Windows telemetry, hardware control and desktop integration moved to v1 as `WIN-01`…`WIN-14` on 2026-11-07.
+- **COMP-WIN-02**: Additional Windows board profiles with captured read-back evidence and per-model quirks.
 
 ### Compatibility
 
@@ -150,7 +210,7 @@ Explicitly excluded from v1, with reasons so they are not silently re-added.
 | Overclocking and undervolting | Hardware-damage risk with no safe verification loop |
 | In-app self-update (download/verify/install) | Package-manager upgrades are safer; a link to Releases avoids the legacy updater's root-execution and rollback complexity |
 | Cloud accounts, sync, telemetry upload | Local-first product; uploading data from a root-privileged hardware tool is a trust hazard |
-| Windows hardware control in v1 | No universal Windows laptop fan API; unvalidated OEM interfaces would ship as broken features |
+| Unvalidated Windows firmware writes | No universal Windows laptop fan API; commands execute only behind a verified board profile, and unverified profiles ship with mutating controls disabled |
 | Background daemon holding fan/PWM state | Unsupervised root process with no safe recovery policy is a thermal risk |
 | A Rust CLI surface | The product is a GUI; scripting needs are secondary and unvalidated |
 
@@ -162,81 +222,119 @@ Which phase covers which requirement. Populated during roadmap creation.
 |-------------|-------|--------|
 | FOUND-01 | Phase 1 | Complete |
 | FOUND-02 | Phase 1 | Complete |
-| FOUND-03 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Complete (STATE.md) |
 | FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
-| MON-09 | Phase 1 | Pending |
-| PERF-03 | Phase 1 | Pending |
-| MON-01 | Phase 2 | Pending |
-| MON-02 | Phase 2 | Pending |
-| MON-03 | Phase 2 | Pending |
-| MON-04 | Phase 2 | Pending |
-| MON-05 | Phase 2 | Pending |
-| MON-06 | Phase 2 | Pending |
-| MON-07 | Phase 2 | Pending |
-| MON-08 | Phase 2 | Pending |
-| MON-10 | Phase 2 | Pending |
-| MON-11 | Phase 2 | Pending |
-| MON-12 | Phase 2 | Pending |
-| DIAG-01 | Phase 2 | Pending |
-| DIAG-02 | Phase 2 | Pending |
-| COOL-01 | Phase 3 | Pending |
-| COOL-02 | Phase 3 | Pending |
-| COOL-03 | Phase 3 | Pending |
-| COOL-04 | Phase 3 | Pending |
-| COOL-05 | Phase 3 | Pending |
-| COOL-06 | Phase 3 | Pending |
-| PWR-01 | Phase 3 | Pending |
-| PWR-02 | Phase 3 | Pending |
-| PWR-03 | Phase 3 | Pending |
-| PWR-04 | Phase 3 | Pending |
-| PWR-05 | Phase 3 | Pending |
-| PWR-06 | Phase 3 | Pending |
-| SVC-01 | Phase 3 | Pending |
-| SVC-02 | Phase 3 | Pending |
-| SVC-03 | Phase 3 | Pending |
-| SVC-04 | Phase 3 | Pending |
-| SVC-05 | Phase 3 | Pending |
-| SVC-06 | Phase 3 | Pending |
-| DIAG-04 | Phase 3 | Pending |
-| RGB-01 | Phase 4 | Pending |
-| RGB-02 | Phase 4 | Pending |
-| RGB-03 | Phase 4 | Pending |
-| RGB-04 | Phase 4 | Pending |
-| RGB-05 | Phase 4 | Pending |
-| RGB-06 | Phase 4 | Pending |
-| RGB-07 | Phase 4 | Pending |
-| RGB-08 | Phase 4 | Pending |
-| SYS-01 | Phase 4 | Pending |
-| SYS-02 | Phase 4 | Pending |
-| SYS-03 | Phase 4 | Pending |
-| SYS-04 | Phase 4 | Pending |
-| SYS-05 | Phase 4 | Pending |
-| SYS-06 | Phase 4 | Pending |
-| SYS-07 | Phase 4 | Pending |
-| SYS-08 | Phase 4 | Pending |
-| SYS-09 | Phase 4 | Pending |
-| SYS-10 | Phase 4 | Pending |
-| DIAG-03 | Phase 4 | Pending |
-| REL-01 | Phase 5 | Pending |
-| REL-02 | Phase 5 | Pending |
-| REL-03 | Phase 5 | Pending |
-| REL-04 | Phase 5 | Pending |
-| REL-05 | Phase 5 | Pending |
-| REL-06 | Phase 5 | Pending |
-| REL-07 | Phase 5 | Pending |
-| REL-08 | Phase 5 | Pending |
-| PERF-01 | Phase 5 | Pending |
-| PERF-02 | Phase 5 | Pending |
-| PERF-04 | Phase 5 | Pending |
-| PERF-05 | Phase 5 | Pending |
-| PERF-06 | Phase 5 | Pending |
+| MON-09 | Phase 1 | Complete (STATE.md) |
+| PERF-03 | Phase 1 | Complete (STATE.md) |
+| MON-01 | Phase 2 | Complete (STATE.md) |
+| MON-02 | Phase 2 | Complete (STATE.md) |
+| MON-03 | Phase 2 | Complete (STATE.md) |
+| MON-04 | Phase 2 | Complete (STATE.md) |
+| MON-05 | Phase 2 | Complete (STATE.md) |
+| MON-06 | Phase 2 | Complete (STATE.md) |
+| MON-07 | Phase 2 | Complete (STATE.md) |
+| MON-08 | Phase 2 | Complete (STATE.md) |
+| MON-10 | Phase 2 | Complete (STATE.md) |
+| MON-11 | Phase 2 | Complete (STATE.md) |
+| MON-12 | Phase 2 | Complete (STATE.md) |
+| DIAG-01 | Phase 2 | Complete (STATE.md) |
+| DIAG-02 | Phase 2 | Complete (STATE.md) |
+| COOL-01 | Phase 3 | Complete (STATE.md) |
+| COOL-02 | Phase 3 | Complete (STATE.md) |
+| COOL-03 | Phase 3 | Complete (STATE.md) |
+| COOL-04 | Phase 3 | Complete (STATE.md) |
+| COOL-05 | Phase 3 | Complete (STATE.md) |
+| COOL-06 | Phase 3 | Complete (STATE.md) |
+| PWR-01 | Phase 3 | Complete (STATE.md) |
+| PWR-02 | Phase 3 | Complete (STATE.md) |
+| PWR-03 | Phase 3 | Complete (STATE.md) |
+| PWR-04 | Phase 3 | Complete (STATE.md) |
+| PWR-05 | Phase 3 | Complete (STATE.md) |
+| PWR-06 | Phase 3 | Complete (STATE.md) |
+| SVC-01 | Phase 3 | Complete (STATE.md) |
+| SVC-02 | Phase 3 | Complete (STATE.md) |
+| SVC-03 | Phase 3 | Complete (STATE.md) |
+| SVC-04 | Phase 3 | Complete (STATE.md) |
+| SVC-05 | Phase 3 | Complete (STATE.md) |
+| SVC-06 | Phase 3 | Complete (STATE.md) |
+| DIAG-04 | Phase 3 | Complete (STATE.md) |
+| RGB-01 | Phase 4 | Complete (STATE.md) |
+| RGB-02 | Phase 4 | Complete (STATE.md) |
+| RGB-03 | Phase 4 | Complete (STATE.md) |
+| RGB-04 | Phase 4 | Complete (STATE.md) |
+| RGB-05 | Phase 4 | Complete (STATE.md) |
+| RGB-06 | Phase 4 | Complete (STATE.md) |
+| RGB-07 | Phase 4 | Complete (STATE.md) |
+| RGB-08 | Phase 4 | Complete (STATE.md) |
+| SYS-01 | Phase 4 | Complete (STATE.md) |
+| SYS-02 | Phase 4 | Complete (STATE.md) |
+| SYS-03 | Phase 4 | Complete (STATE.md) |
+| SYS-04 | Phase 4 | Complete (STATE.md) |
+| SYS-05 | Phase 4 | Complete (STATE.md) |
+| SYS-06 | Phase 4 | Complete (STATE.md) |
+| SYS-07 | Phase 4 | Complete (STATE.md) |
+| SYS-08 | Phase 4 | Complete (STATE.md) |
+| SYS-09 | Phase 4 | Complete (STATE.md) |
+| SYS-10 | Phase 4 | Complete (STATE.md) |
+| DIAG-03 | Phase 4 | Complete (STATE.md) |
+| REL-01 | Phase 5 | Complete (STATE.md) |
+| REL-02 | Phase 5 | Complete (STATE.md) |
+| REL-03 | Phase 5 | Complete (STATE.md) |
+| REL-04 | Phase 5 | Complete (STATE.md) |
+| REL-05 | Phase 5 | Complete (STATE.md) |
+| REL-06 | Phase 5 | Complete (STATE.md) |
+| REL-07 | Phase 5 | Complete (STATE.md) |
+| REL-08 | Phase 5 | Complete (STATE.md) |
+| PERF-01 | Phase 5 | Complete (STATE.md) |
+| PERF-02 | Phase 5 | Complete (STATE.md) |
+| PERF-04 | Phase 5 | Complete (STATE.md) |
+| PERF-05 | Phase 5 | Complete (STATE.md) |
+| PERF-06 | Phase 5 | Complete (STATE.md) |
+| UI-01 | Phase 6 | Planned |
+| UI-02 | Phase 6 | Planned |
+| UI-03 | Phase 6 | Planned |
+| UI-04 | Phase 6 | Planned |
+| WIN-01 | Phase 6 | Planned |
+| WIN-02 | Phase 6 | Planned |
+| WIN-03 | Phase 6 | Planned |
+| WIN-04 | Phase 6 | Planned |
+| WIN-05 | Phase 6 | Planned |
+| WIN-06 | Phase 6 | Planned |
+| WIN-07 | Phase 6 | Planned |
+| WIN-08 | Phase 6 | Planned |
+| WIN-09 | Phase 6 | Planned |
+| WIN-10 | Phase 6 | Planned |
+| WIN-11 | Phase 6 | Planned |
+| WIN-12 | Phase 6 | Planned |
+| WIN-13 | Phase 6 | Planned |
+| WIN-14 | Phase 6 | Planned |
+| SEC-01 | Phase 6 | Planned |
+| SEC-02 | Phase 6 | Planned |
+| SEC-03 | Phase 6 | Planned |
+| SEC-04 | Phase 6 | Planned |
+| SEC-05 | Phase 6 | Planned |
+| SEC-06 | Phase 6 | Planned |
+| ARCH-01 | Phase 6 | Planned |
+| ARCH-02 | Phase 6 | Planned |
+| ARCH-03 | Phase 6 | Planned |
+| TEST-01 | Phase 6 | Planned |
+| TEST-02 | Phase 6 | Planned |
+| TEST-03 | Phase 6 | Planned |
+| TEST-04 | Phase 6 | Planned |
+| PERF-07 | Phase 6 | Planned |
 
 **Coverage:**
-- v1 requirements: 71 total
-- Mapped to phases: 71
+- v1 requirements: 103 total
+- Mapped to phases: 103
 - Unmapped: 0 ✓
+
+> **Status-column note (2026-11-07):** the checkbox and status columns were not maintained
+> while Phases 1–5 executed. The status column now reads `Complete (STATE.md)` because
+> `.planning/STATE.md` records all five phases complete; the `- [ ]`/`- [x]` marks above are
+> legacy and must not be used as the source of truth. Phase 6 rows are `Planned` until a
+> `06-VERIFICATION.md` exists.
 
 ---
 *Requirements defined: 2026-10-30*  
-*Last updated: 2026-10-30 after architectural and planning review corrections*
+*Last updated: 2026-11-07 — Phase 6 amendment: Windows promoted to v1, missing IDs defined, traceability repaired*

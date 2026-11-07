@@ -134,27 +134,35 @@ Plans:
 **Goal**: Deliver a verified cross-platform release of ZenOmen supporting Linux and Windows 10/11: closing all outstanding Linux concerns, implementing real Windows native telemetry, secure named-pipe IPC and HP BIOS WMI control, native Windows desktop integration, and automated dual-OS packaging.
 **Mode:** mvp
 **Depends on**: Phase 5
-**Requirements**: SEC-01, SEC-02, SEC-03, REL-01, REL-02, REL-03, REL-04, MON-01, MON-02, MON-03, MON-04, MON-05, MON-06, MON-07, MON-08, COOL-01, COOL-02, PWR-01, PWR-02, RGB-01, RGB-04, SYS-01, SYS-02, SYS-03, SYS-05, WIN-01, WIN-02, WIN-03, WIN-04, WIN-05
+**Requirements**: SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, REL-01, REL-02, REL-03, REL-04, MON-01, MON-02, MON-03, MON-04, MON-05, MON-06, MON-07, MON-08, MON-10, MON-11, MON-12, COOL-01, COOL-02, COOL-03, COOL-04, COOL-05, COOL-06, PWR-01, PWR-02, PWR-03, PWR-04, PWR-05, PWR-06, RGB-01, RGB-02, RGB-03, RGB-04, RGB-05, RGB-06, RGB-07, RGB-08, SYS-01, SYS-02, SYS-03, SYS-04, SYS-05, SYS-06, SYS-07, SYS-08, SYS-09, SYS-10, DIAG-01, DIAG-02, DIAG-03, DIAG-04, PERF-01, PERF-02, PERF-03, PERF-04, PERF-05, PERF-06, PERF-07, UI-01, UI-02, UI-03, UI-04, WIN-01, WIN-02, WIN-03, WIN-04, WIN-05, WIN-06, WIN-07, WIN-08, WIN-09, WIN-10, WIN-11, WIN-12, WIN-13, WIN-14, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04
 **Success Criteria** (what must be TRUE):
-  1. All open items in CONCERNS.md are resolved: D-Bus systemd delegation, restricted sysfs write paths, RGB toggle profile restoration, session D-Bus absence shutdown safety, non-destructive autostart, and dynamic clock tick calculation.
-  2. Telemetry contracts explicitly support battery percentage, state, and remaining time without fabricating zeros.
-  3. On Windows 10/11, native telemetry reads real CPU, RAM, GPU, battery, and supported sensors via Win32, DXGI, and PDH without shell tools or fake values.
-  4. On Windows, privileged hardware writes execute via an unprivileged GUI communicating over a secured named pipe (`\\.\pipe\ZenOmen.Hardware.v1`) to a Windows Service driving the HP BIOS WMI mailbox (`HPWMI_BIOS_GUID`).
-  5. Windows desktop integration provides native tray (`Shell_NotifyIconW`), single-instance mutex, user-level autostart, and dual-OS CI/release workflows building verified DEB, AppImage, and Windows packages.
+  1. Every unresolved item in `CONCERNS.md` is either fixed with a passing test or explicitly documented as blocked by physical hardware access.
+  2. Platform selection is compile-time: Linux builds contain no Win32/WMI code and Windows builds contain no zbus/sysfs/systemd code (`ARCH-01`).
+  3. On Windows 10/11, native telemetry reports real CPU, RAM, GPU, battery and supported sensors; missing metrics read `Unavailable` with a reason (`WIN-01`…`WIN-06`, `ARCH-03`).
+  4. Windows privileged writes run in an SCM service over a versioned, ACL-restricted named pipe; HP firmware commands execute only against a verified board profile, and unverified profiles ship disabled (`WIN-07`…`WIN-11`).
+  5. The production UI is GPUI-CE on both platforms and the Slint implementation is removed after the parity checklist passes (`UI-01`…`UI-04`).
+  6. A signed x64 Windows installer/uninstaller and the existing DEB/AppImage artifacts are produced; Windows 10 and Windows 11 build and test in CI (`WIN-12`…`WIN-14`, `REL-01`…`REL-04`).
+  7. Default CI is deterministic and host-independent; hardware-dependent tests are opt-in (`TEST-01`…`TEST-04`).
 
-**Plans**: 5 plans
+**Plans**: 12 plans
 
 Plans:
-**Wave 1**
-- [ ] 06-01: Linux hardening & concerns remediation — D-Bus/systemd sandboxing, RGB toggle preservation, autostart non-destructive toggle, shutdown fix, dynamic clock tick
-**Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 06-02: Cross-platform domain contracts — battery metrics, root-isolated capability detection, aligned fan predicates, history window unit conversion
-**Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 06-03: Windows native telemetry engine — Win32 GetSystemTimes, GlobalMemoryStatusEx, DXGI GPU enumeration, PDH engine utilization, GetSystemPowerStatus battery
-**Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 06-04: Windows hardware control service & named-pipe IPC — Windows SCM service, restricted DACL named pipe, HP BIOS WMI mailbox driver
-**Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 06-05: Windows desktop integration, dual-OS packaging & CI — Shell_NotifyIconW tray, HKCU Run autostart, dual-OS CI/release matrix
+**Wave 0** *(governance)*
+- [ ] 06-01: Source-of-truth reconciliation — persisted Phase 6 context, requirement ID repair, traceability, ADR-002 supersession
+**Wave 1** *(independent foundations)*
+- [ ] 06-02: Shared platform contracts & Cargo seams — `PlatformService`, typed protocol, cfg gating, domain-contract honesty
+- [ ] 06-03: Linux security hardening — D-Bus/systemd activation, sandbox paths, daemon logging, installer validation, absolute binaries, polkit tests
+- [ ] 06-04: Linux correctness & performance remediation — every remaining `CONCERNS.md` item with regression tests
+- [ ] 06-06: Windows telemetry provider — Win32/DXGI/PDH/WMI CPU, RAM, GPU, battery, temps, fan RPM, identity
+- [ ] 06-10: GPUI-CE migration foundation — pinned deps, app shell, theme, components, chart primitives, `AppEvent` binding
+**Wave 2** *(dependent implementation)*
+- [ ] 06-05: Cross-platform service seam — one client/server contract backed by zbus on Linux and named pipes on Windows
+- [ ] 06-07: Windows hardware service — SCM lifecycle, secured named pipe, HP BIOS WMI mailbox, board profiles, read-back verification
+- [ ] 06-08: Windows desktop integration — tray, single instance, HKCU autostart, notifications, known-folder paths, logging
+- [ ] 06-11: GPUI-CE screens & parity — six screens, charts, hardware controls, accessibility; remove Slint after parity
+**Wave 3** *(release gates)*
+- [ ] 06-09: Windows packaging & dual-OS CI — signed MSI, service install/uninstall, upgrade/rollback, Win10+Win11 matrix
+- [ ] 06-12: Cross-platform regression & documentation sync — full matrix, resource budgets, codebase maps, test-count truth
 
 ## Progress
 

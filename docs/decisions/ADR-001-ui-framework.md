@@ -1,6 +1,6 @@
 # ADR-001: Retain Slint as the UI framework
 
-- **Status:** Proposed (awaiting approval — no production code has been changed)
+- **Status:** Superseded by [ADR-002](ADR-002-gpui-ce-migration.md) (2026-11-07)
 - **Date:** 2026-11-07
 - **Decision owner:** ZenOmen maintainers
 - **Supersedes:** none
