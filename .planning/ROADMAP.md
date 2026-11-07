@@ -157,7 +157,7 @@ Plans:
 - [x] 06-03: Windows native telemetry engine — Win32, DXGI 1.3, PDH, and WMI for CPU, RAM, GPU, battery, temps, and fan RPM
 
 **Wave 4: Windows Hardware Control Service & Named-Pipe IPC**
-- [ ] 06-04: Windows hardware control service — SCM service, secured named-pipe IPC, HP BIOS WMI mailbox (`hpqBIntM`), board profile catalog
+- [x] 06-04: Windows hardware control service — SCM service, secured named-pipe IPC, HP BIOS WMI mailbox (`hpqBIntM`), board profile catalog
 
 **Wave 5: Windows Desktop Integration & UI Architecture**
 - [ ] 06-05: Windows desktop integration — single instance, system tray, HKCU autostart, notifications, known-folder paths, GPUI-CE migration path

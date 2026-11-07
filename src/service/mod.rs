@@ -4,6 +4,7 @@ pub mod contract;
 pub mod polkit;
 pub mod protocol;
 pub mod types;
+pub mod windows;
 
 pub use backend::HardwareBackend;
 pub use client::{HardwareServiceClient, ServiceConnectionStatus};

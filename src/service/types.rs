@@ -128,16 +128,30 @@ pub enum HardwareControlError {
 
     #[error("Hardware interface missing: {0}")]
     InterfaceMissing(String),
+
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
+
+    #[error("Access denied: {0}")]
+    AccessDenied(String),
 }
 
 impl From<HardwareControlError> for zbus::fdo::Error {
     fn from(err: HardwareControlError) -> Self {
         match err {
-            HardwareControlError::PolkitDenied(msg) => zbus::fdo::Error::AccessDenied(msg),
-            HardwareControlError::InvalidParameter(msg) => zbus::fdo::Error::InvalidArgs(msg),
+            HardwareControlError::PolkitDenied(msg) | HardwareControlError::AccessDenied(msg) => {
+                zbus::fdo::Error::AccessDenied(msg)
+            }
+            HardwareControlError::InvalidParameter(msg)
+            | HardwareControlError::ProtocolError(msg) => zbus::fdo::Error::InvalidArgs(msg),
             HardwareControlError::UnsupportedMode(msg) => zbus::fdo::Error::NotSupported(msg),
             HardwareControlError::InterfaceMissing(msg) => zbus::fdo::Error::FileNotFound(msg),
-            HardwareControlError::VerificationFailed { .. } | HardwareControlError::IoError(_) => {
+            HardwareControlError::VerificationFailed { .. }
+            | HardwareControlError::IoError(_)
+            | HardwareControlError::ConnectionFailed(_) => {
                 zbus::fdo::Error::Failed(err.to_string())
             }
         }

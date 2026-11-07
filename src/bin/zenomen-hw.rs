@@ -5,8 +5,38 @@
 
 use std::error::Error;
 use tracing::info;
+#[cfg(not(target_os = "windows"))]
 use zenomen::service::{HardwareBackend, HardwareService};
 
+#[cfg(target_os = "windows")]
+fn main() -> Result<(), Box<dyn Error>> {
+    let _logging_guard = zenomen::logging::init();
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--install-service") {
+        info!("Registering ZenOmen hardware service in SCM...");
+        zenomen::service::windows::lifecycle::register_service()?;
+        println!("Service successfully registered.");
+        return Ok(());
+    }
+
+    if args.iter().any(|a| a == "--uninstall-service") {
+        info!("Uninstalling ZenOmen hardware service from SCM...");
+        zenomen::service::windows::lifecycle::uninstall_service()?;
+        println!("Service successfully uninstalled.");
+        return Ok(());
+    }
+
+    info!(
+        "Starting zenomen-hw privileged hardware control service v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    zenomen::service::windows::lifecycle::run_service()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
 fn main() -> Result<(), Box<dyn Error>> {
     // First statement: a failure to bind D-Bus or load the backend is exactly
     // what the log file needs to record. Journald still captures stderr.
