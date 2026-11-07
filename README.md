@@ -223,7 +223,7 @@ Binaries will be placed in `target/release/`.
 
 ### Running Automated Test Suites
 
-ZenOmen includes 108 automated unit and integration tests across 15 test suites. Because GUI tests render surfaces, run tests under `xvfb-run`:
+ZenOmen includes 123 automated unit and integration tests across 16 integration test suites. Because GUI tests render surfaces, run tests under `xvfb-run`:
 
 ```bash
 xvfb-run -a cargo test --all
