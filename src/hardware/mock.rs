@@ -205,6 +205,12 @@ fn nominal_snapshot(tick: u64) -> TelemetrySnapshot {
             "performance".to_string(),
         ],
         rgb_profile: Some("aurora".to_string()),
+        battery: Some(crate::hardware::BatteryTelemetry {
+            present: true,
+            charge_percent: Some(85),
+            charging: Some(false),
+            remaining_seconds: Some(10800),
+        }),
     }
 }
 
@@ -220,6 +226,7 @@ fn sensor_gap_snapshot(tick: u64) -> TelemetrySnapshot {
     if tick % GAP_PERIOD_TICKS >= GAP_PERIOD_TICKS - GAP_TICKS {
         snapshot.gpu_utilization = None;
         snapshot.gpu_temperature_c = None;
+        snapshot.battery = None;
     }
 
     snapshot

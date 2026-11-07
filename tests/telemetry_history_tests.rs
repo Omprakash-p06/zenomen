@@ -87,3 +87,25 @@ fn generate_chart_paths_produces_all_three_series() {
     assert!(!gpu_sp.is_empty(), "GPU sparkline must be non-empty");
     assert!(!ram_sp.is_empty(), "RAM sparkline must be non-empty");
 }
+
+#[test]
+fn test_history_capacity_adjusts_dynamically_to_preserve_time_window() {
+    let mut history = TelemetryHistory::new_with_duration(120, 1000);
+    assert_eq!(history.capacity(), 120);
+    assert_eq!(history.duration_seconds(), 120);
+
+    // Polling rate increases to 500ms -> capacity doubles to 240 samples to maintain 120s
+    history.update_interval(500);
+    assert_eq!(history.capacity(), 240);
+    assert_eq!(history.duration_seconds(), 120);
+
+    // Polling rate drops to 2000ms -> capacity halves to 60 samples to maintain 120s
+    history.update_interval(2000);
+    assert_eq!(history.capacity(), 60);
+    assert_eq!(history.duration_seconds(), 120);
+
+    // Change duration to 300s at 2000ms -> 150 samples
+    history.set_duration(300, 2000);
+    assert_eq!(history.capacity(), 150);
+    assert_eq!(history.duration_seconds(), 300);
+}

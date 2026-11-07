@@ -33,6 +33,8 @@ pub struct SensorRegistry {
     /// draw) is not sampled yet, so this must not be reported as a full
     /// metric. It exists because the capability flag may not be guessed.
     pub has_battery: bool,
+    /// Detected or configured sysfs root path.
+    pub sysfs_root: PathBuf,
 }
 
 impl SensorRegistry {
@@ -70,6 +72,14 @@ impl SensorRegistry {
             .parent()
             .is_some_and(|class_dir| scan_battery_present(&class_dir.join("power_supply")));
 
+        // 5. Derive sysfs root for root-isolated capability detection
+        let sysfs_root = hwmon_root
+            .parent()
+            .and_then(|c| c.parent())
+            .and_then(|s| s.parent())
+            .unwrap_or(Path::new("/"))
+            .to_path_buf();
+
         Self {
             cpu_temp,
             fan_tachometers,
@@ -78,7 +88,13 @@ impl SensorRegistry {
             has_platform_profiles,
             discovered_devices,
             has_battery,
+            sysfs_root,
         }
+    }
+
+    /// Returns the sysfs root path used by this registry.
+    pub fn sysfs_root(&self) -> &Path {
+        &self.sysfs_root
     }
 
     /// Sample CPU temperature from the registered canonical sensor path.
@@ -136,7 +152,7 @@ impl SensorRegistry {
         has_gpu_metrics: bool,
         has_ram_metrics: bool,
     ) -> HardwareCapabilities {
-        let rgb_variant = crate::hardware::rgb::detect_rgb_interface(std::path::Path::new("/"));
+        let rgb_variant = crate::hardware::rgb::detect_rgb_interface(&self.sysfs_root);
         HardwareCapabilities {
             cpu_metrics: has_cpu_metrics,
             gpu_metrics: has_gpu_metrics,
@@ -260,24 +276,16 @@ fn resolve_fans(
     let mut has_pwm = false;
     let mut fan_control_path = None;
 
-    // Prioritize hp / hp-wmi platform devices
-    let target_devices: Vec<_> = devices
-        .iter()
-        .filter(|d| d.name == "hp" || d.name == "hp-wmi" || d.name.contains("platform"))
-        .collect();
-
-    let search_pool = if !target_devices.is_empty() {
-        target_devices
-    } else {
-        devices.iter().collect()
-    };
-
-    for dev in search_pool {
-        let pwm = dev.path.join("pwm1_enable");
-        if pwm.exists() {
-            has_pwm = true;
-            if fan_control_path.is_none() {
-                fan_control_path = Some(pwm);
+    for dev in devices {
+        // Fan control is strictly restricted to HP WMI / platform interfaces
+        let is_hp = dev.name == "hp" || dev.name == "hp-wmi" || dev.name.contains("platform");
+        if is_hp {
+            let pwm = dev.path.join("pwm1_enable");
+            if pwm.exists() {
+                has_pwm = true;
+                if fan_control_path.is_none() {
+                    fan_control_path = Some(pwm);
+                }
             }
         }
 
@@ -299,17 +307,6 @@ fn resolve_fans(
                     label,
                     input_path: entry.path(),
                 });
-            }
-        }
-    }
-
-    if fan_control_path.is_none() {
-        for dev in devices {
-            let pwm = dev.path.join("pwm1_enable");
-            if pwm.exists() {
-                has_pwm = true;
-                fan_control_path = Some(pwm);
-                break;
             }
         }
     }

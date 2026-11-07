@@ -16,7 +16,7 @@ pub mod unavailable;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxHardwareProvider;
 pub use mock::{MockHardware, MockScenario};
-pub use provider::{HardwareCapabilities, HardwareProvider, TelemetrySnapshot};
+pub use provider::{BatteryTelemetry, HardwareCapabilities, HardwareProvider, TelemetrySnapshot};
 pub use registry::SensorRegistry;
 pub use rgb::RgbInterfaceVariant;
 #[cfg(not(target_os = "linux"))]

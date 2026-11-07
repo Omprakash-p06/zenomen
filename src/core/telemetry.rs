@@ -93,6 +93,9 @@ pub struct TelemetryPaths {
 pub struct TelemetryHistory {
     points: VecDeque<TelemetryPoint>,
     capacity: usize,
+    duration_seconds: u32,
+    cached_chart_paths: Option<(String, String, String)>,
+    cached_sparkline_paths: Option<(String, String, String)>,
 }
 
 impl Default for TelemetryHistory {
@@ -117,7 +120,45 @@ impl TelemetryHistory {
         Self {
             points: VecDeque::with_capacity(cap),
             capacity: cap,
+            duration_seconds: 120,
+            cached_chart_paths: None,
+            cached_sparkline_paths: None,
         }
+    }
+
+    /// An empty history pre-sized for a specific duration in seconds and polling interval in milliseconds.
+    pub fn new_with_duration(duration_seconds: u32, interval_ms: u64) -> Self {
+        let cap = Self::capacity_for_duration(duration_seconds, interval_ms);
+        Self {
+            points: VecDeque::with_capacity(cap),
+            capacity: cap,
+            duration_seconds,
+            cached_chart_paths: None,
+            cached_sparkline_paths: None,
+        }
+    }
+
+    /// Calculate buffer capacity from a duration in seconds and a polling interval in milliseconds.
+    pub fn capacity_for_duration(duration_seconds: u32, interval_ms: u64) -> usize {
+        let interval = interval_ms.max(100);
+        ((duration_seconds as u64 * 1000) / interval).max(2) as usize
+    }
+
+    /// Resize capacity dynamically according to duration in seconds and polling interval in ms (MON-11).
+    pub fn set_duration(&mut self, duration_seconds: u32, interval_ms: u64) {
+        self.duration_seconds = duration_seconds;
+        let new_capacity = Self::capacity_for_duration(duration_seconds, interval_ms);
+        self.set_capacity(new_capacity);
+    }
+
+    /// Update polling interval, adjusting capacity while preserving duration in seconds.
+    pub fn update_interval(&mut self, interval_ms: u64) {
+        self.set_duration(self.duration_seconds, interval_ms);
+    }
+
+    /// Configured duration in seconds.
+    pub fn duration_seconds(&self) -> u32 {
+        self.duration_seconds
     }
 
     /// Configured capacity.
@@ -134,6 +175,8 @@ impl TelemetryHistory {
             self.points.pop_front();
         }
         self.capacity = cap;
+        self.cached_chart_paths = None;
+        self.cached_sparkline_paths = None;
     }
 
     /// Append one sample, evicting the oldest when the buffer is full.
@@ -145,6 +188,8 @@ impl TelemetryHistory {
             self.points.pop_front();
         }
         self.points.push_back(point);
+        self.cached_chart_paths = None;
+        self.cached_sparkline_paths = None;
     }
 
     /// How many samples are retained, never more than [`MAX_SAMPLES`].
@@ -155,6 +200,30 @@ impl TelemetryHistory {
     /// The retained samples, oldest first.
     pub fn points(&self) -> &VecDeque<TelemetryPoint> {
         &self.points
+    }
+
+    /// Paths for the wide chart: `(cpu, gpu, ram)` with caching.
+    pub fn generate_chart_paths_cached(
+        &mut self,
+        width: f32,
+        height: f32,
+    ) -> (String, String, String) {
+        if let Some(ref paths) = self.cached_chart_paths {
+            return paths.clone();
+        }
+        let paths = self.generate_chart_paths(width, height);
+        self.cached_chart_paths = Some(paths.clone());
+        paths
+    }
+
+    /// Paths for the three card sparklines with caching.
+    pub fn generate_sparkline_paths_cached(&mut self) -> (String, String, String) {
+        if let Some(ref paths) = self.cached_sparkline_paths {
+            return paths.clone();
+        }
+        let paths = self.generate_sparkline_paths();
+        self.cached_sparkline_paths = Some(paths.clone());
+        paths
     }
 
     /// Paths for the wide chart: `(cpu, gpu, ram)`.

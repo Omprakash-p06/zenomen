@@ -151,7 +151,7 @@ Plans:
 - [x] 06-01: Linux security hardening & concerns remediation — D-Bus systemd activation, restricted paths, RGB non-destructive restore, drop(action_sender), benchmark clock tick, atomic diagnostics export
 
 **Wave 2: Cross-Platform Domain Contracts & Seams**
-- [ ] 06-02: Shared hardware provider contract, BatteryTelemetry separation, sysfs root isolation, fan driver filtering, dynamic history scaling, chart caching
+- [x] 06-02: Shared hardware provider contract, BatteryTelemetry separation, sysfs root isolation, fan driver filtering, dynamic history scaling, chart caching
 
 **Wave 3: Windows Native Telemetry Engine**
 - [ ] 06-03: Windows native telemetry engine — Win32, DXGI 1.3, PDH, and WMI for CPU, RAM, GPU, battery, temps, and fan RPM

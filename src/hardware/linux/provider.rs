@@ -23,6 +23,7 @@ pub struct LinuxHardwareProvider {
     cpu_model: String,
     cpufreq_path: PathBuf,
     acpi_root: PathBuf,
+    power_supply_root: PathBuf,
     gpu_devices: Vec<GpuDevice>,
     /// Watcher for `nvidia-smi`, present only when an NVIDIA GPU or the tool was
     /// detected. One thread for the provider's lifetime, not one per sample.
@@ -75,11 +76,17 @@ impl LinuxHardwareProvider {
         let registry = Arc::new(SensorRegistry::scan_roots(hwmon_root, acpi_root));
         let capabilities = registry.detect_capabilities(has_cpu, has_gpu, has_ram);
 
+        let power_supply_root = hwmon_root
+            .parent()
+            .map(|p| p.join("power_supply"))
+            .unwrap_or_else(|| PathBuf::from("/sys/class/power_supply"));
+
         Self {
             cpu_sampler: Mutex::new(CpuSampler::new()),
             cpu_model,
             cpufreq_path: cpufreq_path.to_path_buf(),
             acpi_root: acpi_root.to_path_buf(),
+            power_supply_root,
             gpu_devices,
             nvidia,
             registry,
@@ -201,6 +208,46 @@ impl HardwareProvider for LinuxHardwareProvider {
             snapshot.gpu_temperature_c = gpu.temperature_c;
         }
 
+        // 5. Battery Telemetry (MON-01, MON-02)
+        snapshot.battery = sample_battery_telemetry(&self.power_supply_root);
+
         Ok(snapshot)
     }
+}
+
+/// Sample battery status and charge metrics from `/sys/class/power_supply/BAT*`.
+fn sample_battery_telemetry(power_supply_dir: &Path) -> Option<crate::hardware::BatteryTelemetry> {
+    let entries = std::fs::read_dir(power_supply_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("BAT") {
+            let bat_dir = entry.path();
+            let capacity = std::fs::read_to_string(bat_dir.join("capacity"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u8>().ok())
+                .map(|c| c.min(100));
+
+            let status_str = std::fs::read_to_string(bat_dir.join("status"))
+                .ok()
+                .map(|s| s.trim().to_string());
+
+            let charging = status_str
+                .as_ref()
+                .map(|s| s.eq_ignore_ascii_case("Charging"));
+
+            let remaining_seconds = std::fs::read_to_string(bat_dir.join("time_to_empty_now"))
+                .or_else(|_| std::fs::read_to_string(bat_dir.join("time_to_full_now")))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .map(|s| s as u32);
+
+            return Some(crate::hardware::BatteryTelemetry {
+                present: true,
+                charge_percent: capacity,
+                charging,
+                remaining_seconds,
+            });
+        }
+    }
+    None
 }

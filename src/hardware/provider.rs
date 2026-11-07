@@ -178,9 +178,28 @@ pub struct TelemetrySnapshot {
     pub power_profiles: Vec<String>,
     /// Active keyboard RGB profile name, when lighting is supported.
     pub rgb_profile: Option<String>,
+    /// Battery presence and telemetry (MON-01, MON-02).
+    #[serde(default)]
+    pub battery: Option<BatteryTelemetry>,
+}
+
+/// Battery telemetry and charging state (MON-01, MON-02).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BatteryTelemetry {
+    pub present: bool,
+    pub charge_percent: Option<u8>,
+    pub charging: Option<bool>,
+    pub remaining_seconds: Option<u32>,
 }
 
 impl TelemetrySnapshot {
+    /// True when real battery metrics are available in this snapshot.
+    pub fn has_battery_metrics(&self) -> bool {
+        self.battery
+            .as_ref()
+            .map(|b| b.present && b.charge_percent.is_some())
+            .unwrap_or(false)
+    }
     /// The number of sensors a fully populated sample is expected to carry.
     ///
     /// `rgb_profile` is deliberately excluded. The active lighting profile is

@@ -260,3 +260,40 @@ fn live_host_initialization_resolves_real_sensors() {
         assert!(snapshot.cpu_temperature_c.is_some());
     }
 }
+
+#[test]
+fn test_rgb_capability_detection_stays_within_custom_root() {
+    let tree = TestHwmonTree::new("zenomen-rgb-isolated");
+    let hwmon_root = tree.path().join("sys/class/hwmon");
+    let acpi_root = tree.path().join("sys/firmware/acpi");
+    fs::create_dir_all(&hwmon_root).unwrap();
+    fs::create_dir_all(&acpi_root).unwrap();
+
+    let registry = SensorRegistry::scan_roots(&hwmon_root, &acpi_root);
+    let caps = registry.detect_capabilities(true, false, true);
+
+    // Custom root has no HP RGB files, so it must NOT report RGB lighting regardless of host hardware
+    assert!(!caps.rgb_lighting);
+    assert_eq!(caps.rgb_variant, None);
+}
+
+#[test]
+fn test_generic_hwmon_pwm_does_not_enable_hp_fan_control() {
+    let tree = TestHwmonTree::new("zenomen-generic-pwm");
+    let hwmon_root = tree.path().join("sys/class/hwmon");
+    let acpi_root = tree.path().join("sys/firmware/acpi");
+    let coretemp_dir = hwmon_root.join("hwmon0");
+    fs::create_dir_all(&coretemp_dir).unwrap();
+    fs::create_dir_all(&acpi_root).unwrap();
+
+    // Device named "coretemp" with pwm1_enable
+    fs::write(coretemp_dir.join("name"), "coretemp\n").unwrap();
+    fs::write(coretemp_dir.join("pwm1_enable"), "1\n").unwrap();
+
+    let registry = SensorRegistry::scan_roots(&hwmon_root, &acpi_root);
+    let caps = registry.detect_capabilities(true, false, true);
+
+    // Generic device with pwm1_enable must NOT enable fan control
+    assert!(!registry.has_fan_control);
+    assert!(!caps.fan_control);
+}

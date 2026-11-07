@@ -118,10 +118,11 @@ impl AppState {
                 self.latest_snapshot = Some(snapshot.clone());
                 let point = TelemetryPoint::from_snapshot(snapshot);
                 self.history.push(point);
-                let (cpu_path, gpu_path, ram_path) =
-                    self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
+                let (cpu_path, gpu_path, ram_path) = self
+                    .history
+                    .generate_chart_paths_cached(CHART_WIDTH, CHART_HEIGHT);
                 let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
-                    self.history.generate_sparkline_paths();
+                    self.history.generate_sparkline_paths_cached();
                 if self.fan_mode.is_empty() && !snapshot.fan_mode.is_empty() {
                     self.fan_mode = snapshot.fan_mode.clone();
                 }
@@ -145,11 +146,15 @@ impl AppState {
             }
             AppEvent::HistoryWindowChanged(window_size) => {
                 self.history_window = *window_size;
-                self.history.set_capacity(*window_size);
-                let (cpu_path, gpu_path, ram_path) =
-                    self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
+                self.history.set_duration(
+                    *window_size as u32,
+                    self.config.telemetry.polling_interval_ms,
+                );
+                let (cpu_path, gpu_path, ram_path) = self
+                    .history
+                    .generate_chart_paths_cached(CHART_WIDTH, CHART_HEIGHT);
                 let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
-                    self.history.generate_sparkline_paths();
+                    self.history.generate_sparkline_paths_cached();
                 self.paths = TelemetryPaths {
                     cpu_path,
                     gpu_path,
@@ -245,11 +250,15 @@ impl AppState {
             AppEvent::ConfigLoaded(config) => {
                 self.config = config.clone();
                 self.history_window = config.telemetry.history_window;
-                self.history.set_capacity(config.telemetry.history_window);
-                let (cpu_path, gpu_path, ram_path) =
-                    self.history.generate_chart_paths(CHART_WIDTH, CHART_HEIGHT);
+                self.history.set_duration(
+                    config.telemetry.history_window as u32,
+                    config.telemetry.polling_interval_ms,
+                );
+                let (cpu_path, gpu_path, ram_path) = self
+                    .history
+                    .generate_chart_paths_cached(CHART_WIDTH, CHART_HEIGHT);
                 let (cpu_sparkline, gpu_sparkline, ram_sparkline) =
-                    self.history.generate_sparkline_paths();
+                    self.history.generate_sparkline_paths_cached();
                 self.paths = TelemetryPaths {
                     cpu_path,
                     gpu_path,
@@ -463,6 +472,7 @@ mod tests {
             power_profile: "balanced".to_string(),
             power_profiles: vec!["quiet".to_string(), "balanced".to_string()],
             rgb_profile: Some("aurora".to_string()),
+            battery: None,
         }
     }
 }

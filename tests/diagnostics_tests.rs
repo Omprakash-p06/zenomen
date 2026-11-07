@@ -89,6 +89,7 @@ fn collect_diagnostics_with_mock_roots() {
                 "performance".to_string(),
             ],
             rgb_profile: None,
+            battery: None,
         }),
         last_sampling_error: Some("Transitory sensor read timeout".to_string()),
         ..AppState::default()
@@ -117,6 +118,7 @@ fn collect_diagnostics_with_mock_roots() {
         has_platform_profiles: true,
         discovered_devices: vec!["k10temp".to_string(), "hp".to_string()],
         has_battery: true,
+        sysfs_root: PathBuf::from("/"),
     };
 
     let report = collect_diagnostics_from_roots(

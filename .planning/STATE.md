@@ -2,19 +2,19 @@
 gsd_state_version: "1.0"
 current_phase: 06
 status: in_progress
-last_updated: "2026-11-07T19:20:00.000Z"
+last_updated: "2026-11-07T19:35:00.000Z"
 state_head: 48ea76a
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 21
-  completed_plans: 16
-  percent: 76
+  completed_plans: 17
+  percent: 81
 last_activity: 2026-11-07
 current_phase_name: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)
-current_plan: 2
-stopped_at: Plan 06-01 Executed (Wave 1 complete, 125 tests green)
-last_activity_desc: Executed Plan 06-01 (Linux concerns remediation: systemd sandboxing, non-destructive RGB restore, shutdown safety, dynamic clock ticks, durable atomic diagnostics)
+current_plan: 3
+stopped_at: Plan 06-02 Executed (Wave 2 complete, 128 tests green)
+last_activity_desc: Executed Plan 06-02 (Cross-platform domain contracts: BatteryTelemetry, Linux battery sysfs sampling, root-isolated capability detection, HP fan predicate alignment, dynamic history window math, cached chart paths)
 ---
 
 # Project State
@@ -24,11 +24,12 @@ last_activity_desc: Executed Plan 06-01 (Linux concerns remediation: systemd san
 See: `.planning/PROJECT.md`
 
 **Core value:** Hardware control you can trust — every write verified by read-back, and a missing sensor reads "Unavailable" rather than a fabricated number.  
-**Current focus:** Phase 05 — Distribution, Resource Budget & Rebrand (COMPLETE)
+**Current focus:** Phase 06 — Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)
 
 ## Current Position
 
-Current Phase: 05 (Distribution, Resource Budget & Rebrand)
+Current Phase: 06 (Unified Cross-Platform Release)
+Phase 06 Status: IN PROGRESS (Wave 2/6 Complete)
 Phase 05 Status: COMPLETE
 Phase 04 Status: COMPLETE
 Phase 03 Status: COMPLETE
@@ -50,6 +51,7 @@ Phase 01 Status: COMPLETE
 - Plan 06-01 (Wave 1: Linux Concerns & Security Remediation): [`.planning/phases/06-cross-platform-windows-linux-release/06-01-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-01-PLAN.md)
 - Plan 06-01 Summary: [`.planning/phases/06-cross-platform-windows-linux-release/06-01-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-01-SUMMARY.md)
 - Plan 06-02 (Wave 2: Cross-Platform Domain Contracts & Seams): [`.planning/phases/06-cross-platform-windows-linux-release/06-02-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-02-PLAN.md)
+- Plan 06-02 Summary: [`.planning/phases/06-cross-platform-windows-linux-release/06-02-SUMMARY.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-02-SUMMARY.md)
 - Plan 06-03 (Wave 3: Windows Native Telemetry Engine): [`.planning/phases/06-cross-platform-windows-linux-release/06-03-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-03-PLAN.md)
 - Plan 06-04 (Wave 4: Windows Hardware Control Service & Named-Pipe IPC): [`.planning/phases/06-cross-platform-windows-linux-release/06-04-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-04-PLAN.md)
 - Plan 06-05 (Wave 5: Windows Desktop Integration & UI Architecture): [`.planning/phases/06-cross-platform-windows-linux-release/06-05-PLAN.md`](file:///home/omprakash/Documents/zenomen/.planning/phases/06-cross-platform-windows-linux-release/06-05-PLAN.md)

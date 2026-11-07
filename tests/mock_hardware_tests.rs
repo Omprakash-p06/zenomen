@@ -40,6 +40,15 @@ fn nominal_provider_emits_valid_values_across_sensors() {
         !sample.power_profiles.is_empty(),
         "Power profiles must not be empty"
     );
+    assert!(
+        sample.has_battery_metrics(),
+        "Nominal must have battery metrics"
+    );
+    let battery = sample.battery.expect("battery must be present");
+    assert!(battery.present);
+    assert_eq!(battery.charge_percent, Some(85));
+    assert_eq!(battery.charging, Some(false));
+    assert_eq!(battery.remaining_seconds, Some(10800));
 }
 
 #[test]
@@ -96,6 +105,8 @@ fn zero_capabilities_provider_emits_all_false_flags() {
     assert_eq!(sample.ram_used_mb, 0);
     assert!(sample.fan_rpms.is_empty());
     assert_eq!(sample.reported_sensor_count(), 0);
+    assert!(sample.battery.is_none());
+    assert!(!sample.has_battery_metrics());
 }
 
 #[test]
@@ -104,6 +115,8 @@ fn sensor_data_gap_scenario_periodically_emits_none() {
 
     let mut saw_present = false;
     let mut saw_none = false;
+    let mut saw_battery_present = false;
+    let mut saw_battery_none = false;
 
     // Sample across 15 ticks (period is 10 ticks, gap is 3 ticks)
     for _ in 0..15 {
@@ -115,6 +128,12 @@ fn sensor_data_gap_scenario_periodically_emits_none() {
         } else {
             saw_none = true;
         }
+
+        if sample.has_battery_metrics() {
+            saw_battery_present = true;
+        } else {
+            saw_battery_none = true;
+        }
     }
 
     assert!(
@@ -124,5 +143,13 @@ fn sensor_data_gap_scenario_periodically_emits_none() {
     assert!(
         saw_none,
         "SensorDataGap must emit None GPU utilization during gap ticks"
+    );
+    assert!(
+        saw_battery_present,
+        "SensorDataGap must emit valid battery metrics during nominal ticks"
+    );
+    assert!(
+        saw_battery_none,
+        "SensorDataGap must emit None battery metrics during gap ticks"
     );
 }
