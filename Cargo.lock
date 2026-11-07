@@ -5683,6 +5683,7 @@ name = "zenomen"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "libc",
  "serde",
  "serde_json",
  "slint",

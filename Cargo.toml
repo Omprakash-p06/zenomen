@@ -34,6 +34,9 @@ toml = "0.8"
 zbus = { version = "5", features = ["blocking"] }
 tracing-appender = "0.2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 slint-build = "1.17"
 

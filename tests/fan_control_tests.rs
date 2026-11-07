@@ -114,4 +114,5 @@ fn test_client_handles_offline_daemon_gracefully() {
     // Calling fan mode when offline returns an Err without panicking
     let res = client.set_fan_mode("max");
     assert!(res.is_err());
+    assert!(res.unwrap_err().contains("sudo systemctl start zenomen-hw"));
 }

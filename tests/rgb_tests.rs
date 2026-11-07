@@ -363,3 +363,60 @@ fn backend_hardware_writes_and_verification_kernel_patch() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn test_rgb_enable_restores_previous_profile_instead_of_hardcoded_white() {
+    use zenomen::rgb::schema::RgbProfile;
+    use zenomen::service::contract::HardwareService;
+
+    let root = temp_test_dir("backend_restore");
+    let dev_dir = root.join("sys/devices/platform/hp-wmi");
+    fs::create_dir_all(&dev_dir).unwrap();
+    let kbd_path = dev_dir.join("keyboardleds");
+    fs::write(&kbd_path, "000000000000000000000000\n").unwrap();
+
+    let backend = HardwareBackend::new(&root);
+    let service = HardwareService::new(backend);
+
+    let red_profile = RgbProfile::new(
+        "all-red",
+        "All Red",
+        "All red profile",
+        [
+            RgbColor::new(255, 0, 0),
+            RgbColor::new(255, 0, 0),
+            RgbColor::new(255, 0, 0),
+            RgbColor::new(255, 0, 0),
+        ],
+    );
+
+    // 1. Apply Red Profile
+    service
+        .apply_rgb_profile_internal(&red_profile)
+        .expect("profile applied");
+    assert_eq!(
+        fs::read_to_string(&kbd_path).unwrap().trim(),
+        "FF0000FF0000FF0000FF0000"
+    );
+
+    // 2. Disable RGB (should turn off / black)
+    service
+        .set_rgb_enabled_internal(false)
+        .expect("rgb disabled");
+    assert_eq!(
+        fs::read_to_string(&kbd_path).unwrap().trim(),
+        "000000000000000000000000"
+    );
+
+    // 3. Re-enable RGB (should restore Red profile, NOT hardcoded white)
+    service
+        .set_rgb_enabled_internal(true)
+        .expect("rgb re-enabled");
+    assert_eq!(
+        fs::read_to_string(&kbd_path).unwrap().trim(),
+        "FF0000FF0000FF0000FF0000",
+        "Enabling RGB must restore the previously applied profile rather than resetting to white"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}

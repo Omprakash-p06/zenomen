@@ -35,10 +35,46 @@ fn test_autostart_lifecycle_with_custom_path() {
 
     // Disable autostart
     set_autostart_enabled_at(&desktop_path, false).expect("disabling autostart must succeed");
-    assert!(!desktop_path.exists());
+    assert!(desktop_path.exists());
     assert!(!is_autostart_enabled_at(&desktop_path));
 
+    let disabled_content =
+        fs::read_to_string(&desktop_path).expect("reading disabled autostart file");
+    assert!(disabled_content.contains("Hidden=true"));
+    assert!(disabled_content.contains("X-GNOME-Autostart-enabled=false"));
+
     // Cleanup
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn test_autostart_toggle_preserves_custom_file_lines() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "zenomen_test_custom_autostart_{}",
+        std::process::id()
+    ));
+    let desktop_path = temp_dir.join("zenomen.desktop");
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let custom_content = "[Desktop Entry]\nName=ZenOmen\nComment=Custom Comment\nX-Custom-Key=CustomValue\nExec=zenomen --minimized\n";
+    fs::write(&desktop_path, custom_content).unwrap();
+
+    // Disable
+    set_autostart_enabled_at(&desktop_path, false).expect("disabling must succeed");
+    assert!(!is_autostart_enabled_at(&desktop_path));
+    let disabled = fs::read_to_string(&desktop_path).unwrap();
+    assert!(disabled.contains("Comment=Custom Comment"));
+    assert!(disabled.contains("X-Custom-Key=CustomValue"));
+    assert!(disabled.contains("Hidden=true"));
+
+    // Re-enable
+    set_autostart_enabled_at(&desktop_path, true).expect("enabling must succeed");
+    assert!(is_autostart_enabled_at(&desktop_path));
+    let enabled = fs::read_to_string(&desktop_path).unwrap();
+    assert!(enabled.contains("Comment=Custom Comment"));
+    assert!(enabled.contains("X-Custom-Key=CustomValue"));
+    assert!(enabled.contains("Hidden=false"));
+
     let _ = fs::remove_dir_all(temp_dir);
 }
 

@@ -141,6 +141,8 @@ pub fn collect_diagnostics_from_roots(
     }
 }
 
+static EXPORT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Atomically export a diagnostics report to a formatted JSON file (DIAG-02).
 pub fn export_diagnostics_to_file(
     report: &DiagnosticsReport,
@@ -151,10 +153,23 @@ pub fn export_diagnostics_to_file(
     }
 
     let json_bytes = serde_json::to_vec_pretty(report).map_err(|e| e.to_string())?;
-    let temp_path = target_path.with_extension(format!("tmp.{}", std::process::id()));
+    let seq = EXPORT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_path = target_path.with_extension(format!("tmp.{}.{}", std::process::id(), seq));
 
-    std::fs::write(&temp_path, json_bytes).map_err(|e| e.to_string())?;
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&temp_path).map_err(|e| e.to_string())?;
+        file.write_all(&json_bytes).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
+
     std::fs::rename(&temp_path, target_path).map_err(|e| e.to_string())?;
+
+    if let Some(parent) = target_path.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
+    }
 
     Ok(())
 }

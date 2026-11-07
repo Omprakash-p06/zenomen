@@ -148,7 +148,7 @@ Plans:
 
 Plans:
 **Wave 1: Linux Concerns & Security Remediation**
-- [ ] 06-01: Linux security hardening & concerns remediation — D-Bus systemd activation, restricted paths, RGB non-destructive restore, drop(action_sender), benchmark clock tick, atomic diagnostics export
+- [x] 06-01: Linux security hardening & concerns remediation — D-Bus systemd activation, restricted paths, RGB non-destructive restore, drop(action_sender), benchmark clock tick, atomic diagnostics export
 
 **Wave 2: Cross-Platform Domain Contracts & Seams**
 - [ ] 06-02: Shared hardware provider contract, BatteryTelemetry separation, sysfs root isolation, fan driver filtering, dynamic history scaling, chart caching
@@ -177,4 +177,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
-| 6. Cross-Platform Release | 0/6 | Planned | - |
+| 6. Cross-Platform Release | 1/6 | In Progress | - |

@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let single_instance = ensure_single_instance(action_sender.clone());
     let _session_conn = match single_instance {
         SingleInstanceResult::Primary(conn) => {
-            let _ = register_tray(&conn, action_sender);
+            let _ = register_tray(&conn, action_sender.clone());
             Some(conn)
         }
         SingleInstanceResult::AlreadyRunning => {
@@ -90,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+    drop(action_sender);
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting ZenOmen");
     log_benchmark("cold-start");

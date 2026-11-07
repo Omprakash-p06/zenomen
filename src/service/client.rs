@@ -231,7 +231,7 @@ impl HardwareServiceClient {
     /// Helper to ensure service connection or produce actionable offline guidance.
     fn connect_service(&self) -> Result<Connection, String> {
         if !self.status().is_connected() {
-            return Err("Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with `sudo target/debug/zenomen-hw` or install with `sudo target/debug/zenomen --install-system-integration`.".to_string());
+            return Err("Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with 'sudo systemctl start zenomen-hw' or install with 'sudo zenomen --install-system-integration'.".to_string());
         }
         self.connect()
     }
@@ -242,7 +242,7 @@ impl HardwareServiceClient {
         if err_str.contains("ServiceUnknown")
             || err_str.contains("not provided by any .service files")
         {
-            "Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with `sudo target/debug/zenomen-hw` or install with `sudo target/debug/zenomen --install-system-integration`.".to_string()
+            "Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with 'sudo systemctl start zenomen-hw' or install with 'sudo zenomen --install-system-integration'.".to_string()
         } else {
             format!("{op} failed: {err_str}")
         }
@@ -300,7 +300,7 @@ impl HardwareServiceClient {
 
     /// Apply an RGB profile to hardware via com.zenomen.Hardware1.
     pub fn apply_rgb_profile(&self, profile: &crate::rgb::RgbProfile) -> Result<String, String> {
-        let conn = self.connect()?;
+        let conn = self.connect_service()?;
         let json_str = serde_json::to_string(profile)
             .map_err(|e| format!("Failed to serialize profile: {e}"))?;
         let reply = conn
@@ -311,7 +311,7 @@ impl HardwareServiceClient {
                 "ApplyRgbProfile",
                 &(json_str,),
             )
-            .map_err(|e| format!("ApplyRgbProfile failed: {e}"))?;
+            .map_err(|e| self.format_service_error("ApplyRgbProfile", &e))?;
 
         let msg: String = reply
             .body()
@@ -323,7 +323,7 @@ impl HardwareServiceClient {
 
     /// Set RGB keyboard power state via com.zenomen.Hardware1 (RGB-04).
     pub fn set_rgb_enabled(&self, enabled: bool) -> Result<String, String> {
-        let conn = self.connect()?;
+        let conn = self.connect_service()?;
         let reply = conn
             .call_method(
                 Some(self.destination.as_str()),
@@ -332,7 +332,7 @@ impl HardwareServiceClient {
                 "SetRgbEnabled",
                 &(enabled,),
             )
-            .map_err(|e| format!("SetRgbEnabled failed: {e}"))?;
+            .map_err(|e| self.format_service_error("SetRgbEnabled", &e))?;
 
         let msg: String = reply
             .body()

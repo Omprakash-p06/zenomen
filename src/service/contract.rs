@@ -15,6 +15,7 @@ pub struct HardwareService {
     backend: HardwareBackend,
     conn: Arc<RwLock<Option<Connection>>>,
     require_polkit: bool,
+    last_active_rgb: Arc<RwLock<Option<[crate::rgb::RgbColor; 4]>>>,
 }
 
 impl HardwareService {
@@ -24,6 +25,7 @@ impl HardwareService {
             backend,
             conn: Arc::new(RwLock::new(None)),
             require_polkit: true,
+            last_active_rgb: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -77,6 +79,39 @@ impl HardwareService {
             .map_err(zbus::fdo::Error::from)?;
 
         Ok(())
+    }
+
+    /// Internal implementation for applying an RGB profile.
+    pub fn apply_rgb_profile_internal(
+        &self,
+        profile: &crate::rgb::RgbProfile,
+    ) -> Result<String, crate::service::types::HardwareControlError> {
+        self.backend.apply_rgb_hardware(&profile.zones)?;
+        if let Ok(mut lock) = self.last_active_rgb.write() {
+            *lock = Some(profile.zones);
+        }
+        Ok(format!("RGB profile '{}' applied", profile.name))
+    }
+
+    /// Internal implementation for toggling RGB enabled state with profile restoration.
+    pub fn set_rgb_enabled_internal(
+        &self,
+        enabled: bool,
+    ) -> Result<String, crate::service::types::HardwareControlError> {
+        if enabled {
+            let restore_zones = self
+                .last_active_rgb
+                .read()
+                .ok()
+                .and_then(|lock| *lock)
+                .unwrap_or([crate::rgb::RgbColor::new(255, 255, 255); 4]);
+
+            self.backend.apply_rgb_hardware(&restore_zones)?;
+        } else {
+            let black = [crate::rgb::RgbColor::new(0, 0, 0); 4];
+            self.backend.apply_rgb_hardware(&black)?;
+        }
+        Ok(format!("RGB enabled set to {enabled}"))
     }
 }
 
@@ -183,11 +218,8 @@ impl HardwareService {
         let profile: crate::rgb::RgbProfile = serde_json::from_str(&profile_json)
             .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("Invalid RGB profile JSON: {e}")))?;
 
-        self.backend
-            .apply_rgb_hardware(&profile.zones)
-            .map_err(zbus::fdo::Error::from)?;
-
-        Ok(format!("RGB profile '{}' applied", profile.name))
+        self.apply_rgb_profile_internal(&profile)
+            .map_err(zbus::fdo::Error::from)
     }
 
     /// Toggle RGB lighting state (RGB-04).
@@ -198,17 +230,7 @@ impl HardwareService {
         enabled: bool,
     ) -> zbus::fdo::Result<String> {
         self.authorize(&hdr).await?;
-        if enabled {
-            let white_zones = [crate::rgb::RgbColor::new(255, 255, 255); 4];
-            self.backend
-                .apply_rgb_hardware(&white_zones)
-                .map_err(zbus::fdo::Error::from)?;
-        } else {
-            let black = [crate::rgb::RgbColor::new(0, 0, 0); 4];
-            self.backend
-                .apply_rgb_hardware(&black)
-                .map_err(zbus::fdo::Error::from)?;
-        }
-        Ok(format!("RGB enabled set to {enabled}"))
+        self.set_rgb_enabled_internal(enabled)
+            .map_err(zbus::fdo::Error::from)
     }
 }

@@ -142,6 +142,18 @@ impl BenchmarkTimer {
 /// Standard Linux USER_HZ default (100 ticks per second).
 pub const USER_HZ: u64 = 100;
 
+/// Dynamically query system clock ticks per second via sysconf(_SC_CLK_TCK) on Linux.
+pub fn get_clock_ticks_per_second() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        if ticks > 0 {
+            return ticks as u64;
+        }
+    }
+    USER_HZ
+}
+
 /// CPU timing sample taken from `/proc/self/stat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuSample {
@@ -229,7 +241,7 @@ pub fn measure_stage(stage: &'static str, window: Duration) -> Result<StageRepor
     let cpu_end = read_cpu_sample()?;
 
     let memory = read_memory_metrics()?;
-    let cpu_percent = cpu_percent_between(&cpu_start, &cpu_end, USER_HZ);
+    let cpu_percent = cpu_percent_between(&cpu_start, &cpu_end, get_clock_ticks_per_second());
 
     Ok(StageReport {
         stage,
