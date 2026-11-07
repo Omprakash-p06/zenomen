@@ -53,7 +53,10 @@ pub enum ServiceRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServiceResponse {
     Capabilities(HardwareCapabilities),
-    FanStatus { mode: String, rpms: Vec<u32> },
+    FanStatus {
+        mode: String,
+        rpms: Vec<u32>,
+    },
     PowerProfiles(Vec<String>),
     PowerProfile(String),
     Preset(PresetResult),

@@ -2,3 +2,4 @@
 Name=com.zenomen.Hardware1
 Exec=/usr/bin/zenomen-hw
 User=root
+SystemdService=zenomen-hw.service

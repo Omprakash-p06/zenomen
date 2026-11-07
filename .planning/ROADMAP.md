@@ -144,25 +144,26 @@ Plans:
   6. A signed x64 Windows installer/uninstaller and the existing DEB/AppImage artifacts are produced; Windows 10 and Windows 11 build and test in CI (`WIN-12`…`WIN-14`, `REL-01`…`REL-04`).
   7. Default CI is deterministic and host-independent; hardware-dependent tests are opt-in (`TEST-01`…`TEST-04`).
 
-**Plans**: 12 plans
+**Plans**: 6 plans
 
 Plans:
-**Wave 0** *(governance)*
-- [ ] 06-01: Source-of-truth reconciliation — persisted Phase 6 context, requirement ID repair, traceability, ADR-002 supersession
-**Wave 1** *(independent foundations)*
-- [ ] 06-02: Shared platform contracts & Cargo seams — `PlatformService`, typed protocol, cfg gating, domain-contract honesty
-- [ ] 06-03: Linux security hardening — D-Bus/systemd activation, sandbox paths, daemon logging, installer validation, absolute binaries, polkit tests
-- [ ] 06-04: Linux correctness & performance remediation — every remaining `CONCERNS.md` item with regression tests
-- [ ] 06-06: Windows telemetry provider — Win32/DXGI/PDH/WMI CPU, RAM, GPU, battery, temps, fan RPM, identity
-- [ ] 06-10: GPUI-CE migration foundation — pinned deps, app shell, theme, components, chart primitives, `AppEvent` binding
-**Wave 2** *(dependent implementation)*
-- [ ] 06-05: Cross-platform service seam — one client/server contract backed by zbus on Linux and named pipes on Windows
-- [ ] 06-07: Windows hardware service — SCM lifecycle, secured named pipe, HP BIOS WMI mailbox, board profiles, read-back verification
-- [ ] 06-08: Windows desktop integration — tray, single instance, HKCU autostart, notifications, known-folder paths, logging
-- [ ] 06-11: GPUI-CE screens & parity — six screens, charts, hardware controls, accessibility; remove Slint after parity
-**Wave 3** *(release gates)*
-- [ ] 06-09: Windows packaging & dual-OS CI — signed MSI, service install/uninstall, upgrade/rollback, Win10+Win11 matrix
-- [ ] 06-12: Cross-platform regression & documentation sync — full matrix, resource budgets, codebase maps, test-count truth
+**Wave 1: Linux Concerns & Security Remediation**
+- [ ] 06-01: Linux security hardening & concerns remediation — D-Bus systemd activation, restricted paths, RGB non-destructive restore, drop(action_sender), benchmark clock tick, atomic diagnostics export
+
+**Wave 2: Cross-Platform Domain Contracts & Seams**
+- [ ] 06-02: Shared hardware provider contract, BatteryTelemetry separation, sysfs root isolation, fan driver filtering, dynamic history scaling, chart caching
+
+**Wave 3: Windows Native Telemetry Engine**
+- [ ] 06-03: Windows native telemetry engine — Win32, DXGI 1.3, PDH, and WMI for CPU, RAM, GPU, battery, temps, and fan RPM
+
+**Wave 4: Windows Hardware Control Service & Named-Pipe IPC**
+- [ ] 06-04: Windows hardware control service — SCM service, secured named-pipe IPC, HP BIOS WMI mailbox (`hpqBIntM`), board profile catalog
+
+**Wave 5: Windows Desktop Integration & UI Architecture**
+- [ ] 06-05: Windows desktop integration — single instance, system tray, HKCU autostart, notifications, known-folder paths, GPUI-CE migration path
+
+**Wave 6: Packaging, Full Testing Matrix, Documentation Deliverables & Final Acceptance Gates**
+- [ ] 06-06: Cross-platform packaging (WiX MSI, DEB, AppImage), dual-OS release gate matrix, architecture ADRs (ADR-001..004), and 14 final acceptance criteria
 
 ## Progress
 
@@ -176,4 +177,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Verified Control | 3/3 | Complete | 2026-11-02 |
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
-| 6. Cross-Platform Release | 0/5 | Planned | - |
+| 6. Cross-Platform Release | 0/6 | Planned | - |
