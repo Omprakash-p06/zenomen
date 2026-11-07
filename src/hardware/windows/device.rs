@@ -31,9 +31,12 @@ pub fn read_system_identity() -> (String, String) {
                         &mut buf_len,
                     );
                     RegCloseKey(hkey);
-                    if res == 0 && buf_len > 1 {
-                        let len = (buf_len as usize).saturating_sub(1);
-                        return std::str::from_utf8(&buf[..len])
+                    if res == 0 && buf_len > 0 {
+                        let nul_pos = buf[..buf_len as usize]
+                            .iter()
+                            .position(|&b| b == 0)
+                            .unwrap_or(buf_len as usize);
+                        return std::str::from_utf8(&buf[..nul_pos])
                             .ok()
                             .map(|s| s.trim().to_string());
                     }
@@ -93,9 +96,12 @@ pub fn read_board_id() -> Option<String> {
                     &mut buf_len,
                 );
                 RegCloseKey(hkey);
-                if res == 0 && buf_len > 1 {
-                    let len = (buf_len as usize).saturating_sub(1);
-                    return std::str::from_utf8(&buf[..len])
+                if res == 0 && buf_len > 0 {
+                    let nul_pos = buf[..buf_len as usize]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(buf_len as usize);
+                    return std::str::from_utf8(&buf[..nul_pos])
                         .ok()
                         .map(|s| s.trim().to_string());
                 }

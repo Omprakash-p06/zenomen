@@ -16,7 +16,8 @@ pub const PIPE_TIMEOUT_MS: u32 = 30000;
 pub fn create_server_pipe() -> Result<*mut std::ffi::c_void, HardwareControlError> {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, LocalFree};
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
         };
@@ -27,6 +28,17 @@ pub fn create_server_pipe() -> Result<*mut std::ffi::c_void, HardwareControlErro
         // Wide string for PIPE_NAME
         let pipe_name_wide: Vec<u16> = PIPE_NAME.encode_utf16().chain(std::iter::once(0)).collect();
 
+        let sd = crate::service::windows::security::create_pipe_security_descriptor();
+        let mut sa: SECURITY_ATTRIBUTES = unsafe { std::mem::zeroed() };
+        let sa_ptr = if let Some(p_sd) = sd {
+            sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
+            sa.lpSecurityDescriptor = p_sd;
+            sa.bInheritHandle = 0;
+            &mut sa as *mut _
+        } else {
+            std::ptr::null_mut()
+        };
+
         let handle = unsafe {
             CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
@@ -36,9 +48,15 @@ pub fn create_server_pipe() -> Result<*mut std::ffi::c_void, HardwareControlErro
                 PIPE_BUFFER_SIZE,
                 PIPE_BUFFER_SIZE,
                 PIPE_TIMEOUT_MS,
-                std::ptr::null(), // Default security attributes
+                sa_ptr,
             )
         };
+
+        if let Some(p_sd) = sd {
+            unsafe {
+                LocalFree(p_sd);
+            }
+        }
 
         if handle == INVALID_HANDLE_VALUE {
             return Err(HardwareControlError::IoError(format!(

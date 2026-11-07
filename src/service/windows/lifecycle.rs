@@ -2,8 +2,8 @@
 
 use crate::service::types::HardwareControlError;
 
-pub const SERVICE_NAME: &str = "ZenOmenHw";
-pub const SERVICE_DISPLAY_NAME: &str = "ZenOmen Hardware Service";
+pub const SERVICE_NAME: &str = "ZenOmenHardwareService";
+pub const SERVICE_DISPLAY_NAME: &str = "ZenOmen Hardware Control Service";
 
 /// Register zenomen-hw.exe as an SCM-managed Windows service (WIN-03).
 pub fn register_service() -> Result<(), HardwareControlError> {

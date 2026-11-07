@@ -100,16 +100,25 @@ impl GpuiApp {
                 }
                 self.cooling = CoolingScreen::from_state(&self.state);
             }
-            AppEvent::PowerProfileChanged(Ok(profile)) => {
-                self.state.active_power_profile = profile;
+            AppEvent::PowerProfileChanged(res) => {
+                match res {
+                    Ok(profile) => self.state.active_power_profile = profile,
+                    Err(e) => self.state.last_control_error = Some(e),
+                }
                 self.performance = PerformanceScreen::from_state(&self.state);
             }
-            AppEvent::RgbPowerChanged(Ok(power)) => {
-                self.state.rgb_power_enabled = power;
+            AppEvent::RgbPowerChanged(res) => {
+                match res {
+                    Ok(power) => self.state.rgb_power_enabled = power,
+                    Err(e) => self.state.last_control_error = Some(e),
+                }
                 self.lighting = LightingScreen::from_state(&self.state);
             }
-            AppEvent::RgbProfileApplied(Ok(profile)) => {
-                self.state.active_rgb_profile = Some(profile);
+            AppEvent::RgbProfileApplied(res) => {
+                match res {
+                    Ok(profile) => self.state.active_rgb_profile = Some(profile),
+                    Err(e) => self.state.last_control_error = Some(e),
+                }
                 self.lighting = LightingScreen::from_state(&self.state);
             }
             AppEvent::ServiceStatusChanged(status) => {

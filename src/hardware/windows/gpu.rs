@@ -63,6 +63,7 @@ const DXGI_ADAPTER_FLAG_SOFTWARE: u32 = 2;
 pub fn enumerate_gpu_adapters() -> Vec<GpuAdapterInfo> {
     #[cfg(windows)]
     {
+        use windows_sys::Win32::Foundation::FreeLibrary;
         use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
 
         type CreateDXGIFactory1Fn = unsafe extern "system" fn(
@@ -79,6 +80,7 @@ pub fn enumerate_gpu_adapters() -> Vec<GpuAdapterInfo> {
             let create_factory_ptr =
                 GetProcAddress(dxgi_dll, c"CreateDXGIFactory1".as_ptr() as *const u8);
             let Some(create_factory) = create_factory_ptr else {
+                FreeLibrary(dxgi_dll);
                 return Vec::new();
             };
 
@@ -96,6 +98,7 @@ pub fn enumerate_gpu_adapters() -> Vec<GpuAdapterInfo> {
                 &mut factory_ptr as *mut _,
             );
             if hr < 0 || factory_ptr.is_null() {
+                FreeLibrary(dxgi_dll);
                 return Vec::new();
             }
 
@@ -164,6 +167,7 @@ pub fn enumerate_gpu_adapters() -> Vec<GpuAdapterInfo> {
             }
 
             factory_release(factory_ptr);
+            FreeLibrary(dxgi_dll);
             adapters
         }
     }

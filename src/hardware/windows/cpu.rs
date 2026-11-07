@@ -141,12 +141,14 @@ pub fn read_cpu_frequency() -> Option<f32> {
         ) -> i32;
 
         unsafe {
+            use windows_sys::Win32::Foundation::FreeLibrary;
             use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
             let module = LoadLibraryA(c"powrprof.dll".as_ptr() as *const u8);
             if module.is_null() {
                 return None;
             }
 
+            let mut mhz = None;
             let func = GetProcAddress(module, c"CallNtPowerInformation".as_ptr() as *const u8);
             if let Some(call_power_info) = func {
                 let call: CallNtPowerInformationFn = std::mem::transmute(call_power_info);
@@ -159,11 +161,12 @@ pub fn read_cpu_frequency() -> Option<f32> {
                     std::mem::size_of::<ProcessorPowerInformation>() as u32,
                 );
                 if status >= 0 && info.current_mhz > 0 {
-                    return Some(info.current_mhz as f32);
+                    mhz = Some(info.current_mhz as f32);
                 }
             }
+            FreeLibrary(module);
+            mhz
         }
-        None
     }
     #[cfg(not(windows))]
     {
@@ -206,9 +209,12 @@ pub fn read_cpu_model() -> Option<String> {
                 );
                 RegCloseKey(hkey);
 
-                if query_res == 0 && buf_len > 1 {
-                    let len = (buf_len as usize).saturating_sub(1);
-                    if let Ok(name) = std::str::from_utf8(&buf[..len]) {
+                if query_res == 0 && buf_len > 0 {
+                    let nul_pos = buf[..buf_len as usize]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(buf_len as usize);
+                    if let Ok(name) = std::str::from_utf8(&buf[..nul_pos]) {
                         let trimmed = name.trim();
                         if !trimmed.is_empty() {
                             return Some(trimmed.to_string());

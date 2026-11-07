@@ -69,6 +69,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Wmi",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_System_Com",

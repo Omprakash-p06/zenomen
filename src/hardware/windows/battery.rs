@@ -16,7 +16,11 @@ pub fn parse_battery_status(flag: u8, percent: u8, life_time: u32) -> Option<Bat
 
     let charge_percent = if percent <= 100 { Some(percent) } else { None };
 
-    let charging = Some((flag & 8) != 0);
+    let charging = if flag != 255 {
+        Some((flag & 8) != 0)
+    } else {
+        None
+    };
 
     let remaining_seconds = if life_time != 0xFFFFFFFF {
         Some(life_time)

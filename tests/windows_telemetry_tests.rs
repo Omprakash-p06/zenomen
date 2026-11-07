@@ -112,6 +112,11 @@ fn test_battery_status_ac_online_and_charging() {
     let unknown_pct = parse_battery_status(0, 255, 3600).expect("battery unknown percent");
     assert_eq!(unknown_pct.charge_percent, None);
     assert_eq!(unknown_pct.remaining_seconds, Some(3600));
+
+    // Unknown flag (255) returns charging as None, not Some(true)
+    let unknown_flag =
+        parse_battery_status(255, 50, 3600).expect("battery present with unknown flag");
+    assert_eq!(unknown_flag.charging, None);
 }
 
 #[test]

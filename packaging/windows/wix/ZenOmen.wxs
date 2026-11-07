@@ -9,6 +9,9 @@
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
 
+    <Icon Id="zenomen.ico" SourceFile="data/icons/zenomen.ico" />
+    <Property Id="ARPPRODUCTICON" Value="zenomen.ico" />
+
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="ZenOmen">
         <Component Id="ZenOmenGui" Guid="8B3F2E1A-7C4D-4E9A-8F2B-1D3C5E7A9B01">

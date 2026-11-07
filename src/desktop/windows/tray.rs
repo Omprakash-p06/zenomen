@@ -19,9 +19,9 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, IDI_APPLICATION,
-    LoadIconW, MF_SEPARATOR, MF_STRING, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-    SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateMessage, WM_CLOSE, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+    LoadIconW, MF_SEPARATOR, MF_STRING, PostMessageW, PostQuitMessage, RegisterClassW,
+    SetForegroundWindow, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenu, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
 };
 
 pub const WM_TRAY_CALLBACK: u32 = 0x0400 + 101;
@@ -76,88 +76,95 @@ pub fn register_tray_icon(
 ) -> Result<TrayHandle, DesktopError> {
     #[cfg(target_os = "windows")]
     {
-        let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
-        let class_name: Vec<u16> = format!("{TRAY_CLASS_NAME}\0").encode_utf16().collect();
+        let (init_tx, init_rx) = mpsc::channel();
 
-        let wnd_class = WNDCLASSW {
-            style: 0,
-            lpfnWndProc: Some(tray_window_proc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: hinstance,
-            hIcon: unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) },
-            hCursor: std::ptr::null_mut(),
-            hbrBackground: std::ptr::null_mut(),
-            lpszMenuName: std::ptr::null(),
-            lpszClassName: class_name.as_ptr(),
-        };
-
-        unsafe {
-            RegisterClassW(&wnd_class);
-        }
-
-        let hwnd = unsafe {
-            CreateWindowExW(
-                0,
-                class_name.as_ptr(),
-                class_name.as_ptr(),
-                0,
-                0,
-                0,
-                0,
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                hinstance,
-                std::ptr::null_mut(),
-            )
-        };
-
-        if hwnd.is_null() {
-            return Err(DesktopError::Win32 {
-                code: unsafe { windows_sys::Win32::Foundation::GetLastError() },
-                message: "Failed to create hidden tray message window".to_string(),
-            });
-        }
-
-        // Store action_sender pointer in GWLP_USERDATA
-        let sender_box = Box::new(action_sender);
-        let sender_raw = Box::into_raw(sender_box);
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, sender_raw as isize);
-        }
-
-        let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = 1;
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        nid.uCallbackMessage = WM_TRAY_CALLBACK;
-        nid.hIcon = unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) };
-
-        let tip = "ZenOmen - Hardware Control";
-        let tip_utf16: Vec<u16> = tip.encode_utf16().collect();
-        let copy_len = tip_utf16.len().min(nid.szTip.len() - 1);
-        nid.szTip[..copy_len].copy_from_slice(&tip_utf16[..copy_len]);
-
-        let success = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
-        if success == 0 {
-            unsafe {
-                let _ = Box::from_raw(sender_raw);
-                DestroyWindow(hwnd);
-            }
-            return Err(DesktopError::Win32 {
-                code: unsafe { windows_sys::Win32::Foundation::GetLastError() },
-                message: "Shell_NotifyIconW NIM_ADD failed".to_string(),
-            });
-        }
-
-        // Spawn a background thread to service Win32 window messages for the tray icon
-        let hwnd_raw = hwnd as usize;
+        // Spawn a background thread that creates the window and services its Win32 message loop.
+        // In Win32, window message queues are strictly thread-affine (CR-01).
         std::thread::Builder::new()
             .name("zenomen-win32-tray-pump".to_string())
             .spawn(move || {
-                let hwnd = hwnd_raw as HWND;
+                let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
+                let class_name: Vec<u16> = format!("{TRAY_CLASS_NAME}\\0").encode_utf16().collect();
+
+                let wnd_class = WNDCLASSW {
+                    style: 0,
+                    lpfnWndProc: Some(tray_window_proc),
+                    cbClsExtra: 0,
+                    cbWndExtra: 0,
+                    hInstance: hinstance,
+                    hIcon: unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) },
+                    hCursor: std::ptr::null_mut(),
+                    hbrBackground: std::ptr::null_mut(),
+                    lpszMenuName: std::ptr::null(),
+                    lpszClassName: class_name.as_ptr(),
+                };
+
+                unsafe {
+                    RegisterClassW(&wnd_class);
+                }
+
+                let hwnd = unsafe {
+                    CreateWindowExW(
+                        0,
+                        class_name.as_ptr(),
+                        class_name.as_ptr(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        hinstance,
+                        std::ptr::null_mut(),
+                    )
+                };
+
+                if hwnd.is_null() {
+                    let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+                    let _ = init_tx.send(Err(DesktopError::Win32 {
+                        code,
+                        message: "Failed to create hidden tray message window".to_string(),
+                    }));
+                    return;
+                }
+
+                // Store action_sender pointer in GWLP_USERDATA
+                let sender_box = Box::new(action_sender);
+                let sender_raw = Box::into_raw(sender_box);
+                unsafe {
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, sender_raw as isize);
+                }
+
+                let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
+                nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+                nid.hWnd = hwnd;
+                nid.uID = 1;
+                nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+                nid.uCallbackMessage = WM_TRAY_CALLBACK;
+                nid.hIcon = unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) };
+
+                let tip = "ZenOmen - Hardware Control";
+                let tip_utf16: Vec<u16> = tip.encode_utf16().collect();
+                let copy_len = tip_utf16.len().min(nid.szTip.len() - 1);
+                nid.szTip[..copy_len].copy_from_slice(&tip_utf16[..copy_len]);
+
+                let success = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
+                if success == 0 {
+                    let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+                    unsafe {
+                        let _ = Box::from_raw(sender_raw);
+                        DestroyWindow(hwnd);
+                    }
+                    let _ = init_tx.send(Err(DesktopError::Win32 {
+                        code,
+                        message: "Shell_NotifyIconW NIM_ADD failed".to_string(),
+                    }));
+                    return;
+                }
+
+                let _ = init_tx.send(Ok(TrayHandle { nid, hwnd }));
+
                 let mut msg = unsafe { std::mem::zeroed() };
                 while unsafe { GetMessageW(&mut msg, hwnd, 0, 0) } > 0 {
                     unsafe {
@@ -170,7 +177,9 @@ pub fn register_tray_icon(
                 DesktopError::Other(format!("Failed to spawn tray message loop thread: {e}"))
             })?;
 
-        Ok(TrayHandle { nid, hwnd })
+        init_rx.recv().map_err(|_| {
+            DesktopError::Other("Tray initialization thread disconnected unexpectedly".to_string())
+        })?
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -186,12 +195,7 @@ pub fn remove_tray_icon(handle: &TrayHandle) -> Result<(), DesktopError> {
         unsafe {
             Shell_NotifyIconW(NIM_DELETE, &handle.nid);
             if !handle.hwnd.is_null() {
-                let user_data = GetWindowLongPtrW(handle.hwnd, GWLP_USERDATA);
-                if user_data != 0 {
-                    let _ = Box::from_raw(user_data as *mut mpsc::SyncSender<DesktopAction>);
-                    SetWindowLongPtrW(handle.hwnd, GWLP_USERDATA, 0);
-                }
-                DestroyWindow(handle.hwnd);
+                PostMessageW(handle.hwnd, WM_CLOSE, 0, 0);
             }
         }
         Ok(())

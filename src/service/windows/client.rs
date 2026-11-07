@@ -22,30 +22,19 @@ impl WindowsServiceClient {
         #[cfg(windows)]
         {
             use windows_sys::Win32::Foundation::{
-                CloseHandle, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+                ERROR_PIPE_BUSY, ERROR_SEM_TIMEOUT, GetLastError,
             };
-            use windows_sys::Win32::Storage::FileSystem::{
-                CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-            };
+            use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 
             let pipe_name_wide: Vec<u16> =
                 PIPE_NAME.encode_utf16().chain(std::iter::once(0)).collect();
 
             unsafe {
-                let handle = CreateFileW(
-                    pipe_name_wide.as_ptr(),
-                    GENERIC_READ | GENERIC_WRITE,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    std::ptr::null(),
-                    OPEN_EXISTING,
-                    0,
-                    std::ptr::null_mut(),
-                );
-                if handle != INVALID_HANDLE_VALUE {
-                    CloseHandle(handle);
+                if WaitNamedPipeW(pipe_name_wide.as_ptr(), 0) != 0 {
                     true
                 } else {
-                    false
+                    let err = GetLastError();
+                    err == ERROR_PIPE_BUSY || err == ERROR_SEM_TIMEOUT
                 }
             }
         }

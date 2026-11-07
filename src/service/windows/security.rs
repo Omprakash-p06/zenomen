@@ -74,3 +74,36 @@ pub fn verify_client_session(
         Ok(())
     }
 }
+
+/// Canonical Discretionary Access Control List (DACL) SDDL string for ZenOmen named pipe:
+/// - (A;;GA;;;SY) : Generic All for NT AUTHORITY\SYSTEM
+/// - (A;;GA;;;BA) : Generic All for BUILTIN\Administrators
+/// - (A;;GRGW;;;IU) : Generic Read + Write for NT AUTHORITY\Interactive Users
+pub const PIPE_SDDL: &str = "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
+
+/// Create a SECURITY_ATTRIBUTES struct with explicit DACL restricting named pipe access.
+#[cfg(windows)]
+pub fn create_pipe_security_descriptor() -> Option<*mut std::ffi::c_void> {
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::PSECURITY_DESCRIPTOR;
+
+    let sddl_wide: Vec<u16> = PIPE_SDDL.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut p_sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+
+    let success = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut p_sd,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if success != 0 && !p_sd.is_null() {
+        Some(p_sd)
+    } else {
+        None
+    }
+}
