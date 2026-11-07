@@ -17,6 +17,12 @@ use zenomen::desktop::{
 use zenomen::hardware::{HardwareProvider, MockHardware};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Install logging before anything that can log. A GUI launched from a
+    // desktop entry has no terminal, so stderr alone leaves no evidence; the
+    // file layer is what makes a support report possible. Held for the process
+    // lifetime so the non-blocking writer flushes on exit.
+    let _logging_guard = zenomen::logging::init();
+
     // Ensure UTF-8 locale for xkbcommon Compose parsing when host locale lacks charset suffix
     #[cfg(target_os = "linux")]
     if std::env::var("LC_CTYPE").is_err()
@@ -84,9 +90,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
-
-    // `RUST_LOG` selects verbosity; without it the default filter is used.
-    tracing_subscriber::fmt::init();
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting ZenOmen");
     log_benchmark("cold-start");
@@ -189,9 +192,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let scenario_str = mock.scenario().name();
         (mock, Some(scenario_str), None)
     } else {
-        let linux = Arc::new(zenomen::hardware::LinuxHardwareProvider::new());
-        let reg = Arc::clone(linux.registry());
-        (linux, None, Some(reg))
+        #[cfg(target_os = "linux")]
+        {
+            let linux = Arc::new(zenomen::hardware::LinuxHardwareProvider::new());
+            let reg = Arc::clone(linux.registry());
+            (linux, None, Some(reg))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // No backend yet: report nothing instead of reaching for sysfs.
+            (
+                Arc::new(zenomen::hardware::UnavailableHardwareProvider::new())
+                    as Arc<dyn HardwareProvider>,
+                None,
+                None,
+            )
+        }
     };
 
     if let Some(scenario) = scenario_name {
@@ -199,9 +215,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_provider_mode("mock".into());
         app.set_provider_label("Mock provider");
     } else {
-        tracing::info!("linux hardware provider initialized");
-        ui.set_provider_mode("linux".into());
-        app.set_provider_label("Linux provider");
+        #[cfg(target_os = "linux")]
+        {
+            tracing::info!("linux hardware provider initialized");
+            ui.set_provider_mode("linux".into());
+            app.set_provider_label("Linux provider");
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            tracing::warn!("no hardware provider is implemented for this platform");
+            ui.set_provider_mode("unavailable".into());
+            app.set_provider_label("No hardware provider");
+        }
     }
 
     if let Some(reg) = registry_opt {

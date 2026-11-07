@@ -128,6 +128,12 @@ pub enum AppEvent {
     TelemetrySamplingFailed(String),
     /// Telemetry history window size was changed (MON-11).
     HistoryWindowChanged(usize),
+    /// The user asked for a fan mode; the verified write has not finished yet.
+    ///
+    /// Emitted before the D-Bus call so the UI can show that a write is in
+    /// flight for the duration of the Polkit prompt, and cleared by
+    /// [`AppEvent::FanModeChanged`] when the read-back settles.
+    FanModeRequested(String),
     /// Fan mode change completed with confirmed mode or error.
     FanModeChanged(Result<String, String>),
     /// Power profile change completed with confirmed profile or error.

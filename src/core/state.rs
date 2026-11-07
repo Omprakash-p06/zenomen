@@ -36,7 +36,7 @@ pub struct AppState {
     pub capabilities: HardwareCapabilities,
     /// Most recent sample, or `None` before the first one arrives. `None` is
     /// what makes the strip read "waiting for first reading" instead of a
-    /// fabricated "0 of 12 sensors".
+    /// fabricated "0 of 11 sensors".
     pub latest_snapshot: Option<TelemetrySnapshot>,
     /// Samples retained per chart. Bounded by construction (MON-11).
     pub history_window: usize,
@@ -159,6 +159,12 @@ impl AppState {
                     ram_sparkline,
                 };
             }
+            AppEvent::FanModeRequested(mode) => {
+                // In flight, not yet verified: the status copy says so until
+                // `FanModeChanged` arrives with the read-back result.
+                self.pending_fan_mode = Some(mode.clone());
+                self.last_control_error = None;
+            }
             AppEvent::FanModeChanged(res) => {
                 self.pending_fan_mode = None;
                 match res {
@@ -276,7 +282,7 @@ impl AppState {
                 TelemetrySnapshot::EXPECTED_SENSOR_COUNT
             ),
             // No sample yet, or a sample that carried nothing: both are "not
-            // measured", and neither may be rendered as "0 of 12".
+            // measured", and neither may be rendered as "0 of 11".
             _ => format!("{label} · waiting for first reading"),
         }
     }
@@ -359,14 +365,14 @@ mod tests {
     }
 
     #[test]
-    fn a_full_sample_reports_twelve_of_twelve() {
+    fn a_full_sample_reports_every_expected_sensor() {
         let mut state = AppState::default();
         state.apply(&AppEvent::CapabilitiesLoaded(fully_capable()));
         state.apply(&AppEvent::TelemetryUpdated(full_snapshot()));
 
         assert_eq!(
             state.status_text(),
-            "Mock provider · 12 of 12 sensors reported"
+            "Mock provider · 11 of 11 sensors reported"
         );
         assert!(!state.is_degraded());
     }
@@ -382,7 +388,7 @@ mod tests {
 
         assert_eq!(
             state.status_text(),
-            "Mock provider · 11 of 12 sensors reported"
+            "Mock provider · 10 of 11 sensors reported"
         );
         assert!(state.is_degraded());
     }
@@ -431,7 +437,7 @@ mod tests {
         state.apply(&AppEvent::TelemetryUpdated(full_snapshot()));
         assert_eq!(
             state.status_text(),
-            "Linux provider · 12 of 12 sensors reported"
+            "Linux provider · 11 of 11 sensors reported"
         );
 
         state.apply(&AppEvent::TelemetrySamplingFailed("sysfs offline".into()));

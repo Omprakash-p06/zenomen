@@ -116,6 +116,7 @@ fn collect_diagnostics_with_mock_roots() {
         fan_control_path: Some(PathBuf::from("/sys/class/hwmon/hwmon2/pwm1_enable")),
         has_platform_profiles: true,
         discovered_devices: vec!["k10temp".to_string(), "hp".to_string()],
+        has_battery: true,
     };
 
     let report = collect_diagnostics_from_roots(
