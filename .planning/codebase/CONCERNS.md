@@ -1,274 +1,348 @@
----
-last_mapped_commit: 4691619f4e741bd5944f2085fa455b135ff873af
-last_mapped_at: 2026-11-08
----
 <!-- refreshed: 2026-11-08 -->
-
 # Codebase Concerns
 
 **Analysis Date:** 2026-11-08
-**Branch:** `fix/zenomen-reliability`
-**HEAD Commit:** `4691619f4e741bd5944f2085fa455b135ff873af`
 
-**Validation basis:** Static review of Rust sources, data files, build scripts, tests, and architecture documentation at commit `4691619f4e741bd5944f2085fa455b135ff873af`. Test coverage verified across 18 test suites (154 tests passing: 40 unit, 114 integration) including Linux sysfs/procfs providers, Windows PDH/WMI/registry providers, Windows named-pipe service RPC, and the GPUI-CE architecture scaffold.
+Scope: whole repository, verified against source on 2026-11-08. Severity reflects user-visible risk, not effort.
 
----
+## Priority Summary
 
-## Recently Resolved Concerns
-
-The reliability and platform hardening updates on branch `fix/zenomen-reliability` across Phase 6 and recent reliability commits (`464de29` through `4691619`) resolved critical architectural, concurrency, platform-specific stability, and telemetry honesty concerns:
-
-| Resolved Concern | Severity / ID | Location | Resolution Summary |
-|---|---|---|---|
-| **Windows SCM Service Dispatcher** | Critical (`WIN-03`) | `src/service/windows/lifecycle.rs:140-310`, `src/bin/zenomen-hw.rs:27-38` | Implemented full Windows Service Control Manager (SCM) integration using `StartServiceCtrlDispatcherW`, `service_main`, `RegisterServiceCtrlHandlerExW`, and `report_service_status` (`SERVICE_START_PENDING`, `SERVICE_RUNNING`, `SERVICE_STOP_PENDING`, `SERVICE_STOPPED`). Added `--console` / `-c` CLI options for standalone execution and automatic fallback when invoked outside the service controller (`ERROR_FAILED_SERVICE_CONTROLLER_CONNECT`). |
-| **Windows Named Pipe Server & Synchronous I/O** | Critical (`WIN-03`) | `src/service/windows/server.rs:115-280`, `src/service/windows/pipe.rs:45-55` | Implemented the production named-pipe server connection and request handling loop in `run_pipe_server`. Removed `FILE_FLAG_OVERLAPPED` from `CreateNamedPipeW` in `pipe.rs` to guarantee synchronous, blocking I/O compatibility. Integrated active session verification (`verify_client_session`) via `ImpersonateNamedPipeClient` and `WTSGetActiveConsoleSessionId` to reject cross-session and RDP requests before processing frames. |
-| **Hardware Mutation Safety & Board Validation** | Critical (`WIN-07`) | `src/service/windows/profiles.rs:25-75`, `src/service/windows/authorization.rs:20-135` | Introduced `BoardValidation` evidence struct tracking granular write verification flags (`fan_write_verified`, `power_write_verified`, `rgb_write_verified`). Gated all hardware mutations (fan modes, power profiles, presets, RGB lighting) in `authorize_mutation` until an explicit validation record matching `board_id` and `bios_version` is provided, restricting unvalidated motherboards strictly to safe read-only monitoring. |
-| **HP WMI Simulation Removal & Honest State** | Warning (`WIN-04`) | `src/service/windows/hp_wmi.rs:40-120` | Replaced simulated 2400/2500 fan RPM values and simulated sleep loops with honest status reporting and real connection verification in `hp_wmi.rs`. Fan status reports `("auto", Vec::new())` when physical tachometers are unmeasured rather than fabricating fake RPM values. |
-| **Windows GPU Utilization Telemetry** | Warning (`WIN-01`) | `src/hardware/windows/gpu.rs:190-280`, `src/hardware/windows/provider.rs:140-165` | Implemented persistent `GpuPerformanceCollector` using Windows Performance Data Helper (PDH) querying `\GPU Engine(*)\Utilization Percentage` via `PdhOpenQueryW`, `PdhAddEnglishCounterW`, and `PdhGetFormattedCounterValue` with `PDH_FMT_DOUBLE`. Establishes delta baselines on initialization and handles query failures cleanly. |
-| **Desktop Notification Window Anchor** | Warning (`SYS-01`) | `src/desktop/windows/notifications.rs:15-50`, `src/desktop/windows/tray.rs:60-75` | Added `show_notification_with_hwnd` binding `NOTIFYICONDATAW.hWnd` to the active tray window handle (`TrayHandle.hwnd`), resolving notification drops caused by zeroed `hWnd` when invoking `Shell_NotifyIconW(NIM_MODIFY)`. Provided convenience method `TrayHandle::show_notification`. |
-| **Telemetry Capability Honesty** | Info (`MON-01`, `ARCH-03`) | `src/hardware/windows/sensors.rs:10-85` | Enforced honest sensor absence policy across Windows telemetry. Added `TemperatureSource` enum; CPU and GPU temperatures report honest `None` (categorized with `TemperatureSource::Unavailable`) because unprivileged Windows lacks thermal APIs without ring-0 drivers; unmeasured fans return an empty vector rather than dummy tachometer counts. |
-| **Win32 System Tray Thread Affinity** | Critical (`CR-01`) | `src/desktop/windows/tray.rs:80-185` | In Win32, message queues are strictly thread-affine; calling `CreateWindowExW` on the main thread while running `GetMessageW` on a background pump thread caused `ERROR_INVALID_WINDOW_HANDLE` (1400) and dropped tray events. Resolved by creating the hidden message window (`ZenOmenTrayMsgWindow`) directly inside the background pump thread (`zenomen-win32-tray-pump`), synchronizing `HWND` back via an `mpsc` channel, and dispatching `PostMessageW(hwnd, WM_CLOSE, 0, 0)` during teardown. |
-| **Non-Intrusive Named Pipe Probing** | Warning (`WARN-01`) | `src/service/windows/client.rs:20-45` | Replaced intrusive connection probe (`CreateFileW` followed by immediate `CloseHandle`), which consumed server connection slots and generated spurious `ERROR_BROKEN_PIPE` disconnect errors, with non-intrusive `WaitNamedPipeW` (500ms timeout / 0ms probe), checking for existence without establishing an incomplete duplex connection. |
-| **Dynamic Module Leak Prevention** | Warning (`WARN-02`) | `src/hardware/windows/cpu.rs:145-175`, `src/hardware/windows/gpu.rs:65-85` | Addressed kernel handle and module reference counter growth caused by calling `LoadLibraryA` on `powrprof.dll` and `dxgi.dll` during 1 Hz telemetry sampling without freeing. Resolved with deterministic `FreeLibrary(module)` calls, preventing memory pressure during continuous background tray operation. |
-| **Windows Service Name Consistency** | Warning (`WARN-03`) | `src/service/windows/lifecycle.rs:6-10`, `packaging/windows/wix/ZenOmen.wxs:28-36` | Aligned `SERVICE_NAME` in `lifecycle.rs` from `"ZenOmenHw"` to `"ZenOmenHardwareService"`, matching the WiX MSI installer service specification and eliminating SCM query mismatches during uninstallation or CLI service control. |
-| **WiX Installer Desktop & ARP Icon** | Warning (`WARN-04`) | `packaging/windows/ZenOmen.wxs:18-28`, `packaging/windows/wix/ZenOmen.wxs:18-28` | Added top-level `<Icon Id="zenomen.ico" SourceFile="data/icons/zenomen.ico" />` and `<Property Id="ARPPRODUCTICON" Value="zenomen.ico" />` to WiX manifests, resolving compiler identifier errors during `wix build` and ensuring correct application icons in Windows Add/Remove Programs. |
-| **Named Pipe Security & Explicit DACL** | Warning (`WARN-05`) | `src/service/windows/pipe.rs:35-55`, `src/service/windows/security.rs:65-102` | Replaced default `NULL` security attributes with an explicit SDDL Discretionary Access Control List: `D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)` via `ConvertStringSecurityDescriptorToSecurityDescriptorW`. Enforces that only Local System, Administrators, and Interactive Users can access the privileged named pipe (`\\.\pipe\ZenOmen.Hardware.v1`). |
-| **GPUI Event Channel Drain** | Warning (`WARN-06`) | `src/ui/app.rs:88-125` | Resolved event-loop error dropping in GPUI-CE event bridge. Pattern matching in `AppEvent` processing now explicitly handles both `Ok` and `Err` arms for fan mode, power profile, and RGB changes, properly setting `self.state.last_control_error` and preventing event channel starvation. |
-| **Windows Telemetry Boundary Guards** | Info (`INFO-01`, `INFO-02`) | `src/hardware/windows/battery.rs:18-26`, `src/hardware/windows/device.rs:32-38, 75-81` | Guarded against false-positive charging states when the battery flag is 255 (unknown status), and implemented safe NUL-delimiter position scanning (`.iter().position(|&b| b == 0)`) for registry string reading to avoid one-byte truncation. |
-| **NVIDIA CLI Overhead & Cold-Start Latency** | Linux Performance | `src/hardware/linux/gpu.rs:180-265`, `src/hardware/linux/provider.rs:27-172` | Replaced per-tick process execution with a persistent background `NvidiaSampler` thread (`zenomen-nv-watch`). Ticks query a bounded sync channel (`capacity=1`) that coalesces rapid requests. Telemetry is cached with a 3-second freshness window, returning `None` instead of stale or fabricated data if the dGPU is suspended in D3cold. |
-| **Battery Capability Dynamic Scanning** | Linux Hardening | `src/hardware/registry.rs:27-77, 146-168` | Eliminated hardcoded battery capability flags. `SensorRegistry::scan_roots` performs dynamic sysfs battery presence scanning via `scan_battery_present()`, discovering `/sys/class/power_supply/BAT*` devices with readable `capacity` files. Correctly reports `battery_metrics = has_battery`. |
-| **Worker Mutation Concurrency & Timeout** | Concurrency / Safety | `src/core/worker.rs:26-30, 390-465` | Implemented `InFlightGuard(Arc<AtomicBool>)` in `execute_mutating_action_with_timeout`. Only one hardware mutation is permitted in flight; concurrent requests are rejected immediately. Even if the caller times out waiting on authorization or hardware I/O, the RAII guard remains held in the background RPC worker until physical completion or unwinding. |
-| **Logging & Diagnostics in Headless/GUI** | Diagnostics | `src/logging.rs:1-103`, `src/main.rs:24`, `src/bin/zenomen-hw.rs:13` | Replaced ad-hoc stdout/stderr logging with `zenomen::logging::init()`. Configures a non-blocking daily rotating file appender targeting the platform state directory (`~/.local/state/zenomen/logs` or `%LOCALAPPDATA%\zenomen\logs`). Degrades gracefully to stderr/journald if directory creation fails. |
-| **Unsupported Platform Compile Failures** | Cross-Platform | `src/hardware/unavailable.rs:1-52`, `src/hardware/mod.rs:15-20` | Introduced `UnavailableHardwareProvider` for non-Linux/non-Windows fallback targets (`#[cfg(not(any(target_os = "linux", target_os = "windows")))]`). Reports honest non-implemented errors on sample attempts, enabling clean cross-compilation across platforms. |
-
----
-
-## Active & Future Concerns (Prioritized)
-
-### 1. High Priority: Hardware-in-the-Loop Physical Validation on HP OMEN Laptops (Windows 10/11)
-- **Status:** Software Safety Gate Active (`BoardValidation`); Physical Hardware-in-the-Loop Validation Pending
-- **Impact Area:** `src/service/windows/hp_wmi.rs`, `src/service/windows/profiles.rs`, `docs/testing/HP_BOARD_VALIDATION.md`
-- **Description:** ZenOmen commands Embedded Controller (EC) fan speeds, power presets, and 4-zone lighting via ACPI WMI execution (`hpqBIntM`, GUID `{5FB7F034-2C63-45E9-BE91-3D44E2C707E4}`). The introduction of `BoardValidation` in `profiles.rs` and enforcement in `authorization.rs` ensures unverified motherboards are strictly locked to read-only monitoring, preventing dangerous blind writes. However, physical testing across representative HP OMEN and Victus chassis (15, 16, 17, and Transcend models) is required to:
-  1. Verify ACPI WMI buffer byte packing (`0x20008` query / `0x20009` write) against real HP UEFI BIOS revisions.
-  2. Confirm fast command response times (<500ms) without EC bus contention under heavy CPU/GPU thermal load.
-  3. Validate and ratify board profiles (`BoardValidation::new_verified`) following the protocol in `docs/testing/HP_BOARD_VALIDATION.md`.
-- **Mitigation / Next Step:** Execute Phase 4 of `HP_BOARD_VALIDATION.md` on physical test laptops running Windows 10 22H2 and Windows 11 23H2/24H2. `BoardValidation::new_unvalidated` baseline keeps all mutation requests safely blocked until verified.
-
-### 2. Medium Priority: Windows Binary and MSI Code Signing (EV Cert / Azure Trusted Signing)
-- **Status:** Unsigned Builds in CI
-- **Impact Area:** `packaging/windows/ZenOmen.wxs`, `.github/workflows/release.yml`
-- **Description:** Windows SmartScreen and Defender vigorously flag unsigned `.exe` and `.msi` installers, particularly those installing background Windows Services running as `LocalSystem`.
-- **Impact:** Users downloading ZenOmen on Windows 10/11 encounter prominent SmartScreen warnings requiring manual override ("Run anyway"), reducing user trust and complicating automated deployment.
-- **Mitigation / Next Step:** Procure an Authenticode Extended Validation (EV) code-signing certificate or integrate Microsoft Azure Trusted Signing into `.github/workflows/release.yml` to sign `zenomen.exe`, `zenomen-hw.exe`, and `ZenOmen.msi`.
-
-### 3. Medium Priority: GPUI-CE UI Migration & Slint Retirement Roadmap
-- **Status:** Architecture Scaffold Complete; Slint is Active v1 GUI (ADR-001)
-- **Impact Area:** `src/ui/app.rs`, `src/ui/screens/`, `Cargo.toml`, `docs/decisions/ADR-001-ui-framework.md`
-- **Description:** Slint 1.18.1 remains the active production GUI engine (`default = ["ui"]`). The GPUI-CE scaffold (`src/ui/`) provides a decoupled presentation architecture via unidirectional `AppCommand`/`AppEvent` messaging per ADR-001 and ADR-004. Retiring Slint requires bringing GPUI-CE to complete feature parity:
-  1. Wiring complex interactive widgets: multi-node custom fan curve editor, real-time SVG telemetry canvas, and RGB zone color picker.
-  2. Native system tray context menu integration on both Windows (`Shell_NotifyIconW`) and Linux (`ksni` / StatusNotifierItem).
-  3. Window vibrancy/acrylic effects support on Windows 11.
-  4. Memory consumption validation against the <= 40 MB RSS budget before toggling default feature flags.
-- **Mitigation / Next Step:** Complete widget migration in subsequent development phases, validating memory consumption against the <= 40 MB RSS budget before toggling default feature flags.
-
-### 4. Low Priority: D-Bus Systemd Daemon Sandboxing on Linux
-- **Status:** Operational with Unit Activation (`SystemdService=zenomen-hw.service`)
-- **Impact Area:** `data/dbus/com.zenomen.Hardware1.service`, `data/systemd/zenomen-hw.service`
-- **Description:** Linux systemd activation is configured with `SystemdService=zenomen-hw.service`, ensuring activation requests start under systemd unit sandboxing (`ProtectSystem=strict`, `NoNewPrivileges=true`, `ProtectHome=true`).
-- **Mitigation / Next Step:** Maintain and audit fine-grained `ReadWritePaths` across new kernel versions, keeping paths strictly bounded to required sysfs nodes (`pwm1_enable`, `platform_profile`, `rgb_zones`).
+| # | Concern | Severity | Primary file |
+|---|---------|----------|--------------|
+| 1 | Windows hardware control is simulated, not implemented, and reports success | Critical | `src/service/windows/hp_wmi.rs` |
+| 2 | Windows GUI hangs on exit when `close_to_tray = false` (leaked channel sender) | High | `src/desktop/windows/tray.rs`, `src/main.rs` |
+| 3 | Hardware mutations can leak a thread + pipe handle forever after timeout | High | `src/core/worker.rs`, `src/service/windows/client.rs` |
+| 4 | Autostart toggle on Windows writes an XDG file and never touches HKCU Run | High | `src/core/worker.rs` |
+| 5 | Root install copies `zenomen-hw` from a user-writable location without verification | High | `src/desktop/system_integration.rs` |
+| 6 | Named-pipe DACL admits every interactive local user; session ID is the only gate | High | `src/service/windows/security.rs` |
+| 7 | Blocking `ConnectNamedPipe` + 30 s timeout makes service shutdown hang-prone | Medium | `src/service/windows/server.rs`, `lifecycle.rs` |
+| 8 | Two incompatible wire protocols; the versioned one is unused | Medium | `src/service/protocol.rs`, `src/service/windows/protocol.rs` |
+| 9 | Diagnostics fabricate OS, authorization, and BIOS values | Medium | `src/core/diagnostics.rs`, `src/hardware/windows/device.rs` |
+| 10 | Windows tests assert the simulated success path as correct behavior | Medium | `tests/windows_service_tests.rs` |
 
 ---
 
 ## Tech Debt
 
-**History-window unit mismatch (UI says seconds, worker stores samples):**
-- **Issue:** The settings UI labels chart history options as `30s`, `60s`, `120s`, `300s` and the callback parameter is named `seconds`, but `SetHistoryWindow` is treated as a raw sample count in `HardwareWorker`. The displayed window duration changes whenever `polling_interval_ms` changes.
-- **Files:** `ui/screens/settings.slint:348`, `src/app.rs:120-124`, `src/core/worker.rs:156-172, 190-201`
-- **Impact:** At the default 1s interval, "120s" holds 120 samples (~120s), but at a 2s interval it holds 240s of data. Persisted config values remain ambiguous.
-- **Fix approach:** Convert seconds to samples at the command boundary using the active `sampling_interval` (`samples = seconds / interval`), or store a duration in config and recompute capacity when the polling interval changes.
+**Windows hardware control is a simulation layer:**
+- Issue: Every Windows hardware operation is faked. `connect_hp_wmi()` returns `Ok(HpWmiConnection { is_available: true })` without opening `ROOT\WMI` or checking `hpqBIntM` (`src/service/windows/hp_wmi.rs:33-45`). Capabilities are unconditionally reported as fully present (`src/service/windows/hp_wmi.rs:48-68`). Fan mode and power profile are stored in process-local statics (`src/service/windows/hp_wmi.rs:70-71`) and `query_fan_status` never reads firmware (`src/service/windows/hp_wmi.rs:78`). The RGB writer builds a 24-byte payload and discards it (`let _ = payload;` at `src/service/windows/hp_wmi.rs:195`) before returning `Ok(profile.name.clone())`.
+- Files: `src/service/windows/hp_wmi.rs`, `src/service/windows/profiles.rs`, `src/service/windows/server.rs`, `src/hardware/windows/provider.rs`
+- Impact: The Windows build claims fan control, power profiles, RGB, battery, and full telemetry that it cannot deliver. `HardwareResponse::RgbEnabledSet(enabled)` is returned directly from the request with no hardware call (`src/service/windows/server.rs:102`). `resolve_board_validation` marks boards `88F8`, `8A24`, `88D0`, `8A3D`, `8A3E` as write-verified purely from the board ID (`src/service/windows/profiles.rs:138-164`), so the "verified" gate passes while writes do nothing. This contradicts `src/hardware/unavailable.rs:1-11` ("it must not lie") and AGENTS.md rules 5 and 9.
+- Fix approach: Make `HpWmiConnection` hold a real WMI session (or a declared "not implemented" state) and return `HardwareControlError::InterfaceMissing` when the class cannot be opened. Delete the process-local statics; read state back from firmware. Propagate write failures instead of returning the requested value. Until then, route Windows through `UnavailableHardwareProvider` so the UI renders `Unavailable`.
 
-**`SensorRegistry::detect_capabilities` hardcodes the RGB sysfs root on Linux:**
-- **Issue:** Capability detection calls `detect_rgb_interface(Path::new("/"))` instead of deriving the root from the registry's scan roots or the provider's configured root.
-- **Files:** `src/hardware/registry.rs:139`, `src/hardware/rgb.rs:33-53`
-- **Impact:** Tests using synthetic fixture roots still probe host `/sys`, breaking test isolation and causing custom-root providers to report capabilities they cannot control.
-- **Fix approach:** Carry `sysfs_root` (or an explicit RGB root) in `SensorRegistry`, defaulting to `/` only in production `scan()`.
+**Two wire protocols, neither authoritative:**
+- Issue: `src/service/protocol.rs` defines a little-endian, versioned, request-id envelope (`PROTOCOL_VERSION = 1`, `MAX_FRAME_BYTES = 64 * 1024` at lines 25 and 209-232) with a typestate `HardwareService` contract; `src/service/windows/protocol.rs` defines a separate big-endian, unversioned 4-byte length prefix (`MAX_PAYLOAD_SIZE = 65_536`, lines 40-90) with a different request/response enum. `src/service/contract.rs` uses neither: it exposes string-based D-Bus methods and JSON for capabilities.
+- Files: `src/service/protocol.rs`, `src/service/windows/protocol.rs`, `src/service/contract.rs`, `src/service/backend.rs`
+- Impact: The versioned protocol cannot detect a peer speaking the Windows framing, and request IDs (`RequestEnvelope.id`) are never correlated with responses on Windows. The typed `HardwareService` abstraction is dead code relative to the shipped transport, so protocol changes must be made three times.
+- Fix approach: Pick one framing (the versioned one), delete the duplicate enum, and make `src/service/contract.rs` and the Windows client encode/decode through it. Add a version-mismatch test.
 
-**Fan-control capability divergence between registry and daemon (Linux):**
-- **Issue:** `SensorRegistry::resolve_fans` accepts `pwm1_enable` on any hwmon device (including non-HP devices) and reports `has_fan_control = true`. The privileged backend only accepts `hp-wmi`/`hp` devices and returns `InterfaceMissing` otherwise.
-- **Files:** `src/hardware/registry.rs:256-315`, `src/service/backend.rs:77-115`
-- **Impact:** The UI can advertise fan control on unsupported machines, and subsequent mutations fail with `InterfaceMissing`.
-- **Fix approach:** Align the registry's predicate with the daemon's hp/hp-wmi filter or consume the daemon's resolved capability directly.
+**Windows hardening logic duplicated and asymmetric:**
+- Issue: Fan-control detection in the GUI is `dev.name == "hp" || dev.name == "hp-wmi" || dev.name.contains("platform")` (`src/hardware/registry.rs:281`), while the daemon resolves a stricter `hp`/`hp-wmi` match. Temperature input selection is lexicographic over `temp1_input`, `temp10_input`, `temp2_input` (`src/hardware/registry.rs:260`), so `temp10_input` wins over `temp2_input`.
+- Files: `src/hardware/registry.rs`, `src/service/backend.rs`
+- Impact: GUI and daemon can disagree about which sysfs node is writable; a machine exposing both `platform` and `hp-wmi` can show fan control in the UI and have the daemon reject the write. Lexicographic sensor selection can bind the wrong temperature channel on kernels with >9 inputs.
+- Fix approach: Move path discovery into one shared function used by both binaries (or make the daemon authoritative and have the GUI consume daemon capabilities only). Sort by parsed numeric index, not string.
 
-**Autostart entry is PATH-dependent and deletion is destructive (Linux):**
-- **Issue:** The generated Linux `.desktop` entry uses `Exec=zenomen --minimized` without an absolute path. Disabling autostart unconditionally deletes the file rather than setting `Hidden=true` or `X-GNOME-Autostart-enabled=false`, discarding user customizations.
-- **Files:** `src/desktop/autostart.rs:17-28, 78-93`
-- **Impact:** Autostart silently fails if the session's `$PATH` omits the binary directory. Disabling and re-enabling wipes custom flags.
-- **Fix approach:** Write absolute binary paths resolved at runtime, update `Hidden=true` on disable, and reconcile startup state with config.
+**Silent fallbacks hide failures from the user:**
+- Issue: `load_or_default` returns defaults when the config file exists but is unreadable, without surfacing a notice (`src/config/mod.rs`); `show_notification` logs a warning but returns `Ok(())` on `Shell_NotifyIconW` failure (`src/desktop/windows/notifications.rs:40-50`); diagnostics export spawn errors are discarded (`let _ =` in `src/app.rs`); service start/stop errors are discarded in the worker (`src/core/worker.rs:181-182,204`).
+- Files: `src/config/mod.rs`, `src/desktop/windows/notifications.rs`, `src/app.rs`, `src/core/worker.rs`
+- Impact: Failures present as "the setting did nothing" with no UI message. The autostart case is worse: the Windows toggle silently writes a Linux `.desktop` file and reports success (see Known Bugs).
+- Fix approach: Extend the existing `corrupt_notice` mechanism to unreadable-file errors; make `show_notification` return `Err`; surface `AppEvent::ConfigSaveFailed`-style events for autostart/service operations.
 
-**Offline guidance hardcodes developer build paths on Linux:**
-- **Issue:** When `zenomen-hw` is offline, client errors instruct users to run `sudo target/debug/zenomen-hw`.
-- **Files:** `src/service/client.rs:232-248`
-- **Impact:** End users on packaged installations receive guidance referencing nonexistent debug target paths.
-- **Fix approach:** Emit packaged guidance (`sudo systemctl start zenomen-hw` or check service status) based on build profile.
+**`unsafe impl Send/Sync` on raw Win32 handles:**
+- Issue: `unsafe impl Send/Sync for TrayHandle` (`src/desktop/windows/tray.rs:64-65`, carrying a raw `HWND` and `NOTIFYICONDATAW`) and `unsafe impl Send/Sync for MutexHandle` (`src/desktop/windows/single_instance.rs:30-31`). `TrayHandle::drop` calls into Win32 from the main thread while the tray pump thread is still alive.
+- Files: `src/desktop/windows/tray.rs`, `src/desktop/windows/single_instance.rs`
+- Impact: Correctness depends on `Shell_NotifyIconW` and `PostMessageW` being safe cross-thread (true) and on the message pump exiting before the process (not guaranteed). No compile-time protection against future misuse.
+- Fix approach: Keep the raw handles inside a single owning thread and expose only a command channel; or document the invariants with a `SAFETY:` comment per block and add a teardown handshake (join the pump thread).
 
-**RGB client methods bypass the offline pre-check (Linux):**
-- **Issue:** `apply_rgb_profile` and `set_rgb_enabled` call `connect()` directly rather than routing through `connect_service()`, which formats human-friendly offline messages.
-- **Files:** `src/service/client.rs:301-344`
-- **Impact:** RGB operations surface raw D-Bus errors (`ServiceUnknown`) instead of standard offline guidance.
-- **Fix approach:** Route all client mutations through `connect_service()` and `format_service_error()`.
+**Blocking API used inside D-Bus method handlers:**
+- Issue: `StatusNotifierItem`/`TrayDbusMenu`/`ApplicationService` call `SyncSender::send` (blocking, capacity 16 from `src/main.rs:108`) from zbus handler threads (`src/desktop/tray.rs:87,93,99,168,171`, `src/desktop/single_instance.rs:39,46,53`).
+- Files: `src/desktop/tray.rs`, `src/desktop/single_instance.rs`
+- Impact: If the desktop-action thread is stalled (e.g., inside `slint::invoke_from_event_loop` during teardown), zbus dispatch blocks for the full channel capacity. Teardown at `src/main.rs:353-364` relies on `drop(_session_conn)` to release those sender clones implicitly.
+- Fix approach: Use `try_send` and drop/log on full, as the UI path already does. Explicitly remove the D-Bus objects before joining the action thread.
 
-**`USER_HZ` hardcoded to 100 in Linux benchmark math:**
-- **Issue:** `cpu_percent_between` divides jiffies by `USER_HZ = 100`, but `CLK_TCK` is kernel-dependent and not guaranteed to be 100.
-- **Files:** `src/core/benchmark.rs:142-143, 232`
-- **Impact:** CPU percentages reported by benchmarks can deviate on custom or non-standard kernel configurations.
-- **Fix approach:** Query `sysconf(_SC_CLK_TCK)` dynamically via libc with fallback to 100.
-
-**Diagnostics export temp-name collision and durability barrier:**
-- **Issue:** Temp path uses `target.with_extension("tmp.<pid>")`, risking collision if two exports run sequentially in the same process, and lacks a `sync_all` barrier before rename.
-- **Files:** `src/core/diagnostics.rs:144-160`
-- **Impact:** Rapid exports can collide or leave truncated reports on crash.
-- **Fix approach:** Include monotonic timestamps in temp filenames and invoke `sync_all()` prior to renaming.
+**Log sink selection by executable name:**
+- Issue: `src/logging.rs` decides "am I the service" by checking whether the executable name contains `zenomen-hw`.
+- Files: `src/logging.rs`
+- Impact: A renamed or symlinked binary writes logs to the wrong sink; tests that rename the binary can silently change behavior.
+- Fix approach: Pass an explicit `LogRole` from each `main`.
 
 ---
 
 ## Known Bugs
 
-**Shutdown hangs when session D-Bus is unavailable (Bare TTY / Headless Linux):**
-- **Symptoms:** Closing the app never exits when `ensure_single_instance` returns `Disabled` (no session bus).
-- **Files:** `src/main.rs:77-92, 138-168, 270-278`
-- **Cause:** In the `Disabled` branch, `action_sender` remains referenced in `main`, so the receiver loop never observes disconnect. `desktop_action_thread.join()` blocks indefinitely.
-- **Workaround:** Terminate process via `SIGKILL`.
-- **Fix approach:** Explicitly drop `action_sender` after instance setup so the receiver disconnects when the window closes.
+**Windows GUI never exits when `close_to_tray = false`:**
+- Symptoms: Closing the window destroys the UI, but the process stays alive with no visible window until killed.
+- Files: `src/desktop/windows/tray.rs:150-155,238-242,297-308`, `src/main.rs:186-197,361-364`
+- Trigger: Set "close to tray" off, then close the window. `on_close_requested` calls `slint::quit_event_loop()` (`src/main.rs:194`) without sending `DesktopAction::Quit`.
+- Mechanism: The tray thread stores the `SyncSender<DesktopAction>` with `Box::into_raw` into `GWLP_USERDATA` (`src/desktop/windows/tray.rs:152`) and never frees it on `WM_DESTROY` (`:303-308`). The leaked sender keeps the channel open after the pump exits, so `for action in action_receiver` (`src/main.rs:205`) never ends and `desktop_action_thread.join()` (`src/main.rs:364`) blocks forever. The `Quit` path happens to work because it `break`s the loop (`src/main.rs:232`).
+- Fix approach: Free the boxed sender in `WM_DESTROY` (`Box::from_raw` after clearing `GWLP_USERDATA`), and assert on teardown that the tray thread has exited. Add a regression test with a fake pump.
 
-**`SetRgbEnabled(true)` resets active profile to default white on Linux:**
-- **Symptoms:** Toggling RGB back on illuminates all zones in solid white, losing previously active color profiles.
-- **Files:** `src/service/contract.rs:195-213`, `src/core/state.rs:223-241`
-- **Cause:** D-Bus method has no profile state persistence; `enabled == true` unconditionally sends `RgbColor::new(255, 255, 255)`.
-- **Fix approach:** Persist the last applied profile in the service daemon and restore it upon re-enabling.
+**Windows autostart toggle is a no-op:**
+- Symptoms: Toggling "start on login" persists `autostart = true` in `config.toml` and creates `%APPDATA%\autostart\zenomen.desktop`, but the app does not start at login.
+- Files: `src/core/worker.rs:181-182,204`, `src/desktop/autostart.rs`, `src/desktop/mod.rs:11,28`, `src/desktop/windows/autostart.rs`
+- Trigger: Any Windows autostart toggle from Settings.
+- Mechanism: The worker always calls `crate::desktop::autostart::set_autostart_enabled` (the XDG implementation) and discards the result. The HKCU implementation is only re-exported as `set_windows_autostart_enabled` (`src/desktop/mod.rs:28`) and has no caller. `AppState` then reflects the requested config value, so the UI shows "on".
+- Fix approach: Route through a `#[cfg(windows)]` dispatcher, return the error to the UI, and re-read the effective state (`is_windows_autostart_enabled`) instead of echoing config.
 
-**Legacy RGB parsing can panic on non-ASCII content:**
-- **Symptoms:** Malformed `keyboardleds` content causes a byte slice panic at UTF-8 boundaries, aborting `zenomen-hw`.
-- **Files:** `src/service/backend.rs:409-427`
-- **Cause:** Validates string length as 24 bytes, then blindly slices at 6-byte offsets without checking ASCII character boundaries.
-- **Fix approach:** Parse as raw ASCII hex bytes and reject invalid characters with `HardwareControlError::InvalidParameter`.
+**Temperature history "300 s" option exceeds documented retention:**
+- Symptoms: Selecting the 300 s history window works, but the `TelemetryHistory` docs claim retention "never more than `MAX_SAMPLES`" (120).
+- Files: `src/core/telemetry.rs:27,172-180,195-203`, `src/config/schema.rs:98`
+- Trigger: Choose 300 s in Settings.
+- Mechanism: `set_capacity(300)` correctly sets `capacity = 300`, so the doc comment is wrong, not the behavior. `set_capacity` also never shrinks the `VecDeque` allocation, so switching 300 → 30 keeps the old buffer.
+- Fix approach: Fix the doc comment; call `shrink_to_fit()` after bulk eviction if the allocation matters.
 
-**History capacity not recomputed on interval changes:**
-- **Symptoms:** Changing polling interval alters the chart's total time duration.
-- **Files:** `src/core/worker.rs:156-201`
-- **Fix approach:** Store duration in seconds and recompute sample buffer size dynamically on interval updates.
+**Windows diagnostics are hardcoded:**
+- Symptoms: The diagnostics report always says `Microsoft Windows 10/11` / `NT 10.0` and `Session Authenticated (Local Named Pipe)` regardless of the actual OS build or whether the service is reachable.
+- Files: `src/core/diagnostics.rs:86-87,124`
+- Trigger: Export diagnostics on any Windows machine with the service stopped.
+- Fix approach: Query `RtlGetVersion`/`GetVersionEx` and the pipe/service state; emit `Unavailable` when unknown.
+
+**Fabricated identity fallbacks:**
+- Symptoms: A machine whose BIOS version cannot be read reports `F.00`; a machine whose SMBIOS strings are missing reports `HP` / `OMEN Laptop`.
+- Files: `src/hardware/windows/device.rs:58,119,163,167`
+- Trigger: WMI/registry read failure (including non-HP hardware).
+- Fix approach: Return `Option<String>` and let `UnavailableHardwareProvider`-style panels render the gap.
+
+**Uninstall leaves the daemon behind:**
+- Symptoms: `uninstall_system_integration` removes the unit and polkit file but not `/usr/bin/zenomen-hw`.
+- Files: `src/desktop/system_integration.rs` (`DAEMON_BIN_TARGET` at line 18, install at `:78-118`, uninstall later in file)
+- Trigger: Uninstall, then reinstall an older package; the stale root-owned daemon binary remains executable.
+- Fix approach: Remove `DAEMON_BIN_TARGET` during uninstall (best-effort, ignore `NotFound`).
 
 ---
 
 ## Security Considerations
 
-**Privileged Local Named Pipe IPC Security (Windows):**
-- **Architecture:** The Windows hardware service (`zenomen-hw.exe`) runs as `LocalSystem` and exposes `\\.\pipe\ZenOmen.Hardware.v1`.
-- **Mitigation Applied:**
-  1. **Session Boundary Validation (`verify_client_session`):** Uses `ImpersonateNamedPipeClient`, `OpenThreadToken`, and `WTSGetActiveConsoleSessionId` to reject calls from remote desktop sessions, SSH sessions, or secondary background users.
-  2. **Explicit SDDL DACL (`PIPE_SDDL`):** Configured with `D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)` ensuring only Local System, Administrators, and the active Interactive User can connect.
-  3. **Strict Payload Framing & Deserialization:** 4-byte big-endian length prefix with bounded 64 KB JSON requests/responses; unparseable packets or oversized buffers are rejected immediately without memory reallocation.
-  4. **Synchronous I/O Guarantee:** `CreateNamedPipeW` omits `FILE_FLAG_OVERLAPPED` and specifies `PIPE_WAIT`, guaranteeing deterministic blocking read/write execution.
+**Named-pipe DACL trusts the whole interactive session:**
+- Risk: `PIPE_SDDL = "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"` (`src/service/windows/security.rs:114-118`) grants read/write to `NT AUTHORITY\Interactive Users`, i.e. every locally logged-on user. Authorization then relies on comparing the client's session ID and optional impersonation (`src/service/windows/security.rs`).
+- Files: `src/service/windows/security.rs`, `src/service/windows/server.rs`, `data/polkit/com.zenomen.hardware.policy`
+- Current mitigation: Session-ID comparison and impersonation attempts; the polkit policy applies only to the D-Bus daemon (`allow_active=auth_admin_keep`, `allow_any=auth_admin`).
+- Recommendations: Add an explicit ACL for the installing user SID (as endorsed by the Windows service model) instead of `IU`; fail closed when `create_pipe_security_descriptor` fails instead of passing `sa_ptr = NULL` (`src/service/windows/pipe.rs:33-58`), which silently inherits the default DACL; log authorization decisions (currently only authorization results are logged, not denials with SIDs).
 
-**Privileged D-Bus IPC Security & Polkit Authorization (Linux):**
-- **Architecture:** The Linux daemon runs as root and exposes `com.zenomen.Hardware1` on the system bus.
-- **Mitigation Applied:** Mutating operations require Polkit authorization (`org.zenomen.hardware.control`). Read-only operations (`GetCapabilities`, `GetFanStatus`) are unauthenticated by design to allow non-privileged dashboard monitoring.
-- **Systemd Sandboxing:** `SystemdService=zenomen-hw.service` declared in D-Bus activation file guarantees daemon executes under unit sandboxing (`ProtectSystem=strict`, `NoNewPrivileges=true`, `ProtectHome=true`, scoped `ReadWritePaths`).
+**Root install copies a binary from a user-writable directory:**
+- Risk: `install_daemon_binary` resolves `current_exe().with_file_name("zenomen-hw")` and `fs::copy`s it to `/usr/bin` as root (`src/desktop/system_integration.rs:78-118`). If an administrator runs the install from a user-writable location (AppImage extraction dir, Downloads, a user-owned checkout), a malicious `zenomen-hw` beside the GUI becomes a root-owned setuid-adjacent binary started by systemd.
+- Files: `src/desktop/system_integration.rs`
+- Current mitigation: Root check (`is_root`), atomic rename via a temp file, mode `0755`.
+- Recommendations: Verify the candidate against a trusted source (package path, signature, or a hash shipped with the GUI) and refuse to copy from paths writable by non-root (`stat` mode/ownership); prefer shipping the daemon in the package and never copying at runtime.
 
-**Firmware & Embedded Controller Protection:**
-- **Architecture:** Direct WMI ACPI calls (`hpqBIntM`) and sysfs writes.
-- **Mitigation Applied:**
-  1. **Board Profile Allowlisting (`src/service/windows/profiles.rs`):** Unknown board IDs default to `None`, restricting operations to safe read-only monitoring.
-  2. **Hardware Validation Records (`BoardValidation`):** Granular write flags (`fan_write_verified`, `power_write_verified`, `rgb_write_verified`) gate mutations in `authorize_mutation`. Unvalidated motherboards reject mutations with `HardwareControlError::UnsupportedMode`.
+**`systemctl` PATH fallback:**
+- Risk: `run_systemctl` uses `/usr/bin/systemctl` when present, otherwise falls back to the bare name `"systemctl"`, resolved through `PATH` (`src/desktop/system_integration.rs:194-203`). Called as root during install/uninstall, a poisoned `PATH` executes attacker code.
+- Files: `src/desktop/system_integration.rs`
+- Recommendations: Use an absolute path only; if missing, return an error naming the expected path.
+
+**Verification gate is metadata-only:**
+- Risk: `authorize_mutation` trusts `BoardValidation` flags, which are granted from a board-ID table (`src/service/windows/profiles.rs:138-164`); `bios_version` is recorded but never compared despite the docstring at `:27`.
+- Files: `src/service/windows/profiles.rs`, `src/service/windows/server.rs`
+- Current mitigation: Unknown boards are read-only; a mismatch between `validation.board_id` and the detected board is rejected (covered by `tests/windows_service_tests.rs:211-216`).
+- Recommendations: Compare `bios_version` against the ratified record (or a supported range), and record who/what ratified it. Do not grant RGB write for boards whose RGB variant was not detected.
+
+**Service hardening gaps (Windows):**
+- Risk: No failure actions, no service description, no restricted SID type, and no least-privilege token beyond the SCM defaults (`src/service/windows/lifecycle.rs`). `OpenSCManagerW(SC_MANAGER_ALL_ACCESS)` is broader than needed for status queries (`:207,246`).
+- Files: `src/service/windows/lifecycle.rs`, `data/systemd/zenomen-hw.service`
+- Current mitigation: The Linux unit is well sandboxed (`ProtectSystem=strict`, `ReadOnlyPaths=/`, `PrivateDevices=true`, `SystemCallFilter=@system-service`, `CapabilityBoundingSet=` empty).
+- Recommendations: Add `SERVICE_CONFIG_FAILURE_ACTIONS`, `SERVICE_CONFIG_DESCRIPTION`, and `SERVICE_SID_TYPE_UNRESTRICTED` where appropriate; mirror the Linux sandbox intent in the Windows service token.
+
+**Environment-controlled transport switch:**
+- Risk: `ZENOMEN_HW_SESSION` selects the session bus instead of the system bus in the daemon (`src/bin/zenomen-hw.rs:59`, used by `src/service/contract.rs`).
+- Files: `src/bin/zenomen-hw.rs`, `src/service/contract.rs`
+- Current mitigation: Documented as a test hook; the systemd unit does not set it.
+- Recommendations: Gate the override behind `#[cfg(test)]` or a `--session-bus` flag that the packaged unit never passes, so an inherited environment cannot downgrade the daemon.
 
 ---
 
 ## Performance Bottlenecks
 
-**Blocking filesystem I/O inside async D-Bus handlers (Linux):**
-- **Problem:** Mutating methods in `HardwareService` (`src/service/contract.rs`) are `async`, but backend functions execute synchronous `fs::write`, `fs::read_to_string`, and `thread::sleep` retry loops on the zbus executor thread.
-- **Impact:** A slow sysfs write or lock stalls all D-Bus requests, including concurrent telemetry reads.
-- **Improvement path:** Wrap backend sysfs calls in `tokio::task::spawn_blocking` or a dedicated worker channel.
+**Mutation timeout leaks threads and handles:**
+- Problem: `execute_mutating_action_with_timeout` spawns a wrapper thread and an inner thread per action (`src/core/worker.rs:390-435`); on timeout the caller gets an error but the inner thread stays blocked in the transport forever. On Windows the transport is `ReadFile` on a message-mode pipe with no overlapped I/O or read timeout (`src/service/windows/client.rs:149`).
+- Files: `src/core/worker.rs`, `src/service/windows/client.rs`, `src/service/client.rs`
+- Cause: No cancellation mechanism; the pipe handle is owned by the abandoned thread.
+- Impact: Each hang leaks one thread + one handle; a restarted service or a wedged driver turns a single UI click into permanent resource growth. The "in-flight" guard (`IN_FLIGHT` style tracking) stays set, so subsequent mutations are serialized behind a phantom operation.
+- Improvement path: Use overlapped I/O with `CancelIoEx` + `WaitForSingleObject`, or a move-only `Arc<Mutex<Connection>>` whose owner performs a bounded `SetCommTimeouts`/`PIPE_NOWAIT` read. At minimum, track and log leaks by thread ID and make the in-flight guard clear on timeout.
 
-**RGB migration runs synchronously before window creation:**
-- **Problem:** `migrate_openomen_profiles` executes on the main thread prior to creating the UI window (`src/main.rs:97-112`).
-- **Impact:** Large legacy profile trees can delay first window paint during cold start.
-- **Improvement path:** Defer migration to a background worker after window display.
+**Blocking accept with a 30 s hang budget:**
+- Problem: `PIPE_TIMEOUT_MS = 30000` (`src/service/windows/pipe.rs:13`) plus a blocking `ConnectNamedPipe` in a single-threaded loop (`src/service/windows/server.rs:122-292`).
+- Files: `src/service/windows/pipe.rs`, `src/service/windows/server.rs`, `src/service/windows/lifecycle.rs:207,246`
+- Cause: One client at a time; SCM stop is reported with a 3 s wait hint while the loop can take 30 s.
+- Impact: `zenomen-hw` can appear hung to the SCM and be killed, and every GUI request queues behind the current client. No per-client rate limiting exists (`server.rs` handles requests as fast as they arrive).
+- Improvement path: Lower the timeout, check a stop flag between requests, and accept/close with overlapped I/O so `SERVICE_STOP` is honored in <1 s. Add a simple per-connection request budget.
 
-**History memory growth and per-frame chart regeneration:**
-- **Problem:** Up to 300 telemetry samples are evaluated and converted into SVG paths on every frame.
-- **Impact:** Path generation recalculates all points even when data points have not changed.
-- **Improvement path:** Cache path geometries and invalidate only when new telemetry points arrive or dimensions change.
+**Unbounded UI event channel:**
+- Problem: `mpsc::channel()` for `AppEvent` (`src/main.rs:325`) with no backpressure. Telemetry events arrive at the polling rate; UI callbacks run on the Slint event loop.
+- Files: `src/main.rs`
+- Impact: If the UI thread stalls (modal dialog, slow chart path generation), events accumulate without limit. Bounded by the 40 MB RSS budget claim and by chart caching, but no hard cap exists.
+- Improvement path: Use `sync_channel` with a small bound and coalesce telemetry events (latest-wins) instead of queueing every sample.
+
+**Per-tick process spawn if `nvidia-smi` is missing:**
+- Problem: The NVIDIA watcher thread is spawned with `.expect(...)` (`src/hardware/linux/gpu.rs:226`); when the tool is absent, the sampling path attempts a process per tick.
+- Files: `src/hardware/linux/gpu.rs`, `src/hardware/linux/provider.rs`
+- Impact: Wasted forks/execs every poll (500 ms–5 s) on non-NVIDIA laptops, contrary to the lean-dependency goal.
+- Improvement path: Resolve the tool once, cache a tri-state (present/absent/error) and back off on absence; drop the `expect` for a logged fallback.
 
 ---
 
 ## Fragile Areas
 
-**HP WMI ACPI Method Buffer Contracts (`hpqBIntM`):**
-- **Files:** `src/service/windows/hp_wmi.rs`, `src/service/windows/protocol.rs`, `src/service/windows/profiles.rs`
-- **Why fragile:** HP BIOS firmware across different OMEN generations (Intel 10th-14th Gen, AMD Zen 3-5) may interpret byte flags or return codes differently. Writing an unverified buffer could cause EC lockups requiring hard power cycling.
-- **Safe modification:** Follow `docs/testing/HP_BOARD_VALIDATION.md`. Enforce read-first verification (`0x20008`) and keep unratified boards read-only via `BoardValidation::new_unvalidated`.
+**Windows service dispatch and state:**
+- Files: `src/service/windows/server.rs:11-104`, `src/service/windows/hp_wmi.rs:70-71`
+- Why fragile: A 32-line match over `HardwareRequest` (`server.rs`, 32 `=>` arms) mixes authorization, hardware calls, and response construction; the global `Mutex<Option<String>>` statics make results order-dependent and shared across connections (including tests running in one process).
+- Safe modification: Extract one handler per request variant, return `Result<HardwareResponse, HardwareControlError>`, and remove the statics in favor of an explicit `FirmwareState` passed through `handle_request`.
+- Test coverage: Mock-only (`tests/windows_service_tests.rs`); no test asserts failure paths for `set_fan_mode`/`set_rgb_profile`.
 
-**Linux Sysfs Layout Assumptions for HP Hardware:**
-- **Files:** `src/hardware/rgb.rs:33-53`, `src/service/backend.rs:77-115`, `src/hardware/registry.rs:256-315`
-- **Why fragile:** Expects specific HP sysfs layouts (`rgb_zones/zone00`, `keyboardleds`, `leds/hp_omen::kbd_backlight/zone_colors`, `hp-wmi`). Upstream kernel revisions or non-HP test environments can alter paths.
-- **Safe modification:** Always route through discovery helpers with fallback checks; test against synthetic fixture directories.
+**Win32 tray pump and teardown:**
+- Files: `src/desktop/windows/tray.rs:92-226,228-311`
+- Why fragile: Raw message loop, `GWLP_USERDATA` pointer aliasing, `unsafe impl Send/Sync`, and a `PostMessageW(WM_CLOSE)` shutdown with no join. The leak documented above lives here. `RegisterClassW` return value is ignored (`:120-122`), so a second registration in the same process silently uses the existing class.
+- Safe modification: Free user data in `WM_DESTROY`, store the pump `JoinHandle` in `TrayHandle`, check `RegisterClassW`, and add `SAFETY:` comments.
+- Test coverage: None on Windows; `tests/desktop_integration_tests.rs` covers XDG paths only.
 
-**Live-host tests in default test suite:**
-- **Files:** `tests/sensor_registry_tests.rs`, `tests/linux_procfs_tests.rs`, `tests/degradation_tests.rs`
-- **Why fragile:** Test cases reading host `/sys` and `/proc` directly fluctuate depending on whether the runner is AMD, Intel, a VM, or a container.
-- **Safe modification:** Gate live-host tests behind `--ignored` or a `live-hardware` cargo feature flag; default CI runs to fixture roots.
+**Migration engine reads third-party files:**
+- Files: `src/rgb/migration.rs:185-270`
+- Why fragile: `fs::read_to_string` on arbitrary `.json` entries in `~/.config/openomen/rgb` (`:214`). A symlink to a FIFO blocks startup; a symlink to a huge file allocates unbounded memory. `target_path.exists()` then `fs::write` is a TOCTOU window, and `create_dir_all` errors are discarded (`:200`).
+- Safe modification: `symlink_metadata` and refuse non-regular files, cap file size (e.g. 1 MiB), use `OpenOptions::create_new` for the target.
+- Test coverage: `tests/rgb_tests.rs` covers parsing/preservation, not symlinks or size limits.
+
+**Two hardware provider trees with divergent capability logic:**
+- Files: `src/hardware/provider.rs:210-240`, `src/hardware/registry.rs`, `src/hardware/windows/provider.rs`
+- Why fragile: `EXPECTED_SENSOR_COUNT = 11` and `is_degraded = reported < expected` mean a healthy Linux laptop without a dGPU is permanently "degraded"; Windows reports 11/11 from a simulated provider, so "degraded" is inverted between platforms.
+- Safe modification: Derive expectations from detected devices (per-sensor availability) instead of a fixed count, or make `is_degraded` platform-specific and document it.
+- Test coverage: `tests/sensor_registry_tests.rs`, `tests/degradation_tests.rs` cover Linux paths only.
+
+**Frame parsing panics in tests, not production — but tests are the only protocol proof:**
+- Files: `src/service/protocol.rs:264-322`, `src/service/windows/protocol.rs`
+- Why fragile: The protocol tests `expect` on every decode, so a schema change fails as a panic rather than a typed assertion. Neither protocol has a round-trip test across both implementations.
+- Safe modification: Add property tests for length-prefix boundaries (0, 4, `MAX + 1`, truncated) and a cross-codec test.
+- Test coverage: Boundary cases exist (`protocol.rs:308-322`); no fuzzing.
 
 ---
 
 ## Scaling Limits
 
-**Sequential Windows Named-Pipe Server:**
-- **Current capacity:** `run_pipe_server` processes client requests sequentially in a single connection loop with synchronous blocking I/O.
-- **Limit:** Adequate for single-user desktop operation (ZenOmen GUI client + system tray), but multiple simultaneous client requests queue.
-- **Scaling path:** Transition to threaded worker pool or overlapped I/O completion ports (IOCP) if multi-client concurrent throughput is required.
+**Single-client service:**
+- Current capacity: One pipe instance, one connection at a time (`src/service/windows/server.rs:122-292`).
+- Limit: A second GUI client or a stuck client blocks all others; the SCM stop budget (3 s hint) is shorter than the accept timeout (30 s).
+- Scaling path: Pre-create N pipe instances and dispatch per-connection threads (or overlapped I/O in one thread).
 
-**Memory Budget Verification:**
-- **Current capacity:** `docs/RESOURCE-BUDGET.md` documents `Private_Dirty` of 7.15–28.50 MB (PASS vs ≤40 MB target). Measured `VmRSS` under Xvfb is 132.71–141.20 MB due to mesa/llvmpipe allocations.
-- **Limit:** Software rendering in virtual display environments inflates shared memory.
-- **Scaling path:** Enforce automated memory budget regression gating in CI.
+**Fixed 4-zone RGB model:**
+- Current capacity: `[RgbColor; 4]` (`src/rgb/schema.rs:126`) and 4-zone payload (`src/service/windows/hp_wmi.rs:187-195`).
+- Limit: 3-zone or per-key keyboards cannot be represented without a schema migration; `parse_openomen_profile` rejects anything that does not resolve all 4 zones (`src/rgb/migration.rs:160-171`).
+- Scaling path: Version the profile schema (`zones: Vec<RgbColor>` + `zone_count`), keep a 4-zone deserializer for v1 files.
+
+**History and chart buffers:**
+- Current capacity: 120 samples default, 300 selectable; chart paths cached per size (`src/core/telemetry.rs:27,172-210`).
+- Limit: `generate_chart_paths_cached` invalidates both chart and sparkline caches on every push (`src/core/telemetry.rs:190-192`), so a 300-point window regrows path strings every second; RSS headroom for the ≤40 MB budget shrinks with the largest window.
+- Scaling path: Cache per-window paths lazily, or precompute incremental path segments.
+
+**Command queue:**
+- Current capacity: 8 commands, `try_send` with drop-and-log (`src/app.rs:30,50,392`).
+- Limit: A burst of UI toggles (history window + polling + theme + autostart) silently drops commands; the UI has already applied the optimistic state, so it can desync from the worker/config.
+- Scaling path: Merge idempotent config commands (coalesce last-writer-wins) or raise the bound and surface a "busy" state.
 
 ---
 
 ## Dependencies at Risk
 
-**Slint 1.18.1 UI Framework:**
-- **Risk:** Pinned to `renderer-femtovg` for software/OpenGL compatibility; migration to GPUI-CE is planned per ADR-001 and ADR-004.
-- **Mitigation:** Modular `HardwareWorker` architecture isolates Slint strictly to the presentation shell.
+**Slint 1.17 with hand-picked features:**
+- Risk: `slint` is pinned to `1.17` with `default-features = false` and `renderer-femtovg`/`backend-winit` (`Cargo.toml`). Minor upgrades regularly change renderer/backend feature names and Slint's generated Rust API.
+- Impact: A dependency bump can break `ui/*.slint` codegen or the femtovg renderer on either platform; `slint-build` must move in lockstep.
+- Migration plan: Bump `slint` and `slint-build` together, run `xvfb-run cargo test --all`, and verify the Linux/Windows screenshot paths manually.
 
-**`windows-sys` 0.59 Raw Win32 FFI:**
-- **Risk:** Requires explicit unsafe pointer management and manual struct zeroing across Windows APIs.
-- **Mitigation:** Wrap raw Win32 calls in dedicated safe abstractions with RAII wrappers (`FreeLibrary`, handle guards).
+**`zbus 5` (blocking API) for D-Bus:**
+- Risk: Blocking `Connection` + synchronous handlers is a thin layer over the async core; teardown semantics (drop = deregister) are implicit and version-sensitive.
+- Impact: The `desktop_action_thread.join()` hang class of bugs depends on zbus drop behavior; upgrades can change it.
+- Migration plan: Track zbus releases, add the teardown regression test described above, and consider explicit object-server removal.
+
+**`windows-sys 0.59` with a large feature list:**
+- Risk: `windows-sys` is a raw, semver-unstable surface; 0.59 → 0.60+ renames modules and types. The crate is pinned by version, not by a lock-file-only policy (the lock file is committed, so builds are reproducible until `cargo update`).
+- Impact: A caret bump silently changes FFI signatures; the unsafe call sites in `src/hardware/windows/*`, `src/service/windows/*`, and `src/desktop/windows/*` all need review.
+- Migration plan: Bump deliberately with `cargo update -p windows-sys --precise`, compile both targets, and re-audit every `unsafe` block.
+
+**`winres 0.1` (build dependency):**
+- Risk: `winres` is effectively unmaintained; it runs at build time for the Windows resource file.
+- Impact: Build breakage on newer Rust/Windows SDKs; no security exposure at runtime.
+- Migration plan: Move to `embed-resource` or a pre-generated `.res` if it breaks.
+
+**No automated dependency updates:**
+- Risk: No `.github/dependabot.yml` or Renovate config exists; `cargo audit` runs only in the Linux CI job (`.github/workflows/ci.yml:45-58`).
+- Impact: Vulnerable transitive crates can sit unnoticed between manual audits; the Windows job never audits.
+- Migration plan: Add Dependabot for `cargo` and run `cargo audit` in both jobs (or a dedicated job).
 
 ---
 
 ## Missing Critical Features
 
-- **Physical Hardware Verification:** End-to-end testing and BIOS verification on physical HP OMEN laptops running Windows 10/11.
-- **Windows Binary & MSI Code Signing:** Authenticode / Azure Trusted Signing pipeline in CI for SmartScreen suppression.
-- **GPUI-CE Full Widget Suite & Migration:** Complete dashboard, fan curves, and tray integration replacing active Slint v1 GUI (ADR-001).
-- **End-to-End Daemon Authorization Integration Tests:** Automated testing of Polkit denials on Linux and session mismatch rejection on Windows.
+**Real Windows hardware backend:**
+- Problem: No WMI session, no `hpqBIntM` invocation, no firmware read-back (see Tech Debt #1).
+- Blocks: Any truthful Windows fan/power/RGB/battery feature; Windows release readiness; the `UnavailableHardwareProvider` promise.
+
+**End-to-end Windows validation:**
+- Problem: No hardware-in-the-loop test or documented validation matrix; `.planning/WINDOWS.md` records that CI has never executed (entry 2) and the original UI stub (entry 1).
+- Blocks: Any claim that Windows support is "validated"; `resolve_board_validation` has no evidence behind its allow-list.
+
+**Service lifecycle hardening:**
+- Problem: No failure actions, no graceful stop within the SCM budget, no restart backoff, no structured audit log for privileged mutations.
+- Blocks: Reliable unattended operation; forensic review after a malicious local client.
+
+**Bounded/cancellable transport:**
+- Problem: No overlapped I/O, no per-request deadlines on the pipe, no cancellation token shared with the worker timeout.
+- Blocks: Reclaiming resources after a wedged firmware call; predictable UI latencies.
+
+**Update mechanism:**
+- Problem: Only a browser link to GitHub Releases (`src/desktop/releases.rs:13`), explicitly no HTTP/self-update.
+- Blocks: Security patch delivery to installed users; version-skew detection between GUI and daemon.
 
 ---
 
 ## Test Coverage Gaps
 
-**Physical ACPI WMI Execution:**
-- **What's not tested:** Live BIOS method execution via `hpqBMtdx` on physical HP hardware.
-- **Priority:** High
+**Windows service behavior is tested against the simulation:**
+- What's not tested: That a mutation reaches firmware or fails when it cannot. `tests/windows_service_tests.rs:219-257` builds `HpWmiConnection { is_available: true }`, calls `handle_request(ApplyPreset, ...)`, and asserts `is_full_success()` plus `confirmed_fan_mode == Some("max")` — values produced by the in-process `Mutex` statics, not hardware.
+- Files: `tests/windows_service_tests.rs:219-257`, `src/service/windows/hp_wmi.rs`
+- Risk: The suite actively certifies the fabrication; a real implementation will initially "fail" these tests.
+- Priority: High
 
-**Polkit & Windows Session Challenge Paths:**
-- **What's not tested:** Live authorization rejection when calling across unauthenticated boundaries.
-- **Priority:** High
+**No Windows runtime tests for tray, pipe, autostart, notifications:**
+- What's not tested: Tray teardown (the exit hang), DACL/session enforcement, `ReadFile` timeout behavior, HKCU Run round-trip, notification failure propagation.
+- Files: `src/desktop/windows/*`, `src/service/windows/*`, `tests/windows_service_tests.rs` (non-Windows branch at `:259-349` only exercises guards)
+- Risk: The highest-severity Windows bugs (exit hang, autostart no-op) have no regression test.
+- Priority: High
 
-**Headless Application Lifecycle on Bare Display Servers:**
-- **What's not tested:** Clean shutdown under non-standard display environments without D-Bus session bus.
-- **Priority:** Medium
+**No cross-platform protocol compatibility test:**
+- What's not tested: Encoding with `src/service/protocol.rs` and decoding with `src/service/windows/protocol.rs` (and vice versa), version mismatch handling, request-ID correlation.
+- Files: `src/service/protocol.rs`, `src/service/windows/protocol.rs`
+- Risk: Silent desynchronization if the transports are ever unified.
+- Priority: Medium
+
+**Migration robustness:**
+- What's not tested: Symlinked/FIFO/oversized source files, concurrent target writes, permission-denied directories.
+- Files: `src/rgb/migration.rs`, `tests/rgb_tests.rs`
+- Risk: Startup hang or unbounded allocation from a hostile `~/.config/openomen/rgb`.
+- Priority: Medium
+
+**Mutation-timeout resource reclamation:**
+- What's not tested: That the abandoned thread/handle is reclaimed, that the in-flight guard clears, and that a second mutation can proceed after a timeout.
+- Files: `src/core/worker.rs:542-600` (tests assert the timeout event and guard behavior, not resource reclamation)
+- Risk: Leaks accumulate in production with no signal.
+- Priority: Medium
+
+**Live-hardware validation:**
+- What's not tested: Any real sysfs write/read-back on OMEN/Victus hardware, hwmon layouts with >9 temp inputs, multi-fan machines.
+- Files: `tests/*` (all mock/temp-dir based), `src/hardware/registry.rs`
+- Risk: Path-discovery regressions (e.g. `temp10` ordering, `platform` fan detection) ship undetected.
+- Priority: Medium
 
 ---
 
-*Concerns audit: 2026-11-08 — Commit `4691619f4e741bd5944f2085fa455b135ff873af`*
+## Prioritized Remediation Order
+
+1. Stop the Windows lie: route Windows through `UnavailableHardwareProvider` until WMI is real, or implement `connect_hp_wmi`/read-back and remove the statics and ack-only `SetRgbEnabled`. Update `tests/windows_service_tests.rs` in the same change.
+2. Fix the exit hang: free the `GWLP_USERDATA` sender on `WM_DESTROY`, join the pump thread, and add a teardown regression test.
+3. Make autostart platform-correct and surface failures to the UI.
+4. Add read cancellation (`CancelIoEx`/overlapped) and clear the in-flight guard on timeout; add a leak regression test.
+5. Harden the root install path (trusted source + ownership check) and the `systemctl` invocation.
+6. Tighten the pipe DACL/authorization and fail closed on security-descriptor creation.
+7. Unify the protocol and add cross-codec/version tests.
+8. Fix diagnostics/identity fabrication (`F.00`, hardcoded OS, static authorization string).
+9. Add dependency automation and audit both CI jobs.
+
+---
+
+*Concerns audit: 2026-11-08*

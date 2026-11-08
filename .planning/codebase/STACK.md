@@ -1,161 +1,122 @@
----
-last_mapped_commit: 4691619f4e741bd5944f2085fa455b135ff873af
-last_mapped_at: 2026-11-08
----
 # Technology Stack
 
 **Analysis Date:** 2026-11-08
-**Branch:** `fix/zenomen-reliability`
-**HEAD Commit:** `4691619f4e741bd5944f2085fa455b135ff873af`
-
-## Summary
-
-ZenOmen is a high-efficiency native hardware control center for HP OMEN and Victus laptops, engineered for both Linux and Windows 10/11. The project produces two Rust binaries from a single Cargo package:
-
-- `zenomen` — Unprivileged desktop GUI application (`src/main.rs`, `src/app.rs`, `ui/`), gated by `required-features = ["ui"]`. Runs under user privileges with no administrative elevation required. Active GUI is Slint 1.9 / 1.18.1 with optional cargo feature gating, with a staged GPUI-CE migration path (`src/ui/` scaffold, ADR-002, ADR-004).
-- `zenomen-hw` — Privileged, headless hardware control daemon / Windows Service (`src/bin/zenomen-hw.rs`, `src/service/`), compiled without linking Slint via `--no-default-features`. On Linux, executes as a systemd root service exposing system D-Bus (`com.zenomen.Hardware1`) and Unix domain socket (`/run/zenomen-hw/hw.sock`). On Windows, executes under `NT AUTHORITY\LocalSystem` as SCM service `ZenOmenHardwareService` (`src/service/windows/lifecycle.rs`) communicating via Named Pipe (`\\.\pipe\ZenOmen.Hardware.v1`).
-
-The stack strictly enforces a zero-bloat philosophy: no webview, no JavaScript runtime (Electron/Tauri avoided), no async runtime (Tokio is not a direct runtime dependency), no database engine, and no HTTP client. Mutating hardware calls are strictly verified, bounded, and decoupled from the presentation layer.
-
-## Target Platforms
-
-### Linux Platform
-- **Target OS:** Ubuntu 22.04 LTS+, modern systemd-based Linux distributions.
-- **Kernel Requirements:** Linux Kernel 5.15+ (x86_64).
-- **Core Interfaces:** systemd (service lifecycle, sandboxing), D-Bus (zbus 4 / zbus 5, resolved to `5.19.0` with `blocking` feature; system bus `com.zenomen.Hardware1`, session bus `com.zenomen.App` / `StatusNotifierItem`), Unix domain socket (`/run/zenomen-hw/hw.sock`), Polkit (`org.freedesktop.PolicyKit1`).
-- **Hardware Telemetry & Control:** `procfs` (`/proc/stat`, `/proc/meminfo`, `/proc/cpuinfo`), `sysfs` (`/sys/class/hwmon`, `/sys/devices/platform/hp-wmi`, `/sys/firmware/acpi`), DMI/SMBIOS, DRM (`/sys/class/drm`).
-- **GPU Telemetry:** AMD/Intel DRM sysfs; NVIDIA proprietary driver sampled via dedicated `NvidiaSampler` thread invoking `nvidia-smi` / NVML on a decoupled channel (`mpsc::sync_channel(1)`).
-
-### Windows Platform
-- **Target OS:** Windows 10 (22H2 19045+) and Windows 11 (24H2 26100+).
-- **Compilation Target:** `x86_64-pc-windows-msvc`.
-- **Win32 API Bindings:** `windows-sys` 0.59 with explicit features:
-  - `Win32_System_Performance` (for PDH performance counters)
-  - `Win32_System_Services` (for SCM lifecycle and service control dispatcher)
-  - `Win32_System_Pipes` (for named pipe server and client IPC)
-  - `Win32_Storage_FileSystem` (for pipe access flags and file operations)
-  - `Win32_Security` & `Win32_Security_Authorization` (for SDDL DACL parsing and caller token impersonation)
-  - `Win32_UI_Shell` (for `Shell_NotifyIconW` tray and notification dispatch)
-  - `Win32_System_Wmi` & `Win32_System_Com` (for HP WMI ACPI BIOS communication)
-  - `Win32_Foundation`, `Win32_System_SystemInformation`, `Win32_System_Power`, `Win32_System_Threading`, `Win32_System_Memory`, `Win32_System_Registry`, `Win32_System_LibraryLoader`, `Win32_System_RemoteDesktop`, `Win32_System_IO`, `Win32_UI_WindowsAndMessaging`, `Win32_Graphics_Gdi`.
-- **Telemetry Engines:**
-  - CPU: `GetSystemTimes` for monotonic delta utilization; `CallNtPowerInformation` for frequency; PDH fallback.
-  - Memory: `GlobalMemoryStatusEx` (`ullTotalPhys`, `ullAvailPhys`).
-  - GPU: DXGI 1.3 (`CreateDXGIFactory1`, `EnumAdapters1`, `QueryVideoMemoryInfo`) for adapter info and dedicated VRAM; persistent `GpuPerformanceCollector` querying `\GPU Engine(*)\Utilization Percentage` via PDH (Performance Data Helper).
-  - Battery: `GetSystemPowerStatus` (`SYSTEM_POWER_STATUS`).
-- **Hardware Control:** Direct ACPI BIOS invocation via WMI Fast Command (`hpqBIntM`, GUID `{5FB7F034-2C63-45E9-BE91-3D44E2C707E4}`, method `hpqBMtdx`). Zero third-party ring-0 kernel drivers required (ADR-002). Enforces `BoardValidation` gating before mutations.
 
 ## Languages
 
 **Primary:**
-- **Rust (edition 2024):** Core logic, hardware providers, services, IPC, and tests across Linux and Windows (`Cargo.toml:4`).
-- **Slint DSL 1.x:** 23 `.slint` files under `ui/` (`ui/app.slint`, `ui/screens/`, `ui/components/`, `ui/theme/`), compiled to native Rust at build time via `slint-build` in `build.rs` when the `ui` feature is active.
+- Rust edition 2024 - Entire application: GUI, hardware providers, privileged services, config, logging, RGB, desktop integration. Declared in `Cargo.toml`; no `rust-version` field.
+- Slint DSL - Declarative UI: `ui/app.slint`, `ui/screens/*.slint`, `ui/components/*.slint`, `ui/theme/*.slint` (20 `.slint` files compiled at build time).
 
-**Secondary / Packaging:**
-- **WiX Toolset XML (v4/v5):** Windows MSI installer definition (`packaging/windows/wix/ZenOmen.wxs`).
-- **TOML:** Application settings (`~/.config/zenomen/config.toml` or Windows `%APPDATA%\ZenOmen\config.toml`) and Cargo manifests.
-- **JSON:** Wire protocol payloads, RGB profiles, and diagnostics exports.
-- **XML:** Linux D-Bus bus policy and Polkit authorization policy (`data/dbus/`, `data/polkit/`).
-- **PowerShell / Bash:** Packaging scripts and Linux budget benchmarks.
+**Secondary:**
+- Bash - Resource measurement and icon generation: `scripts/measure-budget.sh`, `scripts/generate-icons.sh`.
+- Python 3 - Icon validation and raster fallback: `scripts/validate-icons.py`, embedded Python in `scripts/generate-icons.sh`.
+- PowerShell inline - Windows release steps in `.github/workflows/release.yml`.
 
 ## Runtime
 
 **Environment:**
-- **Native OS Execution:** Unmanaged binary execution; no virtual machine, JIT, or garbage collector.
-- **Concurrency & Threads:**
-  - GUI main thread runs the Slint windowing event loop (`winit`).
-  - Dedicated background worker thread `HardwareWorker` (`src/core/worker.rs`) isolates 1000ms hardware sampling ticks from UI rendering.
-  - On Windows, a dedicated thread runs `zenomen-win32-tray-pump` (`src/desktop/windows/tray.rs`) to maintain strict Win32 thread-affinity for `Shell_NotifyIconW` and hidden message windows (`ZenOmenTrayMsgWindow`).
-  - Non-blocking logging thread managed by `tracing-appender` (`src/logging.rs`).
-  - On Linux, dedicated `NvidiaSampler` thread `zenomen-nv-watch` (`src/hardware/linux/gpu.rs`) prevents GPU D3cold sleep states from blocking telemetry cycles.
-  - Daemon uses `zbus::block_on` (Linux) or Windows SCM dispatch (`StartServiceCtrlDispatcherW`) / blocking named pipe server loop with synchronous I/O.
-- **Process Memory Profile:** Release profile enforces `opt-level = "s"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, `strip = true` (`Cargo.toml:57-64`) to uphold the $\le 40\text{ MB}$ GUI RSS budget and $\le 15\text{ MB}$ daemon idle RSS budget.
+- Native desktop process, no managed runtime and no async runtime. Long-lived threads use `std::thread` plus `std::sync::mpsc` channels (`src/core/worker.rs`, `src/main.rs`).
+- `zbus` uses its async-io/async-executor stack, not Tokio. `tokio 1.54.1` appears in `Cargo.lock` only as a transitive dependency of `wasm-bindgen-futures`, not as a native runtime.
+- Two binaries: unprivileged GUI `zenomen` and privileged daemon `zenomen-hw`, both declared in `Cargo.toml`.
 
-**Package Management:**
-- Cargo with committed authoritative `Cargo.lock` (lockfile version 4).
-- CI runs on latest stable Rust with `clippy`, `rustfmt`, and `cargo-audit`.
+**Toolchain:**
+- Rust 2024 edition. `README.md` states Rust 1.85+; Slint 1.18.1 has MSRV 1.88 per `docs/decisions/ADR-001-ui-framework.md`.
+- CI uses the stable toolchain with `clippy` and `rustfmt` (`.github/workflows/ci.yml`, `.github/workflows/release.yml`).
 
-## Frameworks & UI Architecture
+**Package Manager:**
+- Cargo, lockfile committed (`Cargo.lock`, deliberately not ignored in `.gitignore`) so the shipped dependency graph is reproducible and auditable.
+- GitHub Actions installs `cargo-audit` and `cargo-packager`; releases are uploaded as `.deb`, `.AppImage`, `.msi`, and `.zip`.
 
-### UI Framework
-- **Slint 1.9 / 1.18.1 (Active Production GUI):**
-  - Dependency: `slint = "1.17"` (caret requirement resolving to 1.18.1 in `Cargo.lock`), gated behind optional default feature `ui = ["dep:slint"]`.
-  - Backends: `backend-winit` with `renderer-femtovg` (OpenGL 2.1+ / Direct3D). Qt and Skia backends are explicitly excluded to conserve memory.
-  - Slint compiler: `slint-build` 1.18.1 in `build.rs` compiles `ui/app.slint` with Fluent styling when `ui` feature is enabled.
-- **GPUI-CE Migration Path (ADR-002, ADR-004, `src/ui/` scaffold):**
-  - Complete domain-decoupled UI view-model scaffold established under `src/ui/` (`src/ui/app.rs`, `src/ui/screens/`, `src/ui/components/`, `src/ui/theme/`).
-  - Communicates with hardware exclusively through strongly typed `AppCommand` / `AppEvent` channels and `HardwareProvider` trait contracts, enabling seamless future migration to GPUI-CE without touching core domain or hardware modules.
+## Frameworks
 
-### IPC & Privileged Services
-- **Linux IPC:**
-  - System D-Bus: `com.zenomen.Hardware1` (`zbus` 4 / `zbus` 5 with blocking feature, resolved to `5.19.0`).
-  - Unix Domain Socket: `/run/zenomen-hw/hw.sock`.
-  - Session D-Bus: `com.zenomen.App` for single-instance; `StatusNotifierItem` / `DBusMenu` for tray.
-- **Windows IPC & SCM Service:**
-  - Named Pipe: `\\.\pipe\ZenOmen.Hardware.v1`.
-  - Wire Protocol Framing: **4-byte big-endian length prefix** (`u32::to_be_bytes`), followed by UTF-8 JSON payload strictly capped at 64 KB (`MAX_PAYLOAD_SIZE = 65536`). Synchronous blocking I/O (no `FILE_FLAG_OVERLAPPED`).
-  - Security Descriptor & DACL: Explicit `PIPE_SDDL` access control (`D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`) granting Full Control to `LocalSystem` (`SY`) and `Builtin\Administrators` (`BA`), and Read/Write to `Interactive Users` (`IU`).
-  - Caller Session Verification: Caller session token verified against `WTSGetActiveConsoleSessionId()` via `ImpersonateNamedPipeClient` / `GetTokenInformation(TokenSessionId)`.
-  - Windows Service Control Manager (SCM): `ZenOmenHardwareService` registered in SCM via `src/service/windows/lifecycle.rs`, running under `NT AUTHORITY\LocalSystem` account with delayed auto-start support, lifecycle managed via `StartServiceCtrlDispatcherW`, `RegisterServiceCtrlHandlerExW`, and `SetServiceStatus` (with fallback to standalone console mode when run outside SCM).
+**Core:**
+- Slint 1.18.1 (locked; declared as `slint = "1.17"` caret in `Cargo.toml`) - desktop UI.
+  - `default-features = false`; enabled features: `std`, `compat-1-2`, `backend-winit`, `renderer-femtovg`.
+  - Deliberately excludes Qt/Skia backends and accessibility defaults to protect the <=40 MB RSS budget.
+  - Backend stack resolved in `Cargo.lock`: `i-slint-backend-winit 1.18.1`, `winit 0.30.13`, `i-slint-renderer-femtovg 1.18.1`, `femtovg 0.27.0`, `glutin 0.32.3`, `fontdb 0.24.0`.
+  - The Slint bridge is `src/app.rs` (`ZenOmenApp`); the compiled module is included by `slint::include_modules!()` in `src/lib.rs`.
+- Note on UI direction: `docs/decisions/ADR-002-gpui-ce-migration.md` records an accepted plan to migrate to GPUI-CE, but no GPUI dependency exists in `Cargo.toml` and no GPUI calls exist in `src/ui/`. `src/ui/` is a plain-Rust view-model scaffold (`src/ui/app.rs` `GpuiApp`), while the production UI remains Slint (`src/main.rs` uses `zenomen::AppWindow`).
+
+**Testing:**
+- Rust built-in test harness (`cargo test`) with unit tests in-module and 18 integration suites under `tests/`.
+- GUI tests are run headless under Xvfb: `xvfb-run --auto-servernum cargo test --all` (`.github/workflows/ci.yml`, `README.md`).
+- No external assertion, mocking, or snapshot framework; fixtures are temporary directories and mock providers (`src/hardware/mock.rs`).
+
+**Build/Dev:**
+- `slint-build 1.18.1` - compiles `ui/app.slint` in `build.rs` with the pinned `fluent` style.
+- `winres 0.1.12` - Windows-only build dependency; embeds `data/icons/zenomen.ico`, product metadata, and a per-monitor-V2 DPI manifest (`build.rs`).
+- `cargo-packager` - DEB/AppImage packaging configured in `[package.metadata.packager]` in `Cargo.toml`.
+- WiX Toolset (`wix build`) - Windows MSI from `packaging/windows/ZenOmen.wxs` (duplicate copy at `packaging/windows/wix/ZenOmen.wxs`).
+- GitHub Actions - `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
 ## Key Dependencies
 
-**Critical Dependencies:**
-| Crate | Manifest Requirement | Resolved (`Cargo.lock`) | Purpose / Architectural Role |
-|---|---|---|---|
-| `slint` | `1.17` (caret) | `1.18.1` | Active production desktop GUI; optional behind `ui` feature. |
-| `slint-build` | `1.17` (caret) | `1.18.1` | Build-time `.slint` compiler for `ui/app.slint`. |
-| `windows-sys` | `0.59` | `0.59.0` | Comprehensive Win32/WMI/DXGI bindings for Windows telemetry, IPC, service, tray, and autostart (`Win32_System_Performance`, `Win32_System_Services`, `Win32_System_Pipes`, `Win32_Storage_FileSystem`, `Win32_Security`, `Win32_UI_Shell`, `Win32_System_Wmi`, `Win32_System_Com`). |
-| `zbus` | `5` (D-Bus zbus 4/5) | `5.19.0` | Linux D-Bus hardware service, client, Polkit integration, single instance, and tray. |
-| `serde` | `1.0` + `derive` | `1.0.229` | Serde serialization for wire protocols, configuration, diagnostics, and RGB profiles. |
-| `serde_json` | `1.0` | `1.0.154` | JSON payload serialization for D-Bus and Named Pipe framing. |
-| `toml` | `0.8` | `0.8.23` | TOML parsing and serialization for `config.toml`. |
-| `thiserror` | `2.0` | `2.0.21` | Strongly typed domain errors across hardware, service, desktop, and IPC layers. |
-| `directories` | `6.0` | `6.0.0` | Cross-platform standard directories (XDG on Linux, `%APPDATA%` on Windows). |
-| `tracing` | `0.1` | `0.1.44` | Structured application logging across GUI and daemon processes. |
-| `tracing-subscriber` | `0.3` + `env-filter` | `0.3.23` | Logging configuration and runtime filter dispatch (`RUST_LOG`). |
-| `tracing-appender` | `0.2` | `0.2.5` | Non-blocking daily rolling log file writer with bounded history. |
-| `libc` | `0.2` | `0.2.191` | Unix-specific platform primitives (`cfg(unix)`). |
+**Critical:**
+- `slint` 1.18.1 (lock; optional, feature `ui`) - UI toolkit. Build-time failure to compile `ui/app.slint` aborts GUI builds.
+- `zbus` 5.19.0 with `blocking` - system D-Bus hardware daemon, session-bus single instance, StatusNotifierItem tray, and Polkit calls. Used only through `cfg(not(target_os = "windows"))` code paths.
+- `windows-sys` 0.59.0 - raw Win32 bindings for telemetry, named pipes, SCM services, registry, shell, COM, and security. Enabled features are listed in `Cargo.toml` (`Win32_System_Wmi` is enabled but no WMI API calls are implemented).
+- `serde` 1.0.229 (`derive`), `serde_json` 1.0.154, `toml` 0.8.23 - config, diagnostics JSON, IPC payloads, RGB profiles.
+- `thiserror` 2.0.21 - typed error enums (`HardwareControlError`, `ProtocolError`, `RgbError`, `DesktopError`).
+- `tracing` 0.1.44, `tracing-subscriber` 0.3.23 (`env-filter`), `tracing-appender` 0.2.5 - stderr + rolling file logs.
+- `directories` 6.0.0 - `ProjectDirs::from("com", "zenomen", "zenomen")` for config, RGB, state/log, and autostart paths (`src/config/mod.rs`, `src/logging.rs`, `src/rgb/migration.rs`, `src/desktop/autostart.rs`).
 
-**Windows Build Dependencies:**
-- `winres` **0.1.12** (`[target.'cfg(windows)'.build-dependencies]`): Embeds `data/icons/zenomen.ico` and application manifest into Windows executables (`build.rs`).
+**Platform-specific:**
+- `libc` 0.2.191 - Unix-only dependency (declared under `[target.'cfg(unix)'.dependencies]`; used for effective-UID checks in `src/desktop/system_integration.rs`).
+- `windows-sys` 0.59.0 - Windows-only direct dependency. `Cargo.lock` also contains `windows-sys` 0.48.0 (winres), 0.52.0, and 0.61.2 (zbus) as transitive versions.
+- No `wmi` crate, no `windows` (windows-rs high-level) crate, no `winapi`.
 
-## Explicitly Absent Dependencies
+**Not present (deliberate):**
+- No HTTP/network client (`reqwest`, `hyper`, `ureq`), no database driver, no async runtime, no GTK/Qt/Tao toolkit, no self-updater.
+- Release checking opens the GitHub Releases page in the system browser rather than performing network I/O (`src/desktop/releases.rs`, `src/desktop/windows/releases.rs`).
 
-- **No Web / Async Runtime:** No `tokio` direct dependency; no `actix`, no `hyper`, no `reqwest`.
-- **No Webview / Chromium:** No Electron, Tauri, WRY, or CEF.
-- **No Embedded Databases:** No SQLite, RocksDB, or SQLx.
-- **No Ring-0 Kernel Drivers on Windows:** No WinRing0, InpOut32, or unsigned kernel drivers; all BIOS control uses ACPI WMI `hpqBIntM`.
-- **No Third-Party Telemetry Daemons:** No dependency on Open Hardware Monitor or proprietary HP DLLs.
+## Configuration
 
-## Desktop Integrations
+**Compile-time features:**
+- `default = ["ui"]`; `ui = ["dep:slint"]` (`Cargo.toml`).
+- `[[bin]] zenomen` requires feature `ui`; `[[bin]] zenomen-hw` has no UI requirement and is built with `--no-default-features` for the daemon so Slint is neither compiled nor linked.
+- `build.rs` checks `CARGO_FEATURE_UI` and skips Slint compilation for UI-less builds.
 
-| Feature | Linux Implementation | Windows Implementation |
-|---|---|---|
-| **System Tray** | D-Bus `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu` | Win32 `Shell_NotifyIconW` with dedicated message pump thread (`zenomen-win32-tray-pump`) and `hwnd` binding |
-| **Autostart** | XDG autostart desktop entry (`~/.config/autostart/zenomen.desktop`) | Windows Registry Run key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) |
-| **Single Instance** | Session D-Bus well-known name acquisition (`com.zenomen.App`) | Win32 Named Mutex (`Local\ZenOmen.SingleInstance`) + `FindWindowW` / `SetForegroundWindow` |
-| **Elevation / Privileges** | Polkit (`com.zenomen.hardware.control`) via system D-Bus | Windows Service (`ZenOmenHardwareService`) under `NT AUTHORITY\LocalSystem` via Named Pipe DACL |
-| **Update Notification** | Browser launch via `xdg-open` | Browser launch via `ShellExecuteW` (`src/desktop/windows/releases.rs`) |
+**Runtime configuration:**
+- `config.toml` resolved through `directories::ProjectDirs::from("com", "zenomen", "zenomen")` in `src/config/mod.rs` (`config_dir()/config.toml`).
+- Schema in `src/config/schema.rs`: `[general]` (`theme`, `start_minimized`, `close_to_tray`, `autostart`) and `[telemetry]` (`history_window`, `polling_interval_ms`).
+- Validation clamps polling to 500-5000 ms (default 1000) and restricts history to 30/60/120/300 (default 120).
+- Corrupt TOML is backed up as `config.toml.bak.<unix_timestamp>` and safe defaults are used; saves are atomic (temp file + fsync + rename + parent-directory fsync).
+- RGB profiles: `config_dir()/rgb` (`src/rgb/migration.rs`); read-only migration from `~/.config/openomen/rgb`.
+- Diagnostics export: Linux `config_dir()/diagnostics/zenomen-diagnostics-<timestamp>.json`; Windows `%LOCALAPPDATA%\ZenOmen\diagnostics\...` (`src/app.rs`).
+- Logs: Linux `~/.local/state/zenomen/logs` (fallback data dir); Windows `%LOCALAPPDATA%\ZenOmen\logs` for GUI and `%PROGRAMDATA%\ZenOmen\logs` when the executable name contains `zenomen-hw` (`src/logging.rs`, `src/desktop/windows/paths.rs`).
 
-## Packaging & CI/CD
+**Environment variables:**
+- `ZENOMEN_MOCK_SCENARIO` - selects `MockHardware`: `nominal` (default), `zero-capabilities`, `sensor-data-gap` (`src/hardware/mock.rs`, `src/main.rs`).
+- `ZENOMEN_HW_SESSION` - makes the Linux daemon bind the session bus instead of the system bus (`src/bin/zenomen-hw.rs`).
+- `RUST_LOG` - tracing `EnvFilter`; defaults to `info` (`src/logging.rs`).
+- `LC_CTYPE`/`LC_ALL`/`LANG` - read at startup on Linux; `LC_CTYPE=C.UTF-8` is set when no UTF-8 locale is present (`src/main.rs`).
+- No `.env` files are present or read.
 
-### Packaging Formats
-- **Linux:**
-  - Debian package (`.deb`): Built via `cargo-packager`.
-  - AppImage (`.AppImage`): Built via `cargo-packager`.
-- **Windows:**
-  - Windows Installer (`.msi`): WiX Toolset v4/v5 configuration (`packaging/windows/wix/ZenOmen.wxs`), installing `zenomen.exe` and configuring `ZenOmenHardwareService` with auto-start.
-  - Portable Archive (`.zip`): Standalone release archive containing `zenomen.exe`, `zenomen-hw.exe`, `LICENSE`, and `README.md`.
+**Build config files:**
+- `Cargo.toml` - package, features, dependencies, binaries, release/dev/test profiles, cargo-packager metadata.
+- `build.rs` - Slint compilation, pinned `fluent` style, Windows icon/metadata/manifest.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
+- `packaging/windows/ZenOmen.wxs` - per-machine MSI with GUI file, service file, service install/control, shortcuts.
+- `data/systemd/zenomen-hw.service`, `data/dbus/*`, `data/polkit/*`, `data/applications/zenomen.desktop`.
+- `scripts/measure-budget.sh` (RSS/CPU harness), `scripts/generate-icons.sh`, `scripts/validate-icons.py`.
 
-### CI/CD Pipelines
-- **`.github/workflows/ci.yml`:** Dual-OS matrix validating Ubuntu 22.04 (`ubuntu-latest`) and Windows 10/11 (`windows-latest`):
-  - Code formatting (`cargo fmt --check`).
-  - Zero-warning linter (`cargo clippy --all-targets --all-features -- -D warnings`).
-  - Unit and integration tests (Linux headless via `xvfb-run`; Windows native test harness).
-  - Dependency vulnerability scan (`cargo audit`).
-- **`.github/workflows/release.yml`:** Automated multi-platform release pipeline building `.deb`, `.AppImage`, `.msi`, and `.zip` artifacts, validating SHA-256 checksums, and creating GitHub Releases.
+**Build profiles (`Cargo.toml`):**
+- `dev`/`test`: `debug = 0`, `incremental = false` to limit `target/` growth.
+- `release`: `opt-level = "s"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, `strip = true` to protect the memory/size budget.
+
+## Platform Requirements
+
+**Development:**
+- Linux: `build-essential`, `pkg-config`, `libfontconfig1-dev`, `libx11-dev`, `libxkbcommon-dev`, `libdbus-1-dev`, `xvfb` (Ubuntu/Debian); equivalent packages on Fedora/Arch per `README.md`.
+- Windows: MSVC Rust toolchain, Windows SDK/`rc.exe` for `winres`, WiX (`dotnet tool install --global wix`) for MSI packaging.
+- Fonts are vendored and embedded (`ui/theme/fonts/Inter-Regular.ttf`, `Inter-SemiBold.ttf`, `JetBrainsMono-Regular.ttf`), so no system font install is required.
+
+**Production:**
+- Linux kernel 5.15+, `hp-wmi` module, Wayland or X11, systemd, D-Bus system bus, Polkit, Freedesktop StatusNotifierItem host for the tray.
+- DEB runtime dependencies: `libxkbcommon0`, `libfontconfig1`, `libgl1`, `libdbus-1-3` (`[package.metadata.packager.deb]`).
+- Windows 10/11 x64. GUI runs as a standard user; optional `ZenOmenHardwareService` runs as `NT AUTHORITY\LocalSystem` and is installed by MSI (`packaging/windows/ZenOmen.wxs`).
 
 ---
 
-*Stack analysis updated: 2026-11-08 (HEAD `4691619f4e741bd5944f2085fa455b135ff873af`)*
+*Stack analysis: 2026-11-08*

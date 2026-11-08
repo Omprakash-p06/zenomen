@@ -1,7 +1,3 @@
----
-last_mapped_commit: 4691619f4e741bd5944f2085fa455b135ff873af
-last_mapped_at: 2026-11-08
----
 # Testing Patterns
 
 **Analysis Date:** 2026-11-08
@@ -9,322 +5,242 @@ last_mapped_at: 2026-11-08
 ## Test Framework
 
 **Runner:**
-- Rust’s built-in test harness (`#[test]`), stable toolchain. There is no `tokio`, `rstest`, `proptest`, `mockall`, `tempfile`, or `nextest`; `Cargo.toml` declares **no `[dev-dependencies]` at all**.
-- Config: none beyond `Cargo.toml` (`[profile.test] debug = 0, incremental = false`, `Cargo.toml:57-59`).
+- Rust built-in `libtest` (stable toolchain). No external test runner or harness crate.
+- `Cargo.toml` sets `[profile.test] debug = 0` and `incremental = false` for fast, low-disk test builds.
+- No `rstest`, `proptest`, `mockall`, `criterion`, or async test runtime is used. The workspace contains no Tokio dependency.
 
 **Assertion Library:**
-- Standard `assert!`, `assert_eq!`, `assert_ne!`, plus `assert!(matches!(...))` for error-variant checks and explicit `match`/`panic!` when a readable failure message is needed.
-- Floating-point comparisons use an explicit tolerance: `assert!((util - 75.0).abs() < 0.01, "Expected 75.0%, got {util}")` (`src/hardware/linux/cpu.rs:231`), `assert!((util - 66.6667).abs() < 0.01)` (`tests/windows_telemetry_tests.rs:33`).
+- Standard library `assert!`, `assert_eq!`, `assert_ne!`, `matches!`, `.expect(...)`, `.unwrap_err()` / `expect_err`.
+- Assertions usually include a descriptive message stating the invariant, e.g. `assert_eq!(snapshot.used_mb, ..., "naive MemFree must not be used")` in `tests/linux_procfs_tests.rs`.
 
-**Run Commands (as defined by this repo):**
-
+**Run Commands:**
 ```bash
-# Standard verification commands pipeline
-git diff --check
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo check --target x86_64-pc-windows-msvc --no-default-features
-cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw
-xvfb-run -a cargo test --all
-./scripts/validate-icons.py
-
-# CI security audit (.github/workflows/ci.yml)
-cargo audit
-
-# Release workflow (.github/workflows/release.yml)
-xvfb-run --auto-servernum cargo test --locked --all
-
-# Single suite
-cargo test --test benchmark_tests
-cargo test --test degradation_tests
-cargo test --test fan_control_tests
-cargo test --test power_preset_tests
-cargo test --test desktop_integration_tests
-cargo test --test linux_gpu_tests
-cargo test --test logging_tests
-cargo test --test sensor_registry_tests
-cargo test --test windows_service_tests
-cargo test --test windows_telemetry_tests
-
-# Unit tests only
-cargo test --lib
+cargo test --all                       # Windows and general host run (README/CI)
+xvfb-run -a cargo test --all           # Linux CI: required for any Slint surface tests
+cargo test --test <suite_name>         # Run one integration suite, e.g. cargo test --test config_tests
+cargo fmt --all -- --check             # Formatting gate
+cargo clippy --all-targets --all-features -- -D warnings   # Zero-warning gate
+bash scripts/measure-budget.sh         # RSS/CPU budget harness (Linux, PERF-01/02/06)
 ```
 
-Helper scripts in `scripts/` include:
-- `measure-budget.sh`: measures RSS and CPU budget consumption
-- `generate-icons.sh`: generates multi-resolution icon assets via Inkscape and ImageMagick
-- `validate-icons.py`: validates all 8 hicolor PNG sizes (16x16 to 256x256), scalable SVG, and multi-resolution ICO (7 embedded sizes)
+**CI enforcement:**
+- `.github/workflows/ci.yml` runs `cargo fmt --check`, clippy with `-D warnings`, `xvfb-run --auto-servernum cargo test --all` on Ubuntu, and `cargo test --all` on Windows, plus `cargo audit` on Linux.
+- `.github/workflows/release.yml` repeats `--locked` fmt/clippy/tests before packaging.
+- `docs/testing/GEMINI_TESTING_HANDOFF.md` lists the full pre-merge pipeline, including cross-compilation clippy checks for the Windows targets and `python3 ./scripts/validate-icons.py`.
 
-## Test Inventory
-
-**Total test count: 153 verified automated tests across 18 test suites and unit tests (all passing)** (40 unit tests in `src/lib.rs` across 11 modules and 113 integration tests across 18 files under `tests/`). There are no `#[ignore]`, no `#[should_panic]`, and no async tests.
-
-### Key Test Suites & Recent Additions
-- `tests/windows_service_tests.rs` (8 tests): named pipe protocol roundtrip, 64 KB payload rejection, board profile resolution and unknown board rejection, fan mode authorization, unvalidated hardware mutation blocking (BoardValidation gating), mock client-server named pipe communication, and non-Windows lifecycle/server interface missing guards.
-- `tests/windows_telemetry_tests.rs` (8 tests): GetSystemTimes CPU delta utilization math, clock warp / zero delta guards, GlobalMemoryStatusEx RAM math, battery status parsing (charging, discharging, unknown flag 255, desktop flag 128), DXGI vendor ID recognition, GpuPerformanceCollector & VRAM distinction, and structured sensor telemetry guarantees.
-- `tests/desktop_integration_tests.rs` (12 tests): verifies Linux and Windows desktop integration contracts, including autostart lifecycles, single-instance D-Bus service dispatch, SNI/DBusMenu status notifier items, icon assets, releases URL formatting, launcher failure fallback, Windows local AppData path resolution, Windows release URL safety, and registry autostart key escaping.
-- `tests/sensor_registry_tests.rs` (11 tests): verifies sensor priority matrix (`k10temp` and `coretemp` selected over `acpitz`, falling back to `acpitz` when CPU driver missing), fan/pwm discovery on HP WMI, sysfs battery presence detection (measured dynamically via `/sys/class/power_supply`), non-synthesizing absence guarantees, and custom root isolation for generic PWM fans.
-- `tests/rgb_tests.rs` (9 tests): verifies hex color validation, built-in presets, OpenOMEN migration safety, all three interface variants (four-zone, legacy, kernel patch), verified hardware writes, and restoring the previous profile when re-enabling RGB instead of hardcoding white.
-- `tests/telemetry_history_tests.rs` (5 tests): verifies 120-sample bound on overflow, SVG path generation and gap handling, NaN/infinity filtering, and dynamic capacity resizing to preserve the target time window when polling intervals change.
-- `tests/linux_gpu_tests.rs` (7 tests): DRM enumeration, nvidia-smi parsing, `NvidiaSampler` background watcher thread (spawning external tool, handling failures/missing binaries), and stale reading expiry (falling back to `None` after timeout).
-- `tests/fan_control_tests.rs` (5 tests): `AppEvent` → `AppState` fan-mode transitions, offline daemon handling, and pending fan mode in-flight tracking (marking writes in-flight and clearing upon backend confirmation or failed verification).
-- `tests/power_preset_tests.rs` (6 tests): dynamic ACPI profile enumeration, combined presets full workflow, dual-leg partial success honesty (reporting partial success when either fan mode or platform profile succeeds while the other fails), and diagnostics reporting.
-
-**Integration suites (`tests/`):**
-
-| File | Tests | Lines | Focus |
-|------|------:|------:|-------|
-| `tests/benchmark_tests.rs` | 5 | 234 | Worker headless behavior, RSS/tick performance, visibility gating, shutdown |
-| `tests/config_tests.rs` | 6 | 181 | Defaults, atomic save, corrupt-file recovery, polling clamp |
-| `tests/degradation_tests.rs` | 8 | 209 | One test per degradation case (fan absent, pwm absent, no CPU temp, nvidia-smi missing, RGB absent, service absent, unauthorized write, corrupt config) |
-| `tests/desktop_integration_tests.rs` | 12 | 272 | Autostart, single-instance D-Bus, tray SNI/DBusMenu, icon assets, releases URL, Windows AppData/registry autostart |
-| `tests/diagnostics_tests.rs` | 2 | 181 | Diagnostics from synthetic roots + live-system smoke test |
-| `tests/fan_control_tests.rs` | 5 | 118 | `AppEvent` → `AppState` fan-mode transitions, offline daemon behavior, pending fan mode in-flight tracking |
-| `tests/hardware_service_tests.rs` | 9 | 280 | `write_and_verify`, mock sysfs backend, presets, polkit/config assets |
-| `tests/linux_gpu_tests.rs` | 7 | 175 | DRM enumeration, nvidia-smi parsing, NvidiaSampler watcher thread, stale reading expiry |
-| `tests/linux_procfs_tests.rs` | 4 | 89 | `/proc/stat`, `/proc/meminfo`, `/proc/cpuinfo` parsing, live provider smoke |
-| `tests/logging_tests.rs` | 1 | 91 | Rotating file sink + double-init safety |
-| `tests/mock_hardware_tests.rs` | 3 | 155 | `MockScenario::{Nominal, ZeroCapabilities, SensorDataGap}` |
-| `tests/packaging_tests.rs` | 5 | 172 | Embedded assets match disk, root enforcement, prefix install/uninstall |
-| `tests/power_preset_tests.rs` | 6 | 256 | ACPI profile selection, combined presets, dual-leg partial success honesty, diagnostics |
-| `tests/rgb_tests.rs` | 9 | 422 | Hex validation, presets, OpenOMEN migration, 3 interface variants, verified writes, restore-previous |
-| `tests/sensor_registry_tests.rs` | 11 | 299 | Sensor priority matrix, fan discovery, sysfs battery presence detection, generic PWM guard |
-| `tests/telemetry_history_tests.rs` | 5 | 111 | 120-sample bound, SVG path generation/gaps, dynamic capacity window resizing |
-| `tests/windows_service_tests.rs` | 8 | 291 | Named pipe framing, 64 KB payload guard, OMEN/Victus board profiles, fan mode authorization, mutation gating, mock client-server, non-Windows guards |
-| `tests/windows_telemetry_tests.rs` | 8 | 190 | WindowsCpuTimes delta math, clock warp / zero delta guards, RAM math, battery status parsing, DXGI vendors, GPU/VRAM distinction, sensor guarantees |
-
-**Unit test modules in `src/` (`#[cfg(test)] mod tests`):**
-
-| File | Tests | Focus |
-|------|------:|-------|
-| `src/core/state.rs` | 10 | `AppState::apply`, status copy, degradation, history resize |
-| `src/core/telemetry.rs` | 6 | History eviction, dynamic capacity, SVG path commands/gaps/NaN |
-| `src/core/worker.rs` | 2 | Single in-flight mutation gate, in-flight guard lifetime across timeouts |
-| `src/service/polkit.rs` | 1 | Polkit response tuple serialization `(bba{ss})` |
-| `src/service/protocol.rs` | 6 | Length-prefixed framing, oversized/truncated frame rejection, zero request ID rejection, typed errors |
-| `src/desktop/system_integration.rs` | 1 | Daemon binary install/overwrite behavior |
-| `src/hardware/unavailable.rs` | 1 | Zero capabilities, sampling refused |
-| `src/hardware/linux/cpu.rs` | 5 | `/proc/stat` parsing, delta utilization, model/freq parsing |
-| `src/hardware/linux/gpu.rs` | 3 | Card-name filter, nvidia-smi parse, PCI vendor IDs |
-| `src/hardware/linux/memory.rs` | 2 | MemAvailable-based used memory, missing-key behavior |
-| `src/hardware/linux/hwmon.rs` | 3 | Millidegree conversion, fan RPM, label trimming |
+**Current suite size:** 155 `#[test]` functions — 40 inline unit tests across 12 source files plus 115 integration tests across 18 files in `tests/`. The README currently states "123 tests across 16 integration test suites" (`README.md:226`), which lags the actual tree; treat the source as authoritative.
 
 ## Test File Organization
 
 **Location:**
-- Pure parsing, protocol serialization, and state logic is unit-tested co-located with the code in `#[cfg(test)] mod tests` at the bottom of the same file (all 11 modules above).
-- Cross-module, filesystem, thread, protocol round-trip, and binary-level behavior lives in `tests/<area>_tests.rs` integration suites.
-- No `tests/common/` shared module and no `tests/fixtures/` directory. Helpers are duplicated per suite by design so each suite is self-contained.
+- **Inline unit tests:** a `#[cfg(test)] mod tests { use super::*; ... }` block at the bottom of the module under test. Present in:
+  - `src/core/state.rs` (10 tests), `src/core/telemetry.rs` (6), `src/core/worker.rs` (2)
+  - `src/hardware/linux/cpu.rs` (5), `src/hardware/linux/gpu.rs` (3), `src/hardware/linux/hwmon.rs` (3), `src/hardware/linux/memory.rs` (2)
+  - `src/hardware/unavailable.rs` (1)
+  - `src/service/protocol.rs` (6), `src/service/polkit.rs` (1)
+  - `src/desktop/system_integration.rs` (1)
+- **Integration tests:** top-level `tests/` files, importing the public crate as `zenomen::...`:
+  - `tests/benchmark_tests.rs` (5), `tests/config_tests.rs` (6), `tests/degradation_tests.rs` (8), `tests/desktop_integration_tests.rs` (12), `tests/diagnostics_tests.rs` (2), `tests/fan_control_tests.rs` (5), `tests/hardware_service_tests.rs` (9), `tests/linux_gpu_tests.rs` (7), `tests/linux_procfs_tests.rs` (4), `tests/logging_tests.rs` (1), `tests/mock_hardware_tests.rs` (3), `tests/packaging_tests.rs` (5), `tests/power_preset_tests.rs` (6), `tests/rgb_tests.rs` (9), `tests/sensor_registry_tests.rs` (11), `tests/telemetry_history_tests.rs` (5), `tests/windows_service_tests.rs` (9), `tests/windows_telemetry_tests.rs` (8).
 
 **Naming:**
-- Files: `<area>_tests.rs` (18 suites).
-- Unit test functions: descriptive sentences, no `test_` prefix (`a_full_sample_reports_every_expected_sensor`, `reports_nothing_rather_than_guessing`, `oversized_frame_is_rejected_before_allocation`).
-- Integration test functions: mixed. Suites use descriptive sentences or domain `test_` prefixes (`tests/windows_service_tests.rs`, `tests/windows_telemetry_tests.rs`, `tests/desktop_integration_tests.rs`). Prefer descriptive names for new tests.
-- Requirement-driven suites use ordinal prefixes: `degradation_01_...` … `degradation_08_...` (`tests/degradation_tests.rs`).
+- Files: `snake_case` + `_tests.rs` under `tests/`.
+- Test behavior names are full sentences in newer modules (`a_full_sample_reports_every_expected_sensor`); older integration suites prefix with `test_` (`test_fan_mode_parsing_and_conversion`). Match the surrounding file.
+- Platform-only suites use an inner attribute at the top of the file: `#![cfg(target_os = "linux")]` in `tests/linux_procfs_tests.rs` and `tests/linux_gpu_tests.rs`; `#![cfg(not(target_os = "windows"))]` in `tests/logging_tests.rs`. Individual tests use `#[cfg(target_os = "linux")]` / `#[cfg(target_os = "windows")]` where only a portion is platform-specific (`tests/benchmark_tests.rs:118`, `tests/fan_control_tests.rs:118`, `tests/sensor_registry_tests.rs:244`).
+
+**Structure:**
+```
+tests/                       # integration suites against the public `zenomen` crate
+  <area>_tests.rs
+src/<module>.rs              # inline `#[cfg(test)] mod tests` for private helpers
+src/hardware/linux/<x>.rs    # Linux parser tests co-located with the parser
+```
 
 ## Test Structure
 
-**Unit module pattern (`src/`):**
-
+**Suite Organization:**
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+//! Tests for bounded telemetry history and SVG path generation.
 
-    #[test]
-    fn a_partial_sample_is_degraded_but_still_counted() {
-        let mut snapshot = full_snapshot();
-        snapshot.gpu_name = None;
-        let mut state = AppState::default();
-
-        state.apply(&AppEvent::CapabilitiesLoaded(fully_capable()));
-        state.apply(&AppEvent::TelemetryUpdated(snapshot));
-
-        assert_eq!(
-            state.status_text(),
-            "Mock provider · 10 of 11 sensors reported"
-        );
-        assert!(state.is_degraded());
-    }
-
-    fn full_snapshot() -> TelemetrySnapshot { /* local builder */ }
-}
-```
-
-(Source: `src/core/state.rs:337-349`.)
-
-**Integration pattern (`tests/`):**
-
-```rust
-//! Tests for mock hardware provider scenarios (`Nominal`, `ZeroCapabilities`, `SensorDataGap`).
-
-use zenomen::hardware::{HardwareProvider, MockHardware, MockScenario};
+use zenomen::core::telemetry::{MAX_SAMPLES, TelemetryHistory, TelemetryPoint, generate_svg_path};
 
 #[test]
-fn nominal_provider_emits_valid_values_across_sensors() {
-    let mock = MockHardware::new(MockScenario::Nominal);
-    let caps = mock.capabilities();
-    assert!(caps.has_cpu_metrics(), "Nominal must report CPU metrics");
-    // ...
+fn history_strictly_bounds_samples_to_120_on_overflow() {
+    let mut history = TelemetryHistory::new();
+    for i in 0..150 {
+        history.push(TelemetryPoint {
+            timestamp: Instant::now(),
+            cpu: Some(i as f32),
+            gpu: Some((i * 2) as f32),
+            ram: Some(50.0),
+            fan: None,
+        });
+    }
+    assert_eq!(history.sample_count(), MAX_SAMPLES);
 }
 ```
-
-(Source: `tests/mock_hardware_tests.rs`.)
 
 **Patterns:**
-- Every integration suite starts with a `//!` module doc listing what it verifies.
-- Arrange–act–assert with numbered comments for multi-step state transitions.
-- Builders are local helper functions/structs at the top of the file, below imports.
-- Setup/teardown is RAII, not `setup()`/`teardown()` functions: `Drop for TestDir` or explicit cleanup at the end.
-- Assertions almost always carry a message, especially when asserting absence or hardware facts.
+- Every integration file opens with a `//!` module doc naming what it verifies and the requirement IDs it covers (e.g. `tests/config_tests.rs` documents SYS-06/SYS-07/SYS-09).
+- Inline unit tests import `use super::*;` and test private helpers directly.
+- Setup is explicit and local to each test — no global fixtures, no test ordering assumptions.
+- Scenario tests number the steps in comments and assert after each transition (`tests/fan_control_tests.rs`, `tests/power_preset_tests.rs`).
+- Teardown is RAII (`Drop`) or an explicit `let _ = fs::remove_dir_all(...)`; prefer the RAII fixture for new tests.
 
-## Mocking & Testing Strategies
+## Mocking
 
-**Framework:** None. Hand-written test doubles and dependency injection only.
+**Framework:** None (no `mockall`). Fakes are hand-written implementations of the existing traits, and shell/OS boundaries are replaced by path injection.
 
-### Primary Provider Double — `MockHardware`
+**Patterns:**
 ```rust
-let mock = MockHardware::new(MockScenario::Nominal);
-let sample = mock.sample_telemetry().expect("Nominal sample must succeed");
-```
-- `Nominal`: all capabilities, sine-wave readings.
-- `ZeroCapabilities`: zero flags, `TelemetrySnapshot::default()`, no fabricated numbers.
-- `SensorDataGap`: nominal, but GPU utilization/temperature become `None` for 3 of every 10 ticks.
-- `MockScenario::from_env()` reads `ZENOMEN_MOCK_SCENARIO` (`nominal`, `zero`/`zerocapabilities`, `gap`/`sensor-data`).
+// src/hardware/mock.rs — deterministic provider used by unit + integration tests
+let mock = MockHardware::new(MockScenario::SensorDataGap);
+let sample = mock.sample_telemetry().expect("sampling must succeed");
 
-### Filesystem & Sysfs Doubles — Inject a Root
-```rust
-let root = std::env::temp_dir().join(format!("zenomen_test_hw_{test_name}_{}", std::process::id()));
-let hwmon_dir = root.join("sys/devices/platform/hp-wmi/hwmon/hwmon5");
-fs::create_dir_all(&hwmon_dir).expect("failed to create mock hwmon dir");
-fs::write(hwmon_dir.join("name"), "hp\n").unwrap();
-fs::write(hwmon_dir.join("pwm1_enable"), "2\n").unwrap();
+// tests/hardware_service_tests.rs — mock sysfs tree behind an injectable root
+struct MockSysfs { root: PathBuf }
+let backend = HardwareBackend::new(&self.root);
+let res = write_and_verify(&temp_file, "updated", 3, Duration::from_millis(5));
 
-let backend = HardwareBackend::new(&root);
+// tests/sensor_registry_tests.rs — fixture builds hwmon/<id>/name, temp*_input, fan*_input, pwm1_enable
+let registry = SensorRegistry::scan_roots(tree.path(), &empty_acpi);
 ```
 
-### Windows Testing Strategy
-Windows platform code is rigorously tested in headless Linux environments without requiring a Windows kernel or live Win32 APIs:
-- **Mock Named Pipe IPC:** Framing and transport semantics are tested via in-memory byte streams using `encode_frame` and `decode_frame`. Full request-response lifecycles (`HardwareRequest` → `handle_request` → `HardwareResponse`) execute in `tests/windows_service_tests.rs` without opening OS pipe handles.
-- **Mock Security Descriptors & Buffer Guards:** Protocol tests verify length-prefixed payload safety, rejecting payloads exceeding `MAX_PAYLOAD_SIZE` (64 KB) and truncated headers before memory allocation (`src/service/protocol.rs`, `tests/windows_service_tests.rs`). Security descriptors are validated against the canonical SDDL string `PIPE_SDDL`.
-- **Board Validation & Mutation Gating:**
-  - `resolve_board_profile` tested against known HP motherboard IDs (`88F8` OMEN 15/16 AMD, `8A24` Intel case-insensitivity, `8A3E` Victus) and rejecting unknown/empty strings (`tests/windows_service_tests.rs`).
-  - Request authorization matrix (`authorize_mutation`) validated to permit auto/max fan modes and reject unauthorized modes (`manual`, `extreme_turbo`) with typed `HardwareControlError` variants.
-  - Unvalidated hardware mutation blocking strictly enforces `BoardValidation` gating, preventing unvalidated writes or mismatched board mutations.
-- **Mock Telemetry Math & Sensor Guarantees:**
-  - **GetSystemTimes CPU Delta Utilization Math & Clock Warp Guards:** `tests/windows_telemetry_tests.rs` feeds synthetic `WindowsCpuTimes` (kernel, user, idle) into `calculate_cpu_utilization`, verifying nominal calculation (66.67%), 100% busy, 0% idle, zero delta guards (`None`), and backward clock warp protection.
-  - **GlobalMemoryStatusEx RAM Math:** `calculate_ram_usage` tested with 16 GB total / 6 GB available, zero values, and saturation when available exceeds total.
-  - **Battery Status Parsing:** `tests/windows_telemetry_tests.rs` verifies `parse_battery_status`, testing charging, discharging, desktop missing battery (flag 128 -> `None`), unknown lifetime (`0xFFFFFFFF`), and guarding against battery flag 255 (marking charging as `None` rather than a false positive `Some(true)`).
-  - **DXGI Vendor ID Recognition:** `tests/windows_telemetry_tests.rs` asserts PCI vendor ID mapping (`0x10DE` -> Nvidia, `0x1002` -> AMD, `0x8086` -> Intel, unknown -> `GpuVendor::Unknown`).
-  - **GpuPerformanceCollector & VRAM Distinction:** Dedicated VRAM total is reported honestly, while used VRAM returns honest `None` when unqueried; absent adapter handled cleanly.
-  - **Structured Sensor Telemetry Guarantees:** Validates sensor source enumeration (`Win32`, `DXGI`, `PDH`) and temperature/fan sensor fallback structures ensuring honest absence reporting without fabricating fake metrics.
-- **Non-Windows Lifecycle & Server Interface Missing Guards:** Validates non-Windows lifecycle functions (`register_service`, `uninstall_service`, `run_service`, `run_console_service`) and server pipe entry points (`create_server_pipe`, `run_pipe_server`) return `HardwareControlError::InterfaceMissing` instead of failing unsafely (`tests/windows_service_tests.rs`).
+**What to Mock:**
+- Hardware reads/writes: use `MockHardware` / `MockScenario` (`src/hardware/mock.rs`) or a temporary filesystem tree passed into `SensorRegistry::scan_roots` (`src/hardware/registry.rs`), `HardwareBackend::new` (`src/service/backend.rs`), `collect_diagnostics_from_roots` (`src/core/diagnostics.rs`).
+- External commands: parse their output with a pure function instead of executing them (`parse_nvidia_smi_output` in `src/hardware/linux/gpu.rs`, tested in `tests/degradation_tests.rs`; `parse_battery_status`, `calculate_cpu_utilization` in `src/hardware/windows/`).
+- Filesystem/env: redirect via temp dirs and `*_at`/`*_from_roots` helpers (`set_autostart_enabled_at`, `is_autostart_enabled_at`, `resolve_app_data_paths_from`, `XDG_STATE_HOME` in `tests/logging_tests.rs`).
 
-### External Command Double — Fake Executable
+**What NOT to Mock:**
+- Do not mock the `HardwareProvider` trait inside `AppState` tests — `AppState::apply` is fed real `AppEvent` values and asserted directly (`src/core/state.rs`, `tests/fan_control_tests.rs`).
+- Do not mock serialization: protocol tests round-trip the real `encode_frame`/`decode_frame` (`tests/windows_service_tests.rs`, `src/service/protocol.rs`).
+- Do not touch live `/sys`, `/proc`, `/dev`, WMI, D-Bus system bus, or root-only paths. Tests that need a location must have a root/path parameter.
+
+## Fixtures and Factories
+
+**Test Data:**
 ```rust
-fn fake_nvidia_smi(dir: &std::path::Path, body: &str) -> PathBuf {
-    let path = dir.join("fake-nvidia-smi");
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake tool");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod fake tool");
-    path
-}
+// src/core/state.rs — named factory for a fully-populated snapshot
+fn full_snapshot() -> TelemetrySnapshot { /* all 11 sensors populated */ }
+fn fully_capable() -> HardwareCapabilities { HardwareCapabilities::all_supported() }
 
-let sampler = NvidiaSampler::new(fake_nvidia_smi(dir.path(), "echo '...'"));
-```
-
-## Fixtures and Temp Directories
-
-There is no `tempfile` dependency. Three local patterns coexist:
-
-**1. RAII `TestDir` (preferred for new tests)** — unique by nanoseconds under `std::env::temp_dir()`, cleaned in `Drop`:
-
-```rust
-struct TestDir(PathBuf);
-
-impl TestDir {
+// tests/sensor_registry_tests.rs — unique temp tree with Drop cleanup
+struct TestHwmonTree(PathBuf);
+impl TestHwmonTree {
     fn new(prefix: &str) -> Self {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let path = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
         fs::create_dir_all(&path).expect("create test dir");
         Self(path)
     }
-    fn path(&self) -> &Path { &self.0 }
 }
-
-impl Drop for TestDir {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
-}
+impl Drop for TestHwmonTree { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
 ```
 
-Used in `src/hardware/linux/hwmon.rs`, `tests/linux_gpu_tests.rs`, `tests/diagnostics_tests.rs`, `tests/sensor_registry_tests.rs`, `tests/logging_tests.rs`.
-
-**2. `temp_test_dir(name)` helper + manual cleanup** — nanosecond uniqueness, caller cleans via `let _ = fs::remove_dir_all(&dir);` (`tests/config_tests.rs`, `tests/rgb_tests.rs`).
-
-**3. `MockSysfs` builder with PID-based root** — removes stale directory before creating, cleans up in `Drop` (`tests/hardware_service_tests.rs`, `tests/power_preset_tests.rs`).
+**Location:**
+- Fixtures are defined inline in the test file that owns them, not shared across suites. Repeated shapes:
+  - `TestDir(PathBuf)` in `src/hardware/linux/hwmon.rs`, `tests/linux_gpu_tests.rs`, `tests/logging_tests.rs`, `tests/diagnostics_tests.rs`.
+  - `TestHwmonTree` in `tests/sensor_registry_tests.rs`.
+  - `MockSysfs` in `tests/hardware_service_tests.rs`.
+- Temp directory names include `SystemTime::now()` nanoseconds and/or `std::process::id()` to avoid collisions between parallel tests: `zenomen_config_test_{name}_{nanos}`, `zenomen_test_hw_{name}_{pid}`.
+- Static text fixtures (procfs/cpuinfo/meminfo/nvidia-smi/WMI output) are inline `&str` constants with expected arithmetic in comments.
+- No `tests/fixtures/` directory exists; do not add shared mutable fixtures without cleaning them up.
 
 ## Coverage
 
-**Requirements:** None enforced. No coverage tool, config, threshold, or CI step (`tarpaulin`, `llvm-cov`, `codecov` are absent).
+**Requirements:** No numeric coverage tool or threshold is configured. The practical gate is a green `cargo test --all` plus zero-warning clippy in CI.
+
+**View Coverage:**
+- Not configured. To inspect locally, use an external tool (e.g. `cargo llvm-cov`) — do not add it to `Cargo.toml` without justification, per the dependency budget.
+
+**What is covered (by area):**
+- **Core state machine:** event folding, degradation/status text, history window, sampling-error state (`src/core/state.rs`, `tests/degradation_tests.rs`, `tests/fan_control_tests.rs`).
+- **Telemetry chart math:** 120-sample bound, SVG `M`/`L` generation, gap handling, sparklines (`src/core/telemetry.rs`, `tests/telemetry_history_tests.rs`).
+- **Worker lifecycle:** visibility-gated sampling pause/resume, prompt shutdown, tick latency (`src/core/worker.rs`, `tests/benchmark_tests.rs`).
+- **Mock provider contract:** all eight subsystem flags and the three scenarios (`tests/mock_hardware_tests.rs`).
+- **Linux parsers and registry:** CPU jiffies, `/proc/meminfo` (uses `MemAvailable`), `/proc/cpuinfo`, hwmon priority (`k10temp`/`coretemp` over `acpitz`), fan/PWM discovery, DRM GPU enumeration, nvidia-smi parsing (`src/hardware/linux/*`, `tests/linux_procfs_tests.rs`, `tests/linux_gpu_tests.rs`, `tests/sensor_registry_tests.rs`).
+- **Verified control path:** write-and-verify retries/mismatch/I/O error, `FanMode` parsing and rejection, mock backend fan/profile/preset flows, PresetResult partial-success honesty (`tests/hardware_service_tests.rs`, `tests/power_preset_tests.rs`).
+- **Service protocol:** version validation, frame size limits, request/response round-trips, polkit status handling (`src/service/protocol.rs`, `src/service/polkit.rs`, `tests/hardware_service_tests.rs`).
+- **Windows pure logic:** CPU filetime deltas, RAM math, battery status parsing, GPU vendor recognition, named-pipe framing, board-profile resolution, authorization rules (`tests/windows_telemetry_tests.rs`, `tests/windows_service_tests.rs`). These tests run on any host because the Win32 calls are behind internal `#[cfg(windows)]` shims.
+- **Config:** defaults, atomic save, no leftover temp file, clamp to `[500, 5000]` ms, corrupt-file backup and notice (`tests/config_tests.rs`).
+- **Desktop/packaging:** single-instance D-Bus dispatch, StatusNotifierItem/menu, XDG autostart preserve-and-toggle, app-data path resolution, embedded asset parity with `data/`, icon validity, Cargo packaging mappings (`tests/desktop_integration_tests.rs`, `tests/packaging_tests.rs`, `src/desktop/system_integration.rs`).
+- **Logging:** a real line reaches the XDG state directory and a second `init()` degrades instead of panicking (`tests/logging_tests.rs`).
+- **RGB:** profile schema/serialization, capability detection within a custom root, enable restores the previous profile (`tests/rgb_tests.rs`).
+- **Diagnostics:** mock-root report collection and export (`tests/diagnostics_tests.rs`).
+
+**What is not covered (gaps):**
+- **Slint UI layer:** `src/app.rs` and `src/ui/{app,components,screens,theme}` have no direct tests. The UI is exercised only indirectly through state assertions under `xvfb-run`.
+- **Live hardware:** no test reads real `/sys`, `/proc`, hwmon, DRM, WMI, or battery hardware; on-device validation is manual (`docs/testing/HP_BOARD_VALIDATION.md`, `docs/testing/WINDOWS_TEST_MATRIX.md`).
+- **True Windows system calls:** DXGI/PDH/registry/named-pipe/server lifecycle are compiled for Windows but can only be exercised on Windows CI or physical hardware.
+- **Privileged operations:** real root installation, polkit prompts, systemd/D-Bus service activation, and service install/uninstall are mocked at the path level; `tests/packaging_tests.rs` skips root-requiring branches when not root.
+- **GUI rendering/lifecycle:** window open/close, tray restore, and event-loop teardown are not automated.
 
 ## Test Types
 
 **Unit Tests:**
-- Scope: pure parsers, protocol frames, state transitions, SVG generation, serialization, single-module edge cases.
-- Location: bottom-of-file `#[cfg(test)] mod tests`; 40 tests across 11 modules.
-- Approach: direct calls, fixture strings, synthetic times, no live filesystem except hwmon reader tests (temp dir).
+- Private and pure helpers, inline in the module: parsers, math, state folding, frame codec. Fast, no filesystem or only a temp dir.
 
 **Integration Tests:**
-- Scope: multi-module flows (worker + provider + channels), filesystem/sysfs trees, fake executables, desktop/autostart behavior, packaging assets, Windows protocol round-trips, degradation matrix.
-- Location: `tests/*.rs`; 113 tests across 18 suites.
-- Approach: public `zenomen::` API, injected roots, `MockHardware`, `AppState::apply`.
+- Public crate surface in `tests/`, using `MockHardware`, temp trees, and injected roots. These cover cross-module contracts (provider → state → event, client → backend → protocol).
 
-**E2E Tests:**
-- Not used. There is no test that starts the Slint window or a real system-wide D-Bus session. Interface methods are called directly.
+**E2E / GUI Tests:**
+- Not automated. No Playwright/Selenium/robot equivalent. Manual procedures live in `docs/testing/WINDOWS_TEST_MATRIX.md` and `docs/testing/HP_BOARD_VALIDATION.md`.
 
-**Async Tests:**
-- None (`#[tokio::test]` / async test count is 0). Async code is confined to Linux zbus contract methods and tested through sync backends and serialization tests.
+**Performance/Budget Tests:**
+- `tests/benchmark_tests.rs` asserts headless safety, valid RSS instrumentation (<500 MB sanity bound), worker tick duration, and prompt shutdown. `scripts/measure-budget.sh` is the manual RSS/CPU harness (Linux `/proc` based).
 
 ## Common Patterns
 
-**Concurrency and timing:**
-- Use `mpsc::Receiver::recv_timeout` with short budgets (100–500 ms) for worker events (`tests/benchmark_tests.rs`).
-- Use deadline loops instead of a single sleep when waiting for a background thread.
-- Fixed sleeps are used only where behavior is explicitly time-based: stale GPU sample expiry (`3_100 ms`, `tests/linux_gpu_tests.rs`) and fake-tool startup (10–200 ms).
+**Thread and Channel Testing (no async):**
+```rust
+let (tx, rx) = mpsc::channel();
+let worker = spawn_monitoring_worker(Arc::new(MockHardware::new(MockScenario::Nominal)), tx, command_rx);
 
-**Error testing:**
-- Assert the error variant when the variant is the contract (`tests/packaging_tests.rs`, `tests/windows_service_tests.rs`); otherwise assert `is_err()` and inspect the message.
-- For “no fabricated data” contracts, assert `is_none()`/`is_empty()`/`0` explicitly.
+let event = rx.recv_timeout(Duration::from_secs(2)).expect("event within deadline");
+assert!(matches!(event, AppEvent::TelemetryUpdated(_)));
 
-**State-machine testing:**
-- Drive `AppState` only with events and assert both confirmed and in-flight fields after each step (`tests/fan_control_tests.rs`, `tests/power_preset_tests.rs`).
+let _ = command_tx.try_send(AppCommand::Shutdown);
+worker.join().expect("worker exits cleanly");
+```
+Use `recv_timeout`/`Instant` deadlines rather than fixed sleeps where the assertion depends on a message (`src/core/worker.rs` tests, `tests/benchmark_tests.rs`). A bounded `sleep` + poll loop is acceptable only for asynchronous filesystem writers (`tests/logging_tests.rs`).
 
-## CI Checks
+**Error Testing:**
+```rust
+let err = FanMode::parse_requested("turbo").unwrap_err();
+assert!(matches!(err, HardwareControlError::InvalidParameter(_)));
 
-Single `quality` job on `ubuntu-latest` (`.github/workflows/ci.yml`), least-privilege `contents: read`, concurrency cancellation, all gates blocking:
-1. `git diff --check`
-2. `cargo fmt --all -- --check`
-3. `cargo clippy --all-targets --all-features -- -D warnings`
-4. `cargo check --target x86_64-pc-windows-msvc --no-default-features`
-5. `cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw`
-6. `xvfb-run -a cargo test --all` (or `xvfb-run --auto-servernum cargo test --all`)
-7. `./scripts/validate-icons.py`
-8. `cargo audit` against the committed `Cargo.lock`
+let mis = write_and_verify(&file, "wrong", 2, Duration::from_millis(1));
+assert!(matches!(mis, Err(HardwareControlError::VerificationFailed { .. })));
+```
+Assert the *variant*, not the full message, so text changes do not churn tests. Use `matches!` for structured errors.
 
-## Known Gaps
+**Degradation Testing:**
+```rust
+// tests/degradation_tests.rs — remove one interface at a time; assert no panic and clean None/empty
+let registry = SensorRegistry::scan_roots(&hwmon_root, &acpi_root);
+assert!(registry.cpu_temp.is_none());          // unavailable, not fabricated 0.0
+assert_eq!(registry.fan_tachometers.len(), 1);
+```
 
-- **Slint bridge untested:** `src/app.rs` has no `#[cfg(test)]` module and no integration test. Callback wiring, command queue saturation, and `invoke_from_event_loop` publication are unverified.
-- **Entry points untested:** `src/main.rs` and `src/bin/zenomen-hw.rs` have no tests (startup, provider selection, CLI flags, daemon connection).
-- **D-Bus interface methods untested:** `src/service/contract.rs` has no integration test; only the backend, polkit serialization, and protocol framing are tested.
-- **Live-system assumptions:** `tests/linux_procfs_tests.rs` and `tests/benchmark_tests.rs` assert against the real `/proc`; tests run in Linux CI.
-- **Count synchronization:** Total test count must be kept synchronized across `README.md`, `CONVENTIONS.md`, and `TESTING.md` when altering test suites (AGENTS.md rule 10).
+**Environment Mutation:**
+```rust
+// SAFETY: this test binary has exactly one test, so no other thread reads the environment.
+unsafe { std::env::set_var("XDG_STATE_HOME", dir.path()); }
+```
+Env mutation is only acceptable in a suite with a single test (see `tests/logging_tests.rs`), and must carry a `// SAFETY:` comment.
 
-**Checklist for new tests (per AGENTS.md rule 7):**
-1. Add a unit test in the same file for pure logic; add/extend a `tests/<area>_tests.rs` suite for cross-module behavior.
-2. Use `MockHardware` or inject a temp root; never touch live hardware, `/sys`, or root paths.
-3. Create a uniquely named temp dir and clean it via `Drop` (copy the `TestDir` pattern).
-4. Assert with a message that explains the hardware/state contract being protected.
-5. Run `git diff --check`, `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo check --target x86_64-pc-windows-msvc --no-default-features`, `cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw`, `xvfb-run -a cargo test --all`, and `./scripts/validate-icons.py`.
-6. Update the test counts in documentation if the total changes.
+**Platform Gating:**
+```rust
+#![cfg(target_os = "linux")]              // whole file
+#[cfg(target_os = "windows")]              // single test
+#[cfg(not(target_os = "windows"))]
+```
+New platform-specific tests must be gated so both Windows and Linux CI stay green, and must not import the other platform's native APIs.
+
+**Numeric Tolerance:**
+```rust
+assert!((agg2 - 75.0).abs() < 0.1, "Expected 75%, got {agg2}");
+```
+Use epsilon comparisons for floats; exact equality is reserved for integers and enum values.
 
 ---
 
