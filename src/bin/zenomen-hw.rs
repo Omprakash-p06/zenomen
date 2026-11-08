@@ -27,6 +27,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    if args.iter().any(|a| a == "--console" || a == "-c") {
+        info!("Starting zenomen-hw in standalone console mode...");
+        zenomen::service::windows::lifecycle::run_console_service()?;
+        return Ok(());
+    }
+
     info!(
         "Starting zenomen-hw privileged hardware control service v{}",
         env!("CARGO_PKG_VERSION")
