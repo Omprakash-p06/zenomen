@@ -4,17 +4,18 @@ use crate::rgb::schema::RgbProfile;
 use crate::service::types::PresetResult;
 use crate::service::windows::authorization::authorize_mutation;
 use crate::service::windows::hp_wmi::{self, HpWmiConnection};
-use crate::service::windows::profiles::BoardProfile;
+use crate::service::windows::profiles::{BoardProfile, BoardValidation};
 use crate::service::windows::protocol::{HardwareRequest, HardwareResponse};
 
 /// Dispatch and execute a single hardware request against the board profile and WMI driver.
 pub fn handle_request(
     req: HardwareRequest,
     board: &BoardProfile,
+    validation: Option<&BoardValidation>,
     conn: &HpWmiConnection,
 ) -> HardwareResponse {
-    // 1. Authorize the mutation against board profile safety invariants
-    if let Err(e) = authorize_mutation(&req, board) {
+    // 1. Authorize the mutation against board profile safety invariants and physical validation record
+    if let Err(e) = authorize_mutation(&req, board, validation) {
         return HardwareResponse::Error(e.to_string());
     }
 

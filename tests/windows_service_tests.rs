@@ -3,7 +3,7 @@
 use zenomen::service::types::HardwareControlError;
 use zenomen::service::windows::authorization::authorize_mutation;
 use zenomen::service::windows::hp_wmi::HpWmiConnection;
-use zenomen::service::windows::profiles::resolve_board_profile;
+use zenomen::service::windows::profiles::{BoardValidation, resolve_board_profile};
 use zenomen::service::windows::protocol::{
     HardwareRequest, HardwareResponse, MAX_PAYLOAD_SIZE, decode_frame, encode_frame,
 };
@@ -93,6 +93,7 @@ fn test_board_profile_rejects_unknown_motherboard() {
 #[test]
 fn test_authorization_blocks_unsupported_fan_mode() {
     let board = resolve_board_profile("88F8").unwrap();
+    let validation = BoardValidation::new_verified("88F8", "F.20");
 
     // Valid modes
     assert!(
@@ -100,7 +101,8 @@ fn test_authorization_blocks_unsupported_fan_mode() {
             &HardwareRequest::SetFanMode {
                 mode: "auto".to_string()
             },
-            &board
+            &board,
+            Some(&validation)
         )
         .is_ok()
     );
@@ -109,7 +111,8 @@ fn test_authorization_blocks_unsupported_fan_mode() {
             &HardwareRequest::SetFanMode {
                 mode: "max".to_string()
             },
-            &board
+            &board,
+            Some(&validation)
         )
         .is_ok()
     );
@@ -120,6 +123,7 @@ fn test_authorization_blocks_unsupported_fan_mode() {
             mode: "manual".to_string(),
         },
         &board,
+        Some(&validation),
     )
     .expect_err("reject manual");
     assert!(matches!(
@@ -132,6 +136,7 @@ fn test_authorization_blocks_unsupported_fan_mode() {
             mode: "extreme_turbo".to_string(),
         },
         &board,
+        Some(&validation),
     )
     .expect_err("reject extreme_turbo");
     assert!(matches!(
@@ -141,8 +146,75 @@ fn test_authorization_blocks_unsupported_fan_mode() {
 }
 
 #[test]
+fn test_authorization_blocks_unvalidated_hardware_mutations() {
+    let board = resolve_board_profile("88F8").unwrap();
+    let unvalidated = BoardValidation::new_unvalidated("88F8", "F.20");
+
+    // Read requests always pass even without validation
+    assert!(authorize_mutation(&HardwareRequest::GetCapabilities, &board, None).is_ok());
+    assert!(authorize_mutation(&HardwareRequest::GetFanStatus, &board, None).is_ok());
+    assert!(authorize_mutation(&HardwareRequest::GetPowerProfiles, &board, None).is_ok());
+    assert!(authorize_mutation(&HardwareRequest::GetPowerProfile, &board, None).is_ok());
+
+    // Mutations fail when validation is None
+    let fan_req = HardwareRequest::SetFanMode {
+        mode: "max".to_string(),
+    };
+    let power_req = HardwareRequest::SetPowerProfile {
+        profile: "performance".to_string(),
+    };
+    let preset_req = HardwareRequest::ApplyPreset {
+        preset: "gaming".to_string(),
+    };
+    let rgb_req = HardwareRequest::SetRgbEnabled { enabled: true };
+
+    assert!(matches!(
+        authorize_mutation(&fan_req, &board, None).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+    assert!(matches!(
+        authorize_mutation(&power_req, &board, None).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+    assert!(matches!(
+        authorize_mutation(&preset_req, &board, None).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+    assert!(matches!(
+        authorize_mutation(&rgb_req, &board, None).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+
+    // Mutations fail when validation record exists but write flags are false
+    assert!(matches!(
+        authorize_mutation(&fan_req, &board, Some(&unvalidated)).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+    assert!(matches!(
+        authorize_mutation(&power_req, &board, Some(&unvalidated)).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+    assert!(matches!(
+        authorize_mutation(&preset_req, &board, Some(&unvalidated)).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+    assert!(matches!(
+        authorize_mutation(&rgb_req, &board, Some(&unvalidated)).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+
+    // Board mismatch rejected
+    let mismatch_val = BoardValidation::new_verified("8A24", "F.10");
+    assert!(matches!(
+        authorize_mutation(&fan_req, &board, Some(&mismatch_val)).unwrap_err(),
+        HardwareControlError::UnsupportedMode(_)
+    ));
+}
+
+#[test]
 fn test_mock_named_pipe_client_server_communication() {
     let board = resolve_board_profile("88F8").unwrap();
+    let validation = BoardValidation::new_verified("88F8", "F.20");
     let conn = HpWmiConnection { is_available: true };
 
     // 1. Client builds request and serializes frame
@@ -156,7 +228,7 @@ fn test_mock_named_pipe_client_server_communication() {
     assert_eq!(server_req, req);
 
     // 3. Server handles request and generates response
-    let response = handle_request(server_req, &board, &conn);
+    let response = handle_request(server_req, &board, Some(&validation), &conn);
 
     // 4. Server encodes response
     let resp_frame = encode_frame(&response).expect("server encode response");
