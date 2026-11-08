@@ -9,10 +9,20 @@ use windows_sys::Win32::UI::Shell::{
 
 /// Display a desktop notification via the shell notification area.
 pub fn show_notification(title: &str, message: &str) -> Result<(), DesktopError> {
+    show_notification_with_hwnd(title, message, 0)
+}
+
+/// Display a desktop notification associated with a specific window/tray handle.
+pub fn show_notification_with_hwnd(
+    title: &str,
+    message: &str,
+    hwnd: isize,
+) -> Result<(), DesktopError> {
     #[cfg(target_os = "windows")]
     {
         let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd as windows_sys::Win32::Foundation::HWND;
         nid.uID = 1;
         nid.uFlags = NIF_INFO;
         nid.dwInfoFlags = NIIF_INFO;
@@ -33,6 +43,7 @@ pub fn show_notification(title: &str, message: &str) -> Result<(), DesktopError>
             tracing::warn!(
                 title,
                 message,
+                hwnd,
                 "Shell_NotifyIconW notification dispatch failed"
             );
         }
@@ -40,6 +51,7 @@ pub fn show_notification(title: &str, message: &str) -> Result<(), DesktopError>
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = hwnd;
         tracing::info!(title, message, "mock desktop notification posted");
         Ok(())
     }

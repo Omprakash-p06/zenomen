@@ -64,6 +64,24 @@ impl std::fmt::Debug for TrayHandle {
 unsafe impl Send for TrayHandle {}
 unsafe impl Sync for TrayHandle {}
 
+impl TrayHandle {
+    /// Display a balloon/toast notification bound to this tray icon instance.
+    pub fn show_notification(&self, title: &str, message: &str) -> Result<(), DesktopError> {
+        #[cfg(target_os = "windows")]
+        {
+            crate::desktop::windows::notifications::show_notification_with_hwnd(
+                title,
+                message,
+                self.hwnd as isize,
+            )
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            crate::desktop::windows::notifications::show_notification(title, message)
+        }
+    }
+}
+
 impl Drop for TrayHandle {
     fn drop(&mut self) {
         let _ = remove_tray_icon(self);
