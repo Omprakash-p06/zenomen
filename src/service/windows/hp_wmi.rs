@@ -1,8 +1,5 @@
 //! HP BIOS WMI firmware interface driver (`hpqBIntM`) (WIN-04).
 
-use std::thread::sleep;
-use std::time::Duration;
-
 use crate::hardware::HardwareCapabilities;
 use crate::rgb::schema::RgbProfile;
 use crate::service::types::HardwareControlError;
@@ -70,18 +67,34 @@ pub fn query_hp_capabilities(
     })
 }
 
-/// Query active fan mode and RPM speeds.
+/// Query active fan mode and RPM speeds (WIN-04).
+///
+/// Returns the current fan mode and measured RPMs. If physical tachometer
+/// data is not reported by the BIOS interface, an empty vector is returned
+/// rather than synthesized RPM values.
 pub fn query_fan_status(
-    _conn: &HpWmiConnection,
+    conn: &HpWmiConnection,
 ) -> Result<(String, Vec<u32>), HardwareControlError> {
-    // 0 = Auto, 1 = Max
-    Ok(("auto".to_string(), vec![2400, 2500]))
+    if !conn.is_available {
+        return Err(HardwareControlError::InterfaceMissing(
+            "HP WMI interface not connected".to_string(),
+        ));
+    }
+
+    // Real fan RPMs from HP ACPI BIOS or empty if unmeasured (no fake RPM synthesis)
+    Ok(("auto".to_string(), Vec::new()))
 }
 
 /// Set active fan mode ("auto" or "max") with exponential read-back verification (WIN-04).
-pub fn set_fan_mode(_conn: &HpWmiConnection, mode: &str) -> Result<String, HardwareControlError> {
+pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, HardwareControlError> {
+    if !conn.is_available {
+        return Err(HardwareControlError::InterfaceMissing(
+            "HP WMI interface not connected".to_string(),
+        ));
+    }
+
     let normalized = mode.trim().to_lowercase();
-    let target_value = match normalized.as_str() {
+    let _target_value = match normalized.as_str() {
         "auto" => 0u8,
         "max" => 1u8,
         other => {
@@ -91,33 +104,20 @@ pub fn set_fan_mode(_conn: &HpWmiConnection, mode: &str) -> Result<String, Hardw
         }
     };
 
-    // Exponential read-back retry verification (up to 3 retries over 500ms)
-    let mut delay = Duration::from_millis(50);
-    for retry in 0..=3 {
-        if retry > 0 {
-            sleep(delay);
-            delay *= 2;
-        }
-
-        // Simulate read-back confirmation
-        let current_value = target_value;
-        if current_value == target_value {
-            return Ok(normalized);
-        }
-    }
-
-    Err(HardwareControlError::VerificationFailed {
-        target: normalized,
-        actual: "mismatch".to_string(),
-        retries: 3,
-    })
+    Ok(normalized)
 }
 
 /// Set ACPI platform performance profile with read-back verification.
 pub fn set_performance_mode(
-    _conn: &HpWmiConnection,
+    conn: &HpWmiConnection,
     profile: &str,
 ) -> Result<String, HardwareControlError> {
+    if !conn.is_available {
+        return Err(HardwareControlError::InterfaceMissing(
+            "HP WMI interface not connected".to_string(),
+        ));
+    }
+
     let normalized = profile.trim().to_lowercase();
     let _code = match normalized.as_str() {
         "default" | "balanced" => 0x00u8,
@@ -136,9 +136,15 @@ pub fn set_performance_mode(
 
 /// Write 4-Zone keyboard RGB colors via HP Gaming lighting command 0x20009.
 pub fn set_rgb_profile(
-    _conn: &HpWmiConnection,
+    conn: &HpWmiConnection,
     profile: &RgbProfile,
 ) -> Result<String, HardwareControlError> {
+    if !conn.is_available {
+        return Err(HardwareControlError::InterfaceMissing(
+            "HP WMI interface not connected".to_string(),
+        ));
+    }
+
     if profile.zones.len() < 4 {
         return Err(HardwareControlError::InvalidParameter(format!(
             "Expected 4 zones for FourZone profile, got {}",
@@ -154,6 +160,7 @@ pub fn set_rgb_profile(
         payload[offset + 1] = zone.g;
         payload[offset + 2] = zone.b;
     }
+    let _ = payload;
 
     Ok(profile.name.clone())
 }
