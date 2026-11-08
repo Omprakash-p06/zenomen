@@ -1,17 +1,17 @@
 ---
-last_mapped_commit: 206cdc2634e0a9d0a07a90f0580927ad5b1c554e
-last_mapped_at: 2026-11-07
+last_mapped_commit: 4691619f4e741bd5944f2085fa455b135ff873af
+last_mapped_at: 2026-11-08
 ---
 # Coding Conventions
 
-**Analysis Date:** 2026-11-07
+**Analysis Date:** 2026-11-08
 
 ## Naming Patterns
 
 **Files:**
 - Rust source files are `snake_case.rs`: `src/core/state.rs`, `src/hardware/linux/hwmon.rs`, `src/desktop/system_integration.rs`, `src/hardware/windows/cpu.rs`, `src/service/windows/pipe.rs`.
 - Modules that own a subsystem use a directory plus `mod.rs` (this repo does not use `foo/foo.rs`): `src/core/mod.rs`, `src/hardware/mod.rs`, `src/service/mod.rs`, `src/rgb/mod.rs`, `src/desktop/mod.rs`, `src/config/mod.rs`, `src/hardware/linux/mod.rs`, `src/hardware/windows/mod.rs`, `src/service/windows/mod.rs`, `src/desktop/windows/mod.rs`.
-- Integration test suites are `tests/<area>_tests.rs` — 18 files (17 integration test suites and 1 benchmark suite, totaling 110 integration tests), e.g. `tests/config_tests.rs`, `tests/hardware_service_tests.rs`, `tests/mock_hardware_tests.rs`, `tests/logging_tests.rs`, `tests/windows_service_tests.rs`, `tests/windows_telemetry_tests.rs`.
+- Integration test suites are `tests/<area>_tests.rs` — 18 files (17 integration test suites and 1 benchmark suite, totaling 113 integration tests), e.g. `tests/config_tests.rs`, `tests/hardware_service_tests.rs`, `tests/mock_hardware_tests.rs`, `tests/logging_tests.rs`, `tests/windows_service_tests.rs`, `tests/windows_telemetry_tests.rs`.
 - Binaries: `src/main.rs` builds `zenomen`; `src/bin/zenomen-hw.rs` builds `zenomen-hw` (`Cargo.toml` lines 40-47).
 
 **Functions:**
@@ -45,7 +45,7 @@ last_mapped_at: 2026-11-07
   - Magic numbers are extracted into named constants, e.g. `GAP_PERIOD_TICKS`, `GAP_TICKS`, `RAM_TOTAL_MB` (`src/hardware/mock.rs`).
 
 **Test function names:**
-- 58 of 150 verified automated tests use a `test_` prefix (common in integration suites such as `desktop_integration_tests.rs`, `hardware_service_tests.rs`, `fan_control_tests.rs`, `packaging_tests.rs`, `power_preset_tests.rs`, `windows_service_tests.rs`, and `windows_telemetry_tests.rs`). Unit tests in `src/` and newer domain suites use descriptive sentences: `a_partial_sample_is_degraded_but_still_counted` (`src/core/state.rs`), `nominal_provider_emits_valid_values_across_sensors` (`tests/mock_hardware_tests.rs`), `test_filetime_delta_to_cpu_utilization_nominal` (`tests/windows_telemetry_tests.rs`).
+- 62 of 153 verified automated tests use a `test_` prefix (common in integration suites such as `desktop_integration_tests.rs`, `hardware_service_tests.rs`, `fan_control_tests.rs`, `packaging_tests.rs`, `power_preset_tests.rs`, `windows_service_tests.rs`, and `windows_telemetry_tests.rs`). Unit tests in `src/` and newer domain suites use descriptive sentences: `a_partial_sample_is_degraded_but_still_counted` (`src/core/state.rs`), `nominal_provider_emits_valid_values_across_sensors` (`tests/mock_hardware_tests.rs`), `test_filetime_delta_to_cpu_utilization_nominal` (`tests/windows_telemetry_tests.rs`).
 - Follow the descriptive sentence or domain-focused style for new tests; do not rename existing tests just to normalize.
 - Requirement-oriented suites use a stable numeric prefix: `degradation_01_...` through `degradation_08_...` (`tests/degradation_tests.rs`).
 
@@ -58,7 +58,14 @@ last_mapped_at: 2026-11-07
   - `unsafe { std::env::set_var(...) }` where tests mutate the environment (`tests/logging_tests.rs:54`).
 - 4-space indentation, no tabs, no trailing whitespace, LF endings.
 - Formatting is a hard CI gate: `cargo fmt --all -- --check` accompanied by `git diff --check`.
-- Standard verification pipeline: `cargo fmt --all -- --check`, `git diff --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `xvfb-run -a cargo test --all`, and `./scripts/validate-icons.py`.
+- Standard verification pipeline:
+  - `git diff --check`
+  - `cargo fmt --all -- --check`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `cargo check --target x86_64-pc-windows-msvc --no-default-features`
+  - `cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw`
+  - `xvfb-run -a cargo test --all`
+  - `./scripts/validate-icons.py`
 
 **Linting:**
 - Clippy runs with all targets and all features, warnings denied: `cargo clippy --all-targets --all-features -- -D warnings` (`.github/workflows/ci.yml:60`; the release workflow adds `--locked`).
@@ -184,8 +191,8 @@ Examples: `src/app.rs:16-24`, `src/hardware/registry.rs:7-13`, `src/core/worker.
 ## Documentation Synchronization
 
 - When interfaces, test counts, or build requirements change, update `README.md` and the relevant docstrings in the same change (AGENTS.md rule 10).
-- Total test count: 150 automated tests verified passing across 18 integration test suites and unit tests (40 unit tests in `src/lib.rs` and 110 integration tests in `tests/`). Ensure docs and tests remain synchronized when touching the test suite.
+- Total test count: 153 verified automated tests across 18 test suites and unit tests (all passing: 40 unit tests in `src/lib.rs` and 113 integration tests in `tests/`). Ensure docs and tests remain synchronized when touching the test suite.
 
 ---
 
-*Convention analysis: 2026-11-07*
+*Convention analysis: 2026-11-08*

@@ -1,10 +1,10 @@
 ---
-last_mapped_commit: 206cdc2634e0a9d0a07a90f0580927ad5b1c554e
-last_mapped_at: 2026-11-07
+last_mapped_commit: 4691619f4e741bd5944f2085fa455b135ff873af
+last_mapped_at: 2026-11-08
 ---
 # Testing Patterns
 
-**Analysis Date:** 2026-11-07
+**Analysis Date:** 2026-11-08
 
 ## Test Framework
 
@@ -20,9 +20,11 @@ last_mapped_at: 2026-11-07
 
 ```bash
 # Standard verification commands pipeline
-cargo fmt --all -- --check
 git diff --check
+cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
+cargo check --target x86_64-pc-windows-msvc --no-default-features
+cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw
 xvfb-run -a cargo test --all
 ./scripts/validate-icons.py
 
@@ -55,11 +57,11 @@ Helper scripts in `scripts/` include:
 
 ## Test Inventory
 
-**Total test count: 150 automated tests verified passing across 18 integration test suites and unit tests** (40 unit tests in `src/lib.rs` across 11 modules and 110 integration tests across 18 files under `tests/`). There are no `#[ignore]`, no `#[should_panic]`, and no async tests.
+**Total test count: 153 verified automated tests across 18 test suites and unit tests (all passing)** (40 unit tests in `src/lib.rs` across 11 modules and 113 integration tests across 18 files under `tests/`). There are no `#[ignore]`, no `#[should_panic]`, and no async tests.
 
 ### Key Test Suites & Recent Additions
-- `tests/windows_service_tests.rs` (6 tests): verifies Windows named-pipe protocol framing, round-trip serialization of all hardware requests and responses, rejection of oversized (>64 KB) payloads, OMEN/Victus motherboard profile resolution, authorization matrix blocking unsupported fan modes, and in-memory mock named-pipe client-server communication.
-- `tests/windows_telemetry_tests.rs` (6 tests): verifies Windows native telemetry calculation math: `GetSystemTimes` `WindowsCpuTimes` delta math (nominal, 100% busy, 0% idle, zero delta, and backwards clock protection), memory calculation (total, available, and corruption saturation), battery status parsing (handling AC online, discharging, absent battery 128 flag, and guarding against flag 255 false positives), and DXGI GPU vendor ID recognition.
+- `tests/windows_service_tests.rs` (8 tests): named pipe protocol roundtrip, 64 KB payload rejection, board profile resolution and unknown board rejection, fan mode authorization, unvalidated hardware mutation blocking (BoardValidation gating), mock client-server named pipe communication, and non-Windows lifecycle/server interface missing guards.
+- `tests/windows_telemetry_tests.rs` (8 tests): GetSystemTimes CPU delta utilization math, clock warp / zero delta guards, GlobalMemoryStatusEx RAM math, battery status parsing (charging, discharging, unknown flag 255, desktop flag 128), DXGI vendor ID recognition, GpuPerformanceCollector & VRAM distinction, and structured sensor telemetry guarantees.
 - `tests/desktop_integration_tests.rs` (12 tests): verifies Linux and Windows desktop integration contracts, including autostart lifecycles, single-instance D-Bus service dispatch, SNI/DBusMenu status notifier items, icon assets, releases URL formatting, launcher failure fallback, Windows local AppData path resolution, Windows release URL safety, and registry autostart key escaping.
 - `tests/sensor_registry_tests.rs` (11 tests): verifies sensor priority matrix (`k10temp` and `coretemp` selected over `acpitz`, falling back to `acpitz` when CPU driver missing), fan/pwm discovery on HP WMI, sysfs battery presence detection (measured dynamically via `/sys/class/power_supply`), non-synthesizing absence guarantees, and custom root isolation for generic PWM fans.
 - `tests/rgb_tests.rs` (9 tests): verifies hex color validation, built-in presets, OpenOMEN migration safety, all three interface variants (four-zone, legacy, kernel patch), verified hardware writes, and restoring the previous profile when re-enabling RGB instead of hardcoding white.
@@ -88,8 +90,8 @@ Helper scripts in `scripts/` include:
 | `tests/rgb_tests.rs` | 9 | 422 | Hex validation, presets, OpenOMEN migration, 3 interface variants, verified writes, restore-previous |
 | `tests/sensor_registry_tests.rs` | 11 | 299 | Sensor priority matrix, fan discovery, sysfs battery presence detection, generic PWM guard |
 | `tests/telemetry_history_tests.rs` | 5 | 111 | 120-sample bound, SVG path generation/gaps, dynamic capacity window resizing |
-| `tests/windows_service_tests.rs` | 6 | 180 | Named pipe framing, 64 KB payload guard, OMEN/Victus board profiles, request authorization, mock pipe client-server |
-| `tests/windows_telemetry_tests.rs` | 6 | 134 | WindowsCpuTimes delta math, zero/backwards delta handling, RAM usage, battery status flag 255 guard, DXGI vendors |
+| `tests/windows_service_tests.rs` | 8 | 291 | Named pipe framing, 64 KB payload guard, OMEN/Victus board profiles, fan mode authorization, mutation gating, mock client-server, non-Windows guards |
+| `tests/windows_telemetry_tests.rs` | 8 | 190 | WindowsCpuTimes delta math, clock warp / zero delta guards, RAM math, battery status parsing, DXGI vendors, GPU/VRAM distinction, sensor guarantees |
 
 **Unit test modules in `src/` (`#[cfg(test)] mod tests`):**
 
@@ -203,16 +205,20 @@ let backend = HardwareBackend::new(&root);
 
 ### Windows Testing Strategy
 Windows platform code is rigorously tested in headless Linux environments without requiring a Windows kernel or live Win32 APIs:
-- **Mock Named Pipe IPC:** Framing and transport semantics are tested via in-memory byte streams using `encode_frame` and `decode_frame`. Full request-response lifecycles (`HardwareRequest` → `handle_request` → `HardwareResponse`) execute in `tests/windows_service_tests.rs:136-179` without opening OS pipe handles.
+- **Mock Named Pipe IPC:** Framing and transport semantics are tested via in-memory byte streams using `encode_frame` and `decode_frame`. Full request-response lifecycles (`HardwareRequest` → `handle_request` → `HardwareResponse`) execute in `tests/windows_service_tests.rs` without opening OS pipe handles.
 - **Mock Security Descriptors & Buffer Guards:** Protocol tests verify length-prefixed payload safety, rejecting payloads exceeding `MAX_PAYLOAD_SIZE` (64 KB) and truncated headers before memory allocation (`src/service/protocol.rs`, `tests/windows_service_tests.rs`). Security descriptors are validated against the canonical SDDL string `PIPE_SDDL`.
-- **Mock Telemetry Math:**
-  - **CPU Delta Math:** `tests/windows_telemetry_tests.rs:8-58` feeds synthetic `WindowsCpuTimes` (kernel, user, idle) into `calculate_cpu_utilization`, verifying nominal calculation (66.67%), 100% busy, 0% idle, zero-elapsed-time edge cases (`None`), and backward time-warp clock protection.
-  - **DXGI Vendor Recognition:** `tests/windows_telemetry_tests.rs:118-124` asserts PCI vendor ID mapping (`0x10DE` -> Nvidia, `0x1002` -> AMD, `0x8086` -> Intel, unknown -> `GpuVendor::Unknown`).
-  - **Battery Status Flag 255 Guard:** `tests/windows_telemetry_tests.rs:69-106` verifies `parse_battery_status`, testing charging, discharging, desktop missing battery (flag 128 -> `None`), unknown lifetime (`0xFFFFFFFF`), and guarding against battery flag 255 (marking charging as `None` rather than a false positive `Some(true)`).
-  - **Memory Math:** `calculate_ram_usage` tested with 16 GB total / 6 GB available, zero values, and saturation when available exceeds total.
-- **Board Validation Matrix:**
-  - `resolve_board_profile` tested against known HP motherboard IDs (`88F8` OMEN 15/16 AMD, `8A24` Intel case-insensitivity, `8A3E` Victus) and rejecting unknown/empty strings (`tests/windows_service_tests.rs:59-93`).
+- **Board Validation & Mutation Gating:**
+  - `resolve_board_profile` tested against known HP motherboard IDs (`88F8` OMEN 15/16 AMD, `8A24` Intel case-insensitivity, `8A3E` Victus) and rejecting unknown/empty strings (`tests/windows_service_tests.rs`).
   - Request authorization matrix (`authorize_mutation`) validated to permit auto/max fan modes and reject unauthorized modes (`manual`, `extreme_turbo`) with typed `HardwareControlError` variants.
+  - Unvalidated hardware mutation blocking strictly enforces `BoardValidation` gating, preventing unvalidated writes or mismatched board mutations.
+- **Mock Telemetry Math & Sensor Guarantees:**
+  - **GetSystemTimes CPU Delta Utilization Math & Clock Warp Guards:** `tests/windows_telemetry_tests.rs` feeds synthetic `WindowsCpuTimes` (kernel, user, idle) into `calculate_cpu_utilization`, verifying nominal calculation (66.67%), 100% busy, 0% idle, zero delta guards (`None`), and backward clock warp protection.
+  - **GlobalMemoryStatusEx RAM Math:** `calculate_ram_usage` tested with 16 GB total / 6 GB available, zero values, and saturation when available exceeds total.
+  - **Battery Status Parsing:** `tests/windows_telemetry_tests.rs` verifies `parse_battery_status`, testing charging, discharging, desktop missing battery (flag 128 -> `None`), unknown lifetime (`0xFFFFFFFF`), and guarding against battery flag 255 (marking charging as `None` rather than a false positive `Some(true)`).
+  - **DXGI Vendor ID Recognition:** `tests/windows_telemetry_tests.rs` asserts PCI vendor ID mapping (`0x10DE` -> Nvidia, `0x1002` -> AMD, `0x8086` -> Intel, unknown -> `GpuVendor::Unknown`).
+  - **GpuPerformanceCollector & VRAM Distinction:** Dedicated VRAM total is reported honestly, while used VRAM returns honest `None` when unqueried; absent adapter handled cleanly.
+  - **Structured Sensor Telemetry Guarantees:** Validates sensor source enumeration (`Win32`, `DXGI`, `PDH`) and temperature/fan sensor fallback structures ensuring honest absence reporting without fabricating fake metrics.
+- **Non-Windows Lifecycle & Server Interface Missing Guards:** Validates non-Windows lifecycle functions (`register_service`, `uninstall_service`, `run_service`, `run_console_service`) and server pipe entry points (`create_server_pipe`, `run_pipe_server`) return `HardwareControlError::InterfaceMissing` instead of failing unsafely (`tests/windows_service_tests.rs`).
 
 ### External Command Double — Fake Executable
 ```rust
@@ -269,7 +275,7 @@ Used in `src/hardware/linux/hwmon.rs`, `tests/linux_gpu_tests.rs`, `tests/diagno
 
 **Integration Tests:**
 - Scope: multi-module flows (worker + provider + channels), filesystem/sysfs trees, fake executables, desktop/autostart behavior, packaging assets, Windows protocol round-trips, degradation matrix.
-- Location: `tests/*.rs`; 110 tests across 18 suites.
+- Location: `tests/*.rs`; 113 tests across 18 suites.
 - Approach: public `zenomen::` API, injected roots, `MockHardware`, `AppState::apply`.
 
 **E2E Tests:**
@@ -295,12 +301,14 @@ Used in `src/hardware/linux/hwmon.rs`, `tests/linux_gpu_tests.rs`, `tests/diagno
 ## CI Checks
 
 Single `quality` job on `ubuntu-latest` (`.github/workflows/ci.yml`), least-privilege `contents: read`, concurrency cancellation, all gates blocking:
-1. `cargo fmt --all -- --check`
-2. `git diff --check`
+1. `git diff --check`
+2. `cargo fmt --all -- --check`
 3. `cargo clippy --all-targets --all-features -- -D warnings`
-4. `xvfb-run -a cargo test --all` (or `xvfb-run --auto-servernum cargo test --all`)
-5. `./scripts/validate-icons.py`
-6. `cargo audit` against the committed `Cargo.lock`
+4. `cargo check --target x86_64-pc-windows-msvc --no-default-features`
+5. `cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw`
+6. `xvfb-run -a cargo test --all` (or `xvfb-run --auto-servernum cargo test --all`)
+7. `./scripts/validate-icons.py`
+8. `cargo audit` against the committed `Cargo.lock`
 
 ## Known Gaps
 
@@ -315,9 +323,9 @@ Single `quality` job on `ubuntu-latest` (`.github/workflows/ci.yml`), least-priv
 2. Use `MockHardware` or inject a temp root; never touch live hardware, `/sys`, or root paths.
 3. Create a uniquely named temp dir and clean it via `Drop` (copy the `TestDir` pattern).
 4. Assert with a message that explains the hardware/state contract being protected.
-5. Run `cargo fmt --all -- --check`, `git diff --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `xvfb-run -a cargo test --all`, and `./scripts/validate-icons.py`.
+5. Run `git diff --check`, `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo check --target x86_64-pc-windows-msvc --no-default-features`, `cargo check --target x86_64-pc-windows-msvc --bin zenomen-hw`, `xvfb-run -a cargo test --all`, and `./scripts/validate-icons.py`.
 6. Update the test counts in documentation if the total changes.
 
 ---
 
-*Testing analysis: 2026-11-07*
+*Testing analysis: 2026-11-08*
