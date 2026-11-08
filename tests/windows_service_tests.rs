@@ -250,3 +250,42 @@ fn test_mock_named_pipe_client_server_communication() {
         other => panic!("Unexpected response: {other:?}"),
     }
 }
+
+#[test]
+fn test_lifecycle_and_server_guards_on_non_windows() {
+    #[cfg(not(windows))]
+    {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+        use zenomen::service::windows::lifecycle::{
+            register_service, run_console_service, run_service, uninstall_service,
+        };
+        use zenomen::service::windows::pipe::create_server_pipe;
+        use zenomen::service::windows::server::run_pipe_server;
+
+        assert!(matches!(
+            register_service().unwrap_err(),
+            HardwareControlError::InterfaceMissing(_)
+        ));
+        assert!(matches!(
+            uninstall_service().unwrap_err(),
+            HardwareControlError::InterfaceMissing(_)
+        ));
+        assert!(matches!(
+            run_service().unwrap_err(),
+            HardwareControlError::InterfaceMissing(_)
+        ));
+        assert!(matches!(
+            run_console_service().unwrap_err(),
+            HardwareControlError::InterfaceMissing(_)
+        ));
+        assert!(matches!(
+            create_server_pipe(true).unwrap_err(),
+            HardwareControlError::InterfaceMissing(_)
+        ));
+        assert!(matches!(
+            run_pipe_server(Arc::new(AtomicBool::new(true))).unwrap_err(),
+            HardwareControlError::InterfaceMissing(_)
+        ));
+    }
+}

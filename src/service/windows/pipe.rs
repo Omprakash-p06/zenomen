@@ -13,13 +13,15 @@ pub const PIPE_BUFFER_SIZE: u32 = 65536;
 pub const PIPE_TIMEOUT_MS: u32 = 30000;
 
 /// Create an instance of the server named pipe with security attributes.
-pub fn create_server_pipe() -> Result<*mut std::ffi::c_void, HardwareControlError> {
+pub fn create_server_pipe(
+    _first_instance: bool,
+) -> Result<*mut std::ffi::c_void, HardwareControlError> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, LocalFree};
         use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
         use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+            FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
         };
         use windows_sys::Win32::System::Pipes::{
             CreateNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
@@ -39,10 +41,15 @@ pub fn create_server_pipe() -> Result<*mut std::ffi::c_void, HardwareControlErro
             std::ptr::null_mut()
         };
 
+        let mut open_mode = PIPE_ACCESS_DUPLEX;
+        if _first_instance {
+            open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+        }
+
         let handle = unsafe {
             CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
+                open_mode,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                 4, // Max instances
                 PIPE_BUFFER_SIZE,

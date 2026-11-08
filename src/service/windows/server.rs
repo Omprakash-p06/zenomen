@@ -1,7 +1,7 @@
 //! Named pipe hardware request dispatch server (WIN-03).
 
 use crate::rgb::schema::RgbProfile;
-use crate::service::types::PresetResult;
+use crate::service::types::{HardwareControlError, PresetResult};
 use crate::service::windows::authorization::authorize_mutation;
 use crate::service::windows::hp_wmi::{self, HpWmiConnection};
 use crate::service::windows::profiles::{BoardProfile, BoardValidation};
@@ -97,5 +97,201 @@ pub fn handle_request(
             }
         }
         HardwareRequest::SetRgbEnabled { enabled } => HardwareResponse::RgbEnabledSet(enabled),
+    }
+}
+
+/// Run the named pipe hardware server loop on \\.\pipe\ZenOmen.Hardware.v1 (WIN-03).
+///
+/// Listens for client connections, verifies client session security, decodes incoming
+/// length-prefixed frames, dispatches authorized hardware commands, and writes responses.
+/// Runs until `stop_signal` is set to true.
+pub fn run_pipe_server(
+    stop_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), HardwareControlError> {
+    #[cfg(windows)]
+    {
+        use crate::service::windows::pipe::{PIPE_BUFFER_SIZE, create_server_pipe};
+        use crate::service::windows::protocol::{MAX_PAYLOAD_SIZE, decode_frame, encode_frame};
+        use crate::service::windows::security::verify_client_session;
+        use std::sync::atomic::Ordering;
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED};
+        use windows_sys::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile};
+        use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, DisconnectNamedPipe};
+
+        // Resolve active motherboard
+        let board_id =
+            crate::hardware::windows::device::read_board_id().unwrap_or_else(|| "88F8".to_string());
+        let board = crate::service::windows::profiles::resolve_board_profile(&board_id)
+            .unwrap_or_else(|| crate::service::windows::profiles::BoardProfile {
+                board_id: board_id.clone(),
+                model_family: "Generic HP OMEN / Victus".to_string(),
+                fan_count: 2,
+                has_max_fan: true,
+                has_custom_curves: false,
+                supported_power_profiles: vec!["balanced".to_string(), "performance".to_string()],
+                rgb_zone_count: 0,
+            });
+
+        let validation = BoardValidation::new_unvalidated(&board.board_id, "F.00");
+        let conn = hp_wmi::connect_hp_wmi().unwrap_or(HpWmiConnection {
+            is_available: false,
+        });
+
+        tracing::info!(
+            board = %board.board_id,
+            model = %board.model_family,
+            wmi_available = conn.is_available,
+            "Named pipe hardware server started listening"
+        );
+
+        let mut first_instance = true;
+
+        while !stop_signal.load(Ordering::Relaxed) {
+            let pipe = match create_server_pipe(first_instance) {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::error!("Failed to create named pipe instance: {e}");
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    continue;
+                }
+            };
+            first_instance = false;
+
+            // Wait for client to connect
+            let connected = unsafe { ConnectNamedPipe(pipe, std::ptr::null_mut()) };
+            if connected == 0 {
+                let err = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+                if err != ERROR_PIPE_CONNECTED {
+                    unsafe { CloseHandle(pipe) };
+                    continue;
+                }
+            }
+
+            // Verify caller session to prevent cross-session / RDP tampering
+            if let Err(e) = verify_client_session(pipe) {
+                tracing::warn!("Rejecting unauthorized client connection: {e}");
+                unsafe {
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }
+                continue;
+            }
+
+            // Read 4-byte length prefix
+            let mut len_buf = [0u8; 4];
+            let mut bytes_read = 0u32;
+            let success = unsafe {
+                ReadFile(
+                    pipe,
+                    len_buf.as_mut_ptr() as *mut _,
+                    4,
+                    &mut bytes_read,
+                    std::ptr::null_mut(),
+                )
+            };
+
+            if success == 0 || bytes_read != 4 {
+                unsafe {
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }
+                continue;
+            }
+
+            let payload_len = u32::from_be_bytes(len_buf) as usize;
+            if payload_len > MAX_PAYLOAD_SIZE {
+                tracing::warn!(
+                    payload_len,
+                    "Client frame exceeds MAX_PAYLOAD_SIZE, dropping"
+                );
+                unsafe {
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }
+                continue;
+            }
+
+            // Read payload bytes
+            let mut payload = vec![0u8; payload_len];
+            let mut total_read = 0usize;
+            let mut read_failed = false;
+
+            while total_read < payload_len {
+                let mut chunk_read = 0u32;
+                let to_read = (payload_len - total_read).min(PIPE_BUFFER_SIZE as usize) as u32;
+                let ok = unsafe {
+                    ReadFile(
+                        pipe,
+                        payload[total_read..].as_mut_ptr() as *mut _,
+                        to_read,
+                        &mut chunk_read,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if ok == 0 || chunk_read == 0 {
+                    read_failed = true;
+                    break;
+                }
+                total_read += chunk_read as usize;
+            }
+
+            if read_failed || total_read != payload_len {
+                unsafe {
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }
+                continue;
+            }
+
+            // Reconstruct full frame for decode
+            let mut frame = Vec::with_capacity(4 + payload_len);
+            frame.extend_from_slice(&len_buf);
+            frame.extend_from_slice(&payload);
+
+            let (request, _): (HardwareRequest, usize) = match decode_frame(&frame) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Failed to decode client request frame: {e}");
+                    unsafe {
+                        DisconnectNamedPipe(pipe);
+                        CloseHandle(pipe);
+                    }
+                    continue;
+                }
+            };
+
+            // Process request and produce response
+            let response = handle_request(request, &board, Some(&validation), &conn);
+
+            // Encode and transmit response
+            if let Ok(resp_bytes) = encode_frame(&response) {
+                let mut bytes_written = 0u32;
+                unsafe {
+                    WriteFile(
+                        pipe,
+                        resp_bytes.as_ptr() as *const _,
+                        resp_bytes.len() as u32,
+                        &mut bytes_written,
+                        std::ptr::null_mut(),
+                    );
+                    FlushFileBuffers(pipe);
+                }
+            }
+
+            unsafe {
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+            }
+        }
+
+        tracing::info!("Named pipe hardware server shut down cleanly");
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = stop_signal;
+        Err(HardwareControlError::InterfaceMissing(
+            "Windows named pipe server is only supported on Windows".to_string(),
+        ))
     }
 }
