@@ -191,9 +191,140 @@ pub fn sample_gpu_memory(adapter: Option<&GpuAdapterInfo>) -> (Option<u32>, Opti
     }
 }
 
-/// Sample GPU engine utilization percentage. Returns None if PDH counter is unconfigured.
+/// Persistent Performance Data Helper (PDH) query collector for GPU utilization (WIN-01).
+pub struct GpuPerformanceCollector {
+    #[cfg(windows)]
+    query: isize,
+    #[cfg(windows)]
+    counter: isize,
+    #[cfg(windows)]
+    is_valid: bool,
+}
+
+impl GpuPerformanceCollector {
+    /// Create a new persistent PDH GPU query collector.
+    pub fn new() -> Self {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::Performance::{PdhAddEnglishCounterW, PdhOpenQueryW};
+
+            let mut query: isize = 0;
+            let status = unsafe { PdhOpenQueryW(std::ptr::null(), 0, &mut query) };
+            if status != 0 {
+                return Self {
+                    query: 0,
+                    counter: 0,
+                    is_valid: false,
+                };
+            }
+
+            // Path for GPU Engine utilization across all engines
+            let counter_path: Vec<u16> = r"\GPU Engine(*)\Utilization Percentage"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let mut counter: isize = 0;
+            let counter_status =
+                unsafe { PdhAddEnglishCounterW(query, counter_path.as_ptr(), 0, &mut counter) };
+
+            if counter_status != 0 {
+                unsafe {
+                    windows_sys::Win32::System::Performance::PdhCloseQuery(query);
+                }
+                return Self {
+                    query: 0,
+                    counter: 0,
+                    is_valid: false,
+                };
+            }
+
+            // Perform initial sample collection to establish delta baseline
+            unsafe {
+                windows_sys::Win32::System::Performance::PdhCollectQueryData(query);
+            }
+
+            Self {
+                query,
+                counter,
+                is_valid: true,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            Self {}
+        }
+    }
+
+    /// Sample aggregate GPU utilization percentage.
+    pub fn sample_utilization(&mut self) -> Option<f32> {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::Performance::{
+                PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PdhCollectQueryData,
+                PdhGetFormattedCounterValue,
+            };
+
+            if !self.is_valid {
+                return None;
+            }
+
+            let collect_status = unsafe { PdhCollectQueryData(self.query) };
+            if collect_status != 0 {
+                return None;
+            }
+
+            let mut value: PDH_FMT_COUNTERVALUE = unsafe { std::mem::zeroed() };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(
+                    self.counter,
+                    PDH_FMT_DOUBLE,
+                    std::ptr::null_mut(),
+                    &mut value,
+                )
+            };
+
+            if status != 0 {
+                return None;
+            }
+
+            let val = unsafe { value.Anonymous.doubleValue };
+            if val.is_nan() || val < 0.0 {
+                None
+            } else {
+                Some((val as f32).clamp(0.0, 100.0))
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+}
+
+impl Default for GpuPerformanceCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for GpuPerformanceCollector {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            if self.is_valid && self.query != 0 {
+                unsafe {
+                    windows_sys::Win32::System::Performance::PdhCloseQuery(self.query);
+                }
+            }
+        }
+    }
+}
+
+/// Sample GPU engine utilization percentage using a temporary collector.
 pub fn sample_gpu_utilization() -> Option<f32> {
-    None
+    let mut collector = GpuPerformanceCollector::new();
+    collector.sample_utilization()
 }
 
 /// Read GPU core temperature. Returns None if unsupported rather than fabricating 0.

@@ -10,6 +10,7 @@ pub struct WindowsHardwareProvider {
     cpu_sampler: Mutex<cpu::WindowsCpuSampler>,
     cpu_model: String,
     primary_gpu: Option<gpu::GpuAdapterInfo>,
+    gpu_collector: Mutex<gpu::GpuPerformanceCollector>,
     has_battery: bool,
 }
 
@@ -39,6 +40,7 @@ impl WindowsHardwareProvider {
             cpu_sampler: Mutex::new(sampler),
             cpu_model,
             primary_gpu,
+            gpu_collector: Mutex::new(gpu::GpuPerformanceCollector::new()),
             has_battery,
         }
     }
@@ -77,8 +79,13 @@ impl HardwareProvider for WindowsHardwareProvider {
         let (ram_used_mb, ram_total_mb) = memory::read_ram_usage();
         let (cpu_temp_c, gpu_temp_c) = sensors::read_temperature_sensors();
 
+        let mut gpu_collector = self
+            .gpu_collector
+            .lock()
+            .map_err(|e| format!("GPU collector lock poisoned: {e}"))?;
+
         let (gpu_name, gpu_utilization) = if let Some(ref gpu) = self.primary_gpu {
-            (Some(gpu.name.clone()), gpu::sample_gpu_utilization())
+            (Some(gpu.name.clone()), gpu_collector.sample_utilization())
         } else {
             (None, None)
         };

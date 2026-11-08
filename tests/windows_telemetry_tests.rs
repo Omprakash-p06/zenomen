@@ -132,3 +132,59 @@ fn test_dxgi_vendor_id_recognition() {
     assert_eq!(recognize_gpu_vendor(0x8086), GpuVendor::Intel);
     assert_eq!(recognize_gpu_vendor(0x1234), GpuVendor::Unknown(0x1234));
 }
+
+#[test]
+fn test_gpu_collector_and_vram() {
+    use zenomen::hardware::windows::gpu::{
+        GpuAdapterInfo, GpuPerformanceCollector, sample_gpu_memory, sample_gpu_utilization,
+    };
+
+    let mut collector = GpuPerformanceCollector::new();
+    let _util = collector.sample_utilization();
+    let _one_off = sample_gpu_utilization();
+
+    // VRAM distinction: Dedicated VRAM total is reported, while used is honest None without query
+    let adapter = GpuAdapterInfo {
+        name: "NVIDIA GeForce RTX 4070 Laptop GPU".to_string(),
+        vendor_id: 0x10DE,
+        device_id: 0x2860,
+        dedicated_vram_mb: 8192,
+        shared_vram_mb: 16384,
+        is_software: false,
+    };
+
+    let (used, total) = sample_gpu_memory(Some(&adapter));
+    assert_eq!(total, Some(8192));
+    assert_eq!(used, None); // Honest absence
+
+    let (none_used, none_total) = sample_gpu_memory(None);
+    assert_eq!(none_used, None);
+    assert_eq!(none_total, None);
+}
+
+#[test]
+fn test_sensor_telemetry_readings() {
+    use zenomen::hardware::windows::sensors::{
+        TemperatureSource, enumerate_sensor_sources, read_fan_readings, read_fan_rpms,
+        read_temperature_readings, read_temperature_sensors,
+    };
+
+    let sources = enumerate_sensor_sources();
+    assert!(sources.contains(&"Win32".to_string()));
+    assert!(sources.contains(&"DXGI".to_string()));
+    assert!(sources.contains(&"PDH".to_string()));
+
+    let (cpu_temp, gpu_temp) = read_temperature_sensors();
+    assert_eq!(cpu_temp, None);
+    assert_eq!(gpu_temp, None);
+
+    let temps = read_temperature_readings();
+    assert_eq!(temps.len(), 2);
+    assert_eq!(temps[0].source, TemperatureSource::Unavailable);
+    assert_eq!(temps[0].celsius, None);
+    assert_eq!(temps[1].source, TemperatureSource::Unavailable);
+    assert_eq!(temps[1].celsius, None);
+
+    assert!(read_fan_rpms().is_empty());
+    assert!(read_fan_readings().is_empty());
+}
