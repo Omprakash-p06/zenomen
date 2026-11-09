@@ -1300,3 +1300,79 @@ fn test_probe_thermal_profile_query_does_not_unlock_writes() {
     let auth_res = authorize_mutation(&req, &board, Some(&validation));
     assert!(auth_res.is_err());
 }
+
+#[test]
+fn test_8a3d_auto_restore_stops_when_arm_query_fails() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // Step 1: Max Fan clear succeeds
+    adapter.expect_call(write_ack());
+    // Step 2: Fan count (arm) query fails
+    adapter.expect_call(FakeResponse::FirmwareError { status: 5 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let err = zenomen::service::windows::hp_wmi::restore_automatic_fan_control(
+        &conn,
+        Some(victus_s::ThermalProfile::Balanced),
+    )
+    .expect_err("restore must stop on arm failure");
+
+    assert!(matches!(err, HardwareControlError::InvalidParameter(_)));
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[1].command_type, commands::FAN_COUNT);
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != commands::PERFORMANCE_MODE),
+        "failing arm query must prevent thermal profile write: {calls:?}"
+    );
+}
+
+#[test]
+fn test_8a3d_auto_restore_fails_when_profile_write_fails() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // Step 1: Max Fan clear succeeds
+    adapter.expect_call(write_ack());
+    // Step 2: Fan count query succeeds
+    adapter.expect_call(fan_count_response(2));
+    // Step 3: Profile write fails
+    adapter.expect_call(FakeResponse::FirmwareError { status: 3 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let err = zenomen::service::windows::hp_wmi::restore_automatic_fan_control(
+        &conn,
+        Some(victus_s::ThermalProfile::Performance),
+    )
+    .expect_err("profile write failure must be surfaced");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert_eq!(calls[2].command_type, commands::PERFORMANCE_MODE);
+}
+
+#[test]
+fn test_8a3d_auto_restore_failure_surfaces_honestly_in_set_fan_mode() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // Pre-write read-back reports Max Fan active
+    adapter.expect_call(fan_mode_response(0x01));
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    // set_fan_mode("auto") calls restore_automatic_fan_control(conn, None)
+    // On 8A3D, missing profile causes immediate UnsupportedMode failure
+    let err = zenomen::service::windows::hp_wmi::set_fan_mode(&conn, "auto")
+        .expect_err("8A3D without known profile must refuse auto restore");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    let calls = adapter.recorded_calls();
+    // Only the read-back query occurred, no writes
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_STATUS);
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != victus_s::FAN_LEVEL_SET_QUERY),
+        "0x2E level reset must never be sent on 8A3D: {calls:?}"
+    );
+}
