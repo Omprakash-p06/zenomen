@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use crate::core::events::{AppCommand, AppEvent};
 use crate::hardware::HardwareProvider;
+use crate::service::HardwareServiceClient;
 
 /// Target sampling interval: 1 Hz (1 second) per project specification.
 pub const SAMPLING_INTERVAL: Duration = Duration::from_secs(1);
@@ -57,14 +58,16 @@ pub fn spawn_monitoring_worker(
                 return;
             }
 
-            // 2. Initial sample on cold start so the UI doesn't remain empty for 1s
-            if !sample_and_dispatch(&provider, &event_sender) {
+            // 2. Hardware Service client initialization
+            let client = crate::service::HardwareServiceClient::new();
+
+            // 3. Initial sample on cold start so the UI doesn't remain empty for 1s
+            if !sample_and_dispatch(&provider, &event_sender, &client) {
                 tracing::warn!("event receiver dropped before initial sample; exiting worker");
                 return;
             }
 
-            // 3. Hardware Service client initialization and initial probe
-            let client = crate::service::HardwareServiceClient::new();
+            // 4. Dispatch initial service probe status
             let initial_status = client.status();
             let _ = event_sender.send(AppEvent::ServiceStatusChanged(initial_status.clone()));
 
@@ -130,7 +133,7 @@ pub fn spawn_monitoring_worker(
                             ui_visible = visible;
                             if ui_visible && was_hidden {
                                 // Immediate sample upon restoring window so UI frame is fresh
-                                if !sample_and_dispatch(&provider, &event_sender) {
+                                if !sample_and_dispatch(&provider, &event_sender, &client) {
                                     tracing::debug!("event receiver disconnected; exiting worker");
                                     break;
                                 }
@@ -139,7 +142,7 @@ pub fn spawn_monitoring_worker(
                         }
                         AppCommand::RefreshTelemetry => {
                             tracing::debug!("immediate telemetry refresh triggered");
-                            if !sample_and_dispatch(&provider, &event_sender) {
+                            if !sample_and_dispatch(&provider, &event_sender, &client) {
                                 tracing::debug!("event receiver disconnected; exiting worker");
                                 break;
                             }
@@ -305,7 +308,7 @@ pub fn spawn_monitoring_worker(
                     }
                 } else {
                     // Periodic sample (reached only via timeout when ui_visible is true)
-                    if !sample_and_dispatch(&provider, &event_sender) {
+                    if !sample_and_dispatch(&provider, &event_sender, &client) {
                         tracing::debug!("event receiver disconnected; exiting worker");
                         break;
                     }
@@ -345,11 +348,27 @@ pub fn spawn_monitoring_worker(
 fn sample_and_dispatch(
     provider: &Arc<dyn HardwareProvider>,
     event_sender: &Sender<AppEvent>,
+    client: &HardwareServiceClient,
 ) -> bool {
     match provider.sample_telemetry() {
-        Ok(snapshot) => event_sender
-            .send(AppEvent::TelemetryUpdated(snapshot))
-            .is_ok(),
+        Ok(mut snapshot) => {
+            // On Windows (or where tachometers are managed via privileged service),
+            // if provider has no fan tachometers, enrich with live fan telemetry from service.
+            if snapshot.fan_rpms.is_empty()
+                && client.status().is_connected()
+                && let Ok((mode, rpms)) = client.get_fan_status()
+            {
+                if !rpms.is_empty() {
+                    snapshot.fan_rpms = rpms;
+                }
+                if !mode.is_empty() {
+                    snapshot.fan_mode = mode;
+                }
+            }
+            event_sender
+                .send(AppEvent::TelemetryUpdated(snapshot))
+                .is_ok()
+        }
         Err(err) => {
             tracing::warn!(%err, "telemetry sampling failed");
             event_sender

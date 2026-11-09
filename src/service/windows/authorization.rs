@@ -40,8 +40,8 @@ pub fn authorize_mutation(
                 )));
             }
             if !val.fan_write_verified {
-                return Err(HardwareControlError::UnsupportedMode(format!(
-                    "Motherboard {} fan write operation is not validated in validation record",
+                return Err(HardwareControlError::AuthorizationFailed(format!(
+                    "Physical write withheld for board {}: WMI fan write protocol is implemented, but physical mutation is blocked pending hardware validation (fan_write_verified = false). Run 'zenomen-hw --validate-8a3d-fan' to physically validate fan response.",
                     board.board_id
                 )));
             }

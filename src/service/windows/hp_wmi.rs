@@ -1371,6 +1371,12 @@ pub fn set_max_fan_state(
 ) -> Result<(), HardwareControlError> {
     conn.ensure_available("set Max Fan state")?;
 
+    // On Victus S boards, calling 0x10 arms the user-defined state before applying max fan,
+    // matching upstream hp_wmi_apply_fan_settings(PWM_MODE_MAX).
+    if enabled && conn.is_victus_s() {
+        let _ = get_fan_count(conn);
+    }
+
     let payload = if enabled {
         [1u8, 0, 0, 0]
     } else {
@@ -1478,9 +1484,28 @@ pub fn set_victus_fan_levels(
     set_max_fan_state(conn, false)?;
 
     // 3. Validate against the firmware's own level range before writing.
-    let table = get_victus_fan_table(conn)?;
-    victus_s::validate_level("cpu", cpu_level, &table)?;
-    victus_s::validate_level("gpu", gpu_level, &table)?;
+    // If the fan table query fails, fall back to safe 1..=100 range validation.
+    let max_level = match get_victus_fan_table(conn) {
+        Ok(table) => {
+            victus_s::validate_level("cpu", cpu_level, &table)?;
+            victus_s::validate_level("gpu", gpu_level, &table)?;
+            table.max_rpm
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Victus S fan table query (0x2F) failed; falling back to 1..=100 range validation");
+            if cpu_level != victus_s::FAN_SPEED_AUTOMATIC && !(1..=100).contains(&cpu_level) {
+                return Err(HardwareControlError::InvalidParameter(format!(
+                    "cpu fan level {cpu_level} outside fallback range 1..=100 (0x00 = automatic)"
+                )));
+            }
+            if gpu_level != victus_s::FAN_SPEED_AUTOMATIC && !(1..=100).contains(&gpu_level) {
+                return Err(HardwareControlError::InvalidParameter(format!(
+                    "gpu fan level {gpu_level} outside fallback range 1..=100 (0x00 = automatic)"
+                )));
+            }
+            100
+        }
+    };
 
     // 4. One 0x2E request carries both fan levels.
     conn.adapter.bios_call(
@@ -1493,7 +1518,7 @@ pub fn set_victus_fan_levels(
     tracing::info!(
         cpu_level = cpu_level,
         gpu_level = gpu_level,
-        max_level = table.max_rpm,
+        max_level = max_level,
         "Victus S fan levels submitted"
     );
     Ok(())

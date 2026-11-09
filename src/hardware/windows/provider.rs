@@ -68,10 +68,13 @@ impl HardwareProvider for WindowsHardwareProvider {
                     1 => Some(crate::hardware::rgb::RgbInterfaceVariant::Legacy),
                     _ => None,
                 };
+                let has_power_wmi = board.thermal_profile_source
+                    == crate::service::windows::profiles::ThermalProfileSource::Wmi
+                    && !board.supported_power_profiles.is_empty();
                 (
-                    false,
-                    board.has_max_fan,
-                    !board.supported_power_profiles.is_empty(),
+                    board.fan_count > 0,
+                    board.has_max_fan || board.has_custom_curves,
+                    has_power_wmi,
                     board.rgb_zone_count > 0,
                     variant,
                 )
@@ -119,16 +122,19 @@ impl HardwareProvider for WindowsHardwareProvider {
 
         let (fan_mode, power_profile, power_profiles) = if let Some(ref board) = self.board_profile
         {
-            let p_first = board
-                .supported_power_profiles
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "balanced".to_string());
-            (
-                "auto".to_string(),
-                p_first,
-                board.supported_power_profiles.clone(),
-            )
+            let (p_first, p_list) = if board.thermal_profile_source
+                == crate::service::windows::profiles::ThermalProfileSource::Wmi
+            {
+                let first = board
+                    .supported_power_profiles
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "balanced".to_string());
+                (first, board.supported_power_profiles.clone())
+            } else {
+                (String::new(), Vec::new())
+            };
+            ("auto".to_string(), p_first, p_list)
         } else {
             (String::new(), String::new(), Vec::new())
         };

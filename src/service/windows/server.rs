@@ -61,19 +61,40 @@ pub fn handle_request(
         },
 
         HardwareRequest::GetPowerProfiles => {
-            HardwareResponse::PowerProfiles(board.supported_power_profiles.clone())
+            if board.thermal_profile_source
+                == crate::service::windows::profiles::ThermalProfileSource::EmbeddedController
+            {
+                HardwareResponse::PowerProfiles(Vec::new())
+            } else {
+                HardwareResponse::PowerProfiles(board.supported_power_profiles.clone())
+            }
         }
 
-        HardwareRequest::GetPowerProfile => match hp_wmi::query_power_profile(conn) {
-            Ok(profile) => HardwareResponse::PowerProfile(profile),
-            Err(e) => {
-                // Fall back to first supported profile name without claiming it is current.
-                tracing::warn!(
-                    "GetPowerProfile WMI read failed: {e}; returning profile list fallback"
+        HardwareRequest::GetPowerProfile => {
+            if board.thermal_profile_source
+                == crate::service::windows::profiles::ThermalProfileSource::EmbeddedController
+            {
+                tracing::debug!(
+                    board = %board.board_id,
+                    "Thermal profile is EC-managed on this board; WMI thermal read skipped"
                 );
-                HardwareResponse::Error(format!("Power profile read failed: {e}"))
+                HardwareResponse::Error(format!(
+                    "Thermal profile is EC-managed (register 0x95) on board {}; WMI thermal query (0x4C) is unsupported",
+                    board.board_id
+                ))
+            } else {
+                match hp_wmi::query_power_profile(conn) {
+                    Ok(profile) => HardwareResponse::PowerProfile(profile),
+                    Err(e) => {
+                        // Fall back to first supported profile name without claiming it is current.
+                        tracing::warn!(
+                            "GetPowerProfile WMI read failed: {e}; returning profile list fallback"
+                        );
+                        HardwareResponse::Error(format!("Power profile read failed: {e}"))
+                    }
+                }
             }
-        },
+        }
 
         HardwareRequest::SetPowerProfile { profile } => {
             match hp_wmi::set_performance_mode(conn, &profile) {

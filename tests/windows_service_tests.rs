@@ -363,12 +363,14 @@ fn test_authorization_blocks_unvalidated_hardware_mutations() {
             ),
             "{name} with no validation must return UnsupportedMode"
         );
+        let err = authorize_mutation(req, &board, Some(&unvalidated)).unwrap_err();
         assert!(
             matches!(
-                authorize_mutation(req, &board, Some(&unvalidated)).unwrap_err(),
+                err,
                 HardwareControlError::UnsupportedMode(_)
+                    | HardwareControlError::AuthorizationFailed(_)
             ),
-            "{name} with unvalidated record must return UnsupportedMode"
+            "{name} with unvalidated record must be rejected"
         );
     }
 
@@ -395,7 +397,7 @@ fn test_authorization_blocks_8a3d_mutations_from_resolve() {
         };
         let err = authorize_mutation(&fan_req, &board, Some(&validation))
             .expect_err("8A3D fan write must be blocked");
-        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+        assert!(matches!(err, HardwareControlError::AuthorizationFailed(_)));
     }
 }
 
@@ -422,7 +424,7 @@ fn test_authorization_power_rgb_flags_cannot_authorize_fan_write() {
         };
         let err = authorize_mutation(&fan_req, &board, Some(&mixed))
             .expect_err("fan write must require fan_write_verified");
-        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+        assert!(matches!(err, HardwareControlError::AuthorizationFailed(_)));
     }
 }
 
@@ -1754,5 +1756,165 @@ fn test_8a3d_read_only_telemetry_flow_full() {
             assert_eq!(rpms, vec![2200, 2000]);
         }
         other => panic!("Expected FanStatus, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_8a3d_max_fan_arms_state_with_0x10_and_payload_is_4_bytes() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // When enabled=true on Victus S, set_max_fan_state calls get_fan_count (0x10) then 0x27
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::set_max_fan_state(&conn, true)
+        .expect("set_max_fan_state enabled");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].command, HPWMI_GM);
+    assert_eq!(calls[0].command_type, commands::FAN_COUNT);
+    assert_eq!(calls[1].command, HPWMI_GM);
+    assert_eq!(calls[1].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[1].payload, vec![1, 0, 0, 0]);
+}
+
+#[test]
+fn test_8a3d_set_victus_fan_levels_payload_and_sequence() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // 1. get_fan_count (0x10)
+    adapter.expect_call(fan_count_response(2));
+    // 2. set_max_fan_state(false) (0x27 = [0, 0, 0, 0])
+    adapter.expect_call(write_ack());
+    // 3. get_victus_fan_table (0x2F) -> 14 rows, max_rpm = 58
+    let mut table_bytes = vec![0u8; 128];
+    table_bytes[0] = 2; // 2 fans
+    // Row 0: cpu 20, gpu 0, noise 20
+    table_bytes[2] = 20;
+    table_bytes[3] = 0;
+    table_bytes[4] = 20;
+    // Row 1: cpu 25, gpu 22, noise 25
+    table_bytes[5] = 25;
+    table_bytes[6] = 22;
+    table_bytes[7] = 25;
+    // Row 2: cpu 58, gpu 55, noise 40
+    table_bytes[8] = 58;
+    table_bytes[9] = 55;
+    table_bytes[10] = 40;
+    adapter.expect_call(FakeResponse::Success {
+        payload: table_bytes,
+    });
+    // 4. 0x2E {cpu_level, gpu_level}
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::set_victus_fan_levels(&conn, 40, 37)
+        .expect("set_victus_fan_levels");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls[0].command_type, commands::FAN_COUNT);
+    assert_eq!(calls[1].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[1].payload, vec![0, 0, 0, 0]);
+    assert_eq!(calls[2].command_type, victus_s::FAN_TABLE_QUERY);
+    assert_eq!(calls[3].command_type, victus_s::FAN_LEVEL_SET_QUERY);
+    assert_eq!(calls[3].payload, vec![40, 37]);
+}
+
+#[test]
+fn test_8a3d_set_victus_fan_levels_graceful_fallback_without_fan_table() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // 1. get_fan_count (0x10)
+    adapter.expect_call(fan_count_response(2));
+    // 2. set_max_fan_state(false) (0x27 = [0, 0, 0, 0])
+    adapter.expect_call(write_ack());
+    // 3. get_victus_fan_table (0x2F) fails with firmware error
+    adapter.expect_call(FakeResponse::FirmwareError { status: 3 });
+    // 4. Fallback validates 1..=100 and still executes 0x2E write
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::set_victus_fan_levels(&conn, 50, 50)
+        .expect("fallback range validation allows valid levels");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[3].command_type, victus_s::FAN_LEVEL_SET_QUERY);
+    assert_eq!(calls[3].payload, vec![50, 50]);
+}
+
+#[test]
+fn test_8a3d_thermal_profile_separation_in_server() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    let adapter = FakeWmiAdapter::new(true);
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    // GetPowerProfiles on 8A3D must return empty vec (no fake profiles)
+    let resp = handle_request(
+        HardwareRequest::GetPowerProfiles,
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    match resp {
+        HardwareResponse::PowerProfiles(profiles) => {
+            assert!(
+                profiles.is_empty(),
+                "EC-managed boards must not expose fake power profiles"
+            );
+        }
+        other => panic!("Expected PowerProfiles, got {other:?}"),
+    }
+
+    // GetPowerProfile on 8A3D must return Error explaining EC-managed without calling WMI
+    let resp = handle_request(
+        HardwareRequest::GetPowerProfile,
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    match resp {
+        HardwareResponse::Error(msg) => {
+            assert!(
+                msg.contains("EC-managed"),
+                "Error message must explain EC management: {msg}"
+            );
+            assert!(
+                msg.contains("0x95"),
+                "Error message must reference register 0x95: {msg}"
+            );
+        }
+        other => panic!("Expected Error response, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_8a3d_authorization_failure_message_guides_operator_to_validation() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    assert!(!validation.fan_write_verified);
+
+    let err = authorize_mutation(
+        &HardwareRequest::SetFanMode {
+            mode: "max".to_string(),
+        },
+        &board,
+        Some(&validation),
+    )
+    .expect_err("unverified fan write must fail");
+
+    match err {
+        HardwareControlError::AuthorizationFailed(msg) => {
+            assert!(
+                msg.contains("zenomen-hw --validate-8a3d-fan"),
+                "Error message must provide validation instructions: {msg}"
+            );
+            assert!(
+                msg.contains("fan_write_verified = false"),
+                "Error message must explain pending verification state: {msg}"
+            );
+        }
+        other => panic!("Expected AuthorizationFailed, got {other:?}"),
     }
 }
