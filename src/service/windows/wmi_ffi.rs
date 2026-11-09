@@ -19,6 +19,7 @@ pub const WBEM_INFINITE: u32 = 0xFFFF_FFFF;
 
 // VARENUM constants
 pub const VT_EMPTY: u16 = 0;
+pub const VT_I4: u16 = 3;
 pub const VT_BSTR: u16 = 8;
 pub const VT_DISPATCH: u16 = 9;
 pub const VT_UNKNOWN: u16 = 13;
@@ -28,15 +29,19 @@ pub const VT_ARRAY: u16 = 0x2000;
 
 // CIM types (from WbemCli.h)
 pub const CIM_ILLEGAL: i32 = 0xFFF;
+pub const CIM_UINT8: i32 = 17;
+pub const CIM_UINT32: i32 = 19;
 pub const CIM_OBJECT: i32 = 13;
+pub const CIM_FLAG_ARRAY: i32 = 0x2000;
 
 // WBEM HRESULT error codes
 pub const WBEM_E_FAILED: HRESULT = -2147217407i32; // 0x80041001
 pub const WBEM_E_NOT_FOUND: HRESULT = -2147217406i32; // 0x80041002
 pub const WBEM_E_ACCESS_DENIED: HRESULT = -2147217405i32; // 0x80041003
 pub const WBEM_E_PROVIDER_FAILURE: HRESULT = -2147217404i32; // 0x80041004
+pub const WBEM_E_TYPE_MISMATCH: HRESULT = -2147217403i32; // 0x80041005
 pub const WBEM_E_INVALID_PARAMETER: HRESULT = -2147217400i32; // 0x80041008
-pub const WBEM_E_TYPE_MISMATCH: HRESULT = -2147217383i32; // 0x80041019
+pub const WBEM_E_INVALID_PROPERTY_TYPE: HRESULT = -2147217383i32; // 0x80041019
 pub const WBEM_E_INVALID_CLASS: HRESULT = -2147217392i32; // 0x80041010
 pub const WBEM_E_TRANSPORT_FAILURE: HRESULT = -2147217387i32; // 0x80041015
 pub const WBEM_S_NO_ERROR: HRESULT = 0;
@@ -106,15 +111,24 @@ impl VARIANT {
         }
     }
 
-    pub fn from_u32(val: u32) -> Self {
+    /// Create a VT_I4 VARIANT for CIM_UINT32 properties.
+    ///
+    /// Microsoft WMI documents `VT_I4` as the required VARIANT representation for `CIM_UINT32`.
+    /// Passing `VT_UI4` results in `WBEM_E_TYPE_MISMATCH` (`0x80041005`).
+    /// The original `u32` bit pattern is preserved when cast into signed 32-bit `lVal` representation.
+    pub fn from_cim_uint32(val: u32) -> Self {
         Self {
-            vt: VT_UI4,
+            vt: VT_I4,
             wReserved1: 0,
             wReserved2: 0,
             wReserved3: 0,
-            data: val as usize,
+            data: (val as i32) as isize as usize,
             data2: 0,
         }
+    }
+
+    pub fn from_u32(val: u32) -> Self {
+        Self::from_cim_uint32(val)
     }
 
     pub fn from_safearray(sa: *mut SAFEARRAY) -> Self {
@@ -477,10 +491,14 @@ impl ScopedVariant {
         Self { inner: v }
     }
 
-    pub fn from_u32(val: u32) -> Self {
+    pub fn from_cim_uint32(val: u32) -> Self {
         Self {
-            inner: VARIANT::from_u32(val),
+            inner: VARIANT::from_cim_uint32(val),
         }
+    }
+
+    pub fn from_u32(val: u32) -> Self {
+        Self::from_cim_uint32(val)
     }
 
     pub fn from_safearray(sa: *mut SAFEARRAY) -> Self {
@@ -517,6 +535,7 @@ impl ScopedVariant {
 
     pub fn extract_u32(&self) -> Option<u32> {
         match self.inner.vt {
+            VT_I4 => Some((self.inner.data as i32) as u32),
             VT_UI4 => Some(self.inner.data as u32),
             VT_UI1 => Some((self.inner.data & 0xFF) as u32),
             _ => None,
@@ -612,12 +631,47 @@ mod tests {
     #[test]
     fn test_scoped_variant_u32_lifecycle() {
         let var = ScopedVariant::from_u32(0x20008);
-        assert_eq!(var.inner.vt, VT_UI4);
+        assert_eq!(var.inner.vt, VT_I4);
         assert_eq!(var.extract_u32(), Some(0x20008));
     }
 
     #[test]
-    fn test_scoped_variant_safearray_bytes() {
+    fn test_uint32_helper_creates_vt_i4() {
+        let var = VARIANT::from_cim_uint32(42);
+        assert_eq!(var.vt, VT_I4);
+    }
+
+    #[test]
+    fn test_uint32_zero_represented_correctly() {
+        let var = VARIANT::from_cim_uint32(0);
+        assert_eq!(var.vt, VT_I4);
+        assert_eq!(var.data, 0);
+        let scoped = ScopedVariant::from_cim_uint32(0);
+        assert_eq!(scoped.extract_u32(), Some(0));
+    }
+
+    #[test]
+    fn test_uint32_preserves_0x20008_bit_pattern() {
+        let val = 0x0002_0008u32;
+        let var = VARIANT::from_cim_uint32(val);
+        assert_eq!(var.vt, VT_I4);
+        assert_eq!((var.data as i32) as u32, val);
+        let scoped = ScopedVariant::from_cim_uint32(val);
+        assert_eq!(scoped.extract_u32(), Some(val));
+    }
+
+    #[test]
+    fn test_uint32_preserves_0xffffffff_bit_pattern() {
+        let val = 0xFFFF_FFFFu32;
+        let var = VARIANT::from_cim_uint32(val);
+        assert_eq!(var.vt, VT_I4);
+        assert_eq!((var.data as i32) as u32, val);
+        let scoped = ScopedVariant::from_cim_uint32(val);
+        assert_eq!(scoped.extract_u32(), Some(val));
+    }
+
+    #[test]
+    fn test_byte_arrays_use_vt_array_vt_ui1() {
         let payload = [0x53, 0x45, 0x43, 0x55]; // "SECU"
         let var = ScopedVariant::from_bytes(&payload).expect("create safearray variant");
         assert_eq!(var.inner.vt, VT_ARRAY | VT_UI1);

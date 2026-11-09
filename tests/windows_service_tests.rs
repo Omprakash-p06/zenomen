@@ -1376,3 +1376,127 @@ fn test_8a3d_auto_restore_failure_surfaces_honestly_in_set_fan_mode() {
         "0x2E level reset must never be sent on 8A3D: {calls:?}"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. WMI input envelope construction (0x80041005 type verification)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_envelope_plan_omits_hpqbdata_when_payload_empty() {
+    use zenomen::service::windows::hp_wmi::plan_hpq_input_envelope;
+
+    let props = plan_hpq_input_envelope(0x20008, 0x10, &[]);
+    assert_eq!(props.len(), 4);
+    assert_eq!(props[0].name, "Sign");
+    assert_eq!(props[1].name, "Command");
+    assert_eq!(props[2].name, "CommandType");
+    assert_eq!(props[3].name, "Size");
+    assert!(props.iter().all(|p| p.name != "hpqBData"));
+}
+
+#[test]
+fn test_envelope_plan_includes_hpqbdata_with_array_type_when_payload_non_empty() {
+    use zenomen::service::windows::hp_wmi::plan_hpq_input_envelope;
+
+    let payload = [0x01, 0x02, 0x03];
+    let props = plan_hpq_input_envelope(0x20008, 0x27, &payload);
+    assert_eq!(props.len(), 5);
+    let data_prop = props
+        .iter()
+        .find(|p| p.name == "hpqBData")
+        .expect("hpqBData present");
+    assert_eq!(data_prop.vt, 0x2000 | 17); // VT_ARRAY | VT_UI1
+    assert_eq!(data_prop.expected_cim, 0x2000 | 17); // CIM_FLAG_ARRAY | CIM_UINT8
+}
+
+#[test]
+fn test_envelope_property_put_failure_halts_construction_immediately() {
+    use zenomen::service::windows::hp_wmi::{EnvelopeSink, populate_hpq_envelope};
+
+    struct FailingSink {
+        fail_at: &'static str,
+        calls: Vec<String>,
+    }
+
+    impl EnvelopeSink for FailingSink {
+        fn put_prop(
+            &mut self,
+            name: &str,
+            _vt: u16,
+            _expected_cim: i32,
+            _vt_type_arg: i32,
+        ) -> Result<(), HardwareControlError> {
+            self.calls.push(name.to_string());
+            if name == self.fail_at {
+                Err(HardwareControlError::ProtocolError(format!(
+                    "Put({name}) failed with 0x80041005"
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    let mut sink = FailingSink {
+        fail_at: "Command",
+        calls: Vec::new(),
+    };
+
+    let err = populate_hpq_envelope(&mut sink, 0x20008, 0x10, &[0x01])
+        .expect_err("construction must halt on Command failure");
+    assert!(matches!(err, HardwareControlError::ProtocolError(_)));
+    // Sign succeeded, Command failed, CommandType, Size, hpqBData were never reached!
+    assert_eq!(sink.calls, vec!["Sign".to_string(), "Command".to_string()]);
+}
+
+#[test]
+fn test_envelope_failure_prevents_indata_and_exec_method() {
+    use zenomen::service::windows::hp_wmi::{EnvelopeSink, populate_hpq_envelope};
+
+    struct TrackingSink {
+        fail_on_sign: bool,
+        indata_attached: bool,
+        exec_method_called: bool,
+        calls: Vec<String>,
+    }
+
+    impl EnvelopeSink for TrackingSink {
+        fn put_prop(
+            &mut self,
+            name: &str,
+            _vt: u16,
+            _expected_cim: i32,
+            _vt_type_arg: i32,
+        ) -> Result<(), HardwareControlError> {
+            self.calls.push(name.to_string());
+            if self.fail_on_sign && name == "Sign" {
+                return Err(HardwareControlError::ProtocolError(
+                    "Sign failed".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    let mut sink = TrackingSink {
+        fail_on_sign: true,
+        indata_attached: false,
+        exec_method_called: false,
+        calls: Vec::new(),
+    };
+
+    let res = populate_hpq_envelope(&mut sink, 0x20008, 0x10, &[]);
+    assert!(res.is_err());
+    assert!(!sink.indata_attached);
+    assert!(!sink.exec_method_called);
+    assert_eq!(sink.calls, vec!["Sign".to_string()]);
+}
+
+#[test]
+fn test_fake_wmi_adapter_all_paths_pass() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_count_response(2));
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let count = zenomen::service::windows::hp_wmi::get_fan_count(&conn).expect("get fan count");
+    assert_eq!(count, 2);
+}

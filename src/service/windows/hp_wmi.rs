@@ -73,7 +73,7 @@ pub const HP_WMI_DATA_OUT_4_CLASS: &str = "hpqBDataOut4";
 pub const HPWMI_BIOS_GUID: &str = "5FB7F034-2C63-45E9-BE91-3D44E2C707E4";
 
 /// `Sign` property: ASCII "SECU".
-const SIGN_SECU_BYTES: [u8; 4] = *b"SECU";
+pub const SIGN_SECU_BYTES: [u8; 4] = *b"SECU";
 
 /// `HPWMI_GM` — command family for every gaming/thermal/fan operation (read and write).
 ///
@@ -150,6 +150,100 @@ pub fn method_for_output_size(out_size: u32) -> &'static str {
         129..=1024 => HP_WMI_METHOD_1024,
         _ => HP_WMI_METHOD_4096,
     }
+}
+
+/// Describes a property to be populated in the `hpqBDataIn` WMI envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedEnvelopeProperty {
+    pub name: String,
+    pub vt: u16,
+    pub expected_cim: i32,
+    pub vt_type_arg: i32,
+}
+
+/// Plan the properties for an `hpqBDataIn` envelope without touching COM.
+///
+/// Deterministically computes the sequence of `Put` operations required for
+/// `hpqBDataIn`, enforcing:
+/// 1. `Sign` uses `VT_ARRAY | VT_UI1` and `CIM_UINT8 | CIM_FLAG_ARRAY`.
+/// 2. `Command`, `CommandType`, and `Size` use `VT_I4` and `CIM_UINT32`.
+/// 3. If `payload` is empty, `hpqBData` is omitted entirely.
+/// 4. If `payload` is non-empty, `hpqBData` is included with `VT_ARRAY | VT_UI1`.
+pub fn plan_hpq_input_envelope(
+    command: u32,
+    command_type: u32,
+    payload: &[u8],
+) -> Vec<PlannedEnvelopeProperty> {
+    const VT_I4: u16 = 3;
+    const VT_UI1: u16 = 17;
+    const VT_ARRAY: u16 = 0x2000;
+    const CIM_UINT8: i32 = 17;
+    const CIM_UINT32: i32 = 19;
+    const CIM_FLAG_ARRAY: i32 = 0x2000;
+
+    let _ = (command, command_type);
+    let mut props = vec![
+        PlannedEnvelopeProperty {
+            name: "Sign".to_string(),
+            vt: VT_ARRAY | VT_UI1,
+            expected_cim: CIM_UINT8 | CIM_FLAG_ARRAY,
+            vt_type_arg: 0,
+        },
+        PlannedEnvelopeProperty {
+            name: "Command".to_string(),
+            vt: VT_I4,
+            expected_cim: CIM_UINT32,
+            vt_type_arg: 0,
+        },
+        PlannedEnvelopeProperty {
+            name: "CommandType".to_string(),
+            vt: VT_I4,
+            expected_cim: CIM_UINT32,
+            vt_type_arg: 0,
+        },
+        PlannedEnvelopeProperty {
+            name: "Size".to_string(),
+            vt: VT_I4,
+            expected_cim: CIM_UINT32,
+            vt_type_arg: 0,
+        },
+    ];
+
+    if !payload.is_empty() {
+        props.push(PlannedEnvelopeProperty {
+            name: "hpqBData".to_string(),
+            vt: VT_ARRAY | VT_UI1,
+            expected_cim: CIM_UINT8 | CIM_FLAG_ARRAY,
+            vt_type_arg: 0,
+        });
+    }
+
+    props
+}
+
+/// Abstract property sink for deterministic unit testing of WMI object construction.
+pub trait EnvelopeSink {
+    fn put_prop(
+        &mut self,
+        name: &str,
+        vt: u16,
+        expected_cim: i32,
+        vt_type_arg: i32,
+    ) -> Result<(), HardwareControlError>;
+}
+
+/// Populates an envelope using the given sink, immediately halting on any error.
+pub fn populate_hpq_envelope<S: EnvelopeSink>(
+    sink: &mut S,
+    command: u32,
+    command_type: u32,
+    payload: &[u8],
+) -> Result<(), HardwareControlError> {
+    let plan = plan_hpq_input_envelope(command, command_type, payload);
+    for prop in plan {
+        sink.put_prop(&prop.name, prop.vt, prop.expected_cim, prop.vt_type_arg)?;
+    }
+    Ok(())
 }
 
 // ──────────────────────────── WmiAdapter trait ─────────────────────────────
@@ -329,23 +423,49 @@ impl WmiAdapter for RealWmiAdapter {
 /// `obj` must be a live `IWbemClassObject` interface obtained from WMI, and the
 /// owning [`crate::service::windows::wmi_ffi::ComPtr`] must outlive this call.
 #[cfg(windows)]
-unsafe fn put_property(
+pub(crate) unsafe fn put_property(
     obj: *mut *const crate::service::windows::wmi_ffi::IWbemClassObjectVtbl,
     name: &str,
     value: &crate::service::windows::wmi_ffi::VARIANT,
-    cim_type: i32,
+    expected_cim: i32,
+    vt_type_arg: i32,
 ) -> Result<(), HardwareControlError> {
     use crate::service::windows::wmi_ffi::{Bstr, S_OK, last_error_description};
     use std::ffi::c_void;
 
+    tracing::debug!(
+        property = name,
+        actual_vt = value.vt,
+        expected_cim = expected_cim,
+        vt_type_arg = vt_type_arg,
+        "Setting WMI object property via IWbemClassObject::Put"
+    );
+
     let name_bstr = Bstr::new(name);
     // SAFETY: see the function contract — `obj` is a live WMI object.
-    let hr = unsafe { ((*(*obj)).Put)(obj as *mut c_void, name_bstr.as_ptr(), 0, value, cim_type) };
+    let hr = unsafe {
+        ((*(*obj)).Put)(
+            obj as *mut c_void,
+            name_bstr.as_ptr(),
+            0,
+            value,
+            vt_type_arg,
+        )
+    };
     if hr != S_OK {
         let detail = last_error_description().unwrap_or_else(|| "no IErrorInfo".to_string());
+        tracing::warn!(
+            property = name,
+            hr = hr,
+            actual_vt = value.vt,
+            expected_cim = expected_cim,
+            detail = %detail,
+            "IWbemClassObject::Put failed"
+        );
         return Err(HardwareControlError::ProtocolError(format!(
-            "IWbemClassObject::Put({name}) failed: HRESULT {hr:#010x} ({detail}); \
-             the hpqBDataIn envelope was rejected before ExecMethod"
+            "IWbemClassObject::Put({name}) failed: HRESULT {hr:#010x} (actual vt={}, expected cim={expected_cim}: {detail}); \
+             the hpqBDataIn envelope was rejected before ExecMethod",
+            value.vt
         )));
     }
     Ok(())
@@ -483,17 +603,35 @@ impl RealWmiAdapter {
             let datain_inst = ComPtr::from_raw(datain_inst_raw as *mut *const IWbemClassObjectVtbl);
 
             let sign_var = ScopedVariant::from_bytes(&SIGN_SECU_BYTES)?;
-            put_property(datain_inst.as_ptr(), "Sign", &sign_var.inner, 0)?;
+            put_property(
+                datain_inst.as_ptr(),
+                "Sign",
+                &sign_var.inner,
+                CIM_UINT8 | CIM_FLAG_ARRAY,
+                0,
+            )?;
 
-            let cmd_var = ScopedVariant::from_u32(command);
-            put_property(datain_inst.as_ptr(), "Command", &cmd_var.inner, 0)?;
+            let cmd_var = ScopedVariant::from_cim_uint32(command);
+            put_property(
+                datain_inst.as_ptr(),
+                "Command",
+                &cmd_var.inner,
+                CIM_UINT32,
+                0,
+            )?;
 
-            let cmdtype_var = ScopedVariant::from_u32(command_type);
-            put_property(datain_inst.as_ptr(), "CommandType", &cmdtype_var.inner, 0)?;
+            let cmdtype_var = ScopedVariant::from_cim_uint32(command_type);
+            put_property(
+                datain_inst.as_ptr(),
+                "CommandType",
+                &cmdtype_var.inner,
+                CIM_UINT32,
+                0,
+            )?;
 
             // `Size` is the number of meaningful payload bytes, not the buffer size.
-            let size_var = ScopedVariant::from_u32(payload.len() as u32);
-            put_property(datain_inst.as_ptr(), "Size", &size_var.inner, 0)?;
+            let size_var = ScopedVariant::from_cim_uint32(payload.len() as u32);
+            put_property(datain_inst.as_ptr(), "Size", &size_var.inner, CIM_UINT32, 0)?;
 
             // `hpqBData` is a variable-length array: omit it entirely for empty
             // requests. A zero-element SAFEARRAY is not the same thing and is
@@ -503,27 +641,25 @@ impl RealWmiAdapter {
                 None
             } else {
                 let var = ScopedVariant::from_bytes(payload)?;
-                put_property(datain_inst.as_ptr(), "hpqBData", &var.inner, 0)?;
+                put_property(
+                    datain_inst.as_ptr(),
+                    "hpqBData",
+                    &var.inner,
+                    CIM_UINT8 | CIM_FLAG_ARRAY,
+                    0,
+                )?;
                 Some(var)
             };
 
             // 4. Attach the embedded object as the method's `InData` parameter.
             let indata_var = ScopedVariant::from_unknown(datain_inst.as_ptr() as *mut c_void);
-            let indata_name = Bstr::new("InData");
-            let hr = ((*(*in_params.as_ptr())).Put)(
-                in_params.as_ptr() as *mut c_void,
-                indata_name.as_ptr(),
-                0,
+            put_property(
+                in_params.as_ptr(),
+                "InData",
                 &indata_var.inner,
                 CIM_OBJECT,
-            );
-            if hr != S_OK {
-                let detail =
-                    last_error_description().unwrap_or_else(|| "no IErrorInfo".to_string());
-                return Err(HardwareControlError::ProtocolError(format!(
-                    "Put(InData) failed: HRESULT {hr:#010x} ({detail})"
-                )));
-            }
+                CIM_OBJECT,
+            )?;
 
             // 5. Resolve a namespace-relative object path for the active instance.
             let query_bstr = Bstr::new(&format!("SELECT * FROM {HP_WMI_CLASS}"));

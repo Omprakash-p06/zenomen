@@ -510,8 +510,155 @@ fn probe_input_class_types() -> Vec<(String, i32, i32)> {
     results
 }
 
+#[cfg(windows)]
+fn probe_input_envelope_construction() -> Vec<(String, i32, u16, &'static str)> {
+    use crate::service::windows::hp_wmi::HP_WMI_DATA_IN_CLASS;
+    use crate::service::windows::wmi_ffi::*;
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+
+    let mut results = Vec::new();
+    unsafe {
+        let init_hr = CoInitializeEx(null_mut(), 0);
+        if init_hr != S_OK && init_hr != S_FALSE && init_hr != RPC_E_CHANGED_MODE {
+            return results;
+        }
+        let mut locator_raw: *mut c_void = null_mut();
+        if CoCreateInstance(
+            &CLSID_WBEM_LOCATOR,
+            null_mut(),
+            1,
+            &IID_IWBEM_LOCATOR,
+            &mut locator_raw,
+        ) != S_OK
+            || locator_raw.is_null()
+        {
+            return results;
+        }
+        let locator = ComPtr::from_raw(locator_raw as *mut *const IWbemLocatorVtbl);
+
+        let ns_bstr = Bstr::new(r"ROOT\WMI");
+        let mut services_raw: *mut c_void = null_mut();
+        if ((*(*locator.as_ptr())).ConnectServer)(
+            locator.as_ptr() as *mut c_void,
+            ns_bstr.as_ptr(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            0,
+            null_mut(),
+            null_mut(),
+            &mut services_raw,
+        ) != S_OK
+            || services_raw.is_null()
+        {
+            return results;
+        }
+        let services = ComPtr::from_raw(services_raw as *mut *const IWbemServicesVtbl);
+
+        let class_bstr = Bstr::new(HP_WMI_DATA_IN_CLASS);
+        let mut class_raw: *mut c_void = null_mut();
+        if ((*(*services.as_ptr())).GetObject)(
+            services.as_ptr() as *mut c_void,
+            class_bstr.as_ptr(),
+            0,
+            null_mut(),
+            &mut class_raw,
+            null_mut(),
+        ) != S_OK
+            || class_raw.is_null()
+        {
+            return results;
+        }
+        let class_obj = ComPtr::from_raw(class_raw as *mut *const IWbemClassObjectVtbl);
+
+        let mut inst_raw: *mut c_void = null_mut();
+        if ((*(*class_obj.as_ptr())).SpawnInstance)(
+            class_obj.as_ptr() as *mut c_void,
+            0,
+            &mut inst_raw,
+        ) != S_OK
+            || inst_raw.is_null()
+        {
+            return results;
+        }
+        let inst = ComPtr::from_raw(inst_raw as *mut *const IWbemClassObjectVtbl);
+
+        // Sign: uint8[]
+        let sign_var = ScopedVariant::from_bytes(&crate::service::windows::hp_wmi::SIGN_SECU_BYTES);
+        if let Ok(v) = sign_var {
+            let name = Bstr::new("Sign");
+            let hr = ((*(*inst.as_ptr())).Put)(
+                inst.as_ptr() as *mut c_void,
+                name.as_ptr(),
+                0,
+                &v.inner,
+                0,
+            );
+            results.push(("Sign".to_string(), hr, v.inner.vt, "uint8[]"));
+        }
+
+        // Command: uint32 -> VT_I4
+        let cmd_var = ScopedVariant::from_cim_uint32(crate::service::windows::hp_wmi::HPWMI_GM);
+        let name = Bstr::new("Command");
+        let hr = ((*(*inst.as_ptr())).Put)(
+            inst.as_ptr() as *mut c_void,
+            name.as_ptr(),
+            0,
+            &cmd_var.inner,
+            0,
+        );
+        results.push(("Command".to_string(), hr, cmd_var.inner.vt, "uint32"));
+
+        // CommandType: uint32 -> VT_I4
+        let cmdtype_var =
+            ScopedVariant::from_cim_uint32(crate::service::windows::hp_wmi::commands::FAN_COUNT);
+        let name = Bstr::new("CommandType");
+        let hr = ((*(*inst.as_ptr())).Put)(
+            inst.as_ptr() as *mut c_void,
+            name.as_ptr(),
+            0,
+            &cmdtype_var.inner,
+            0,
+        );
+        results.push((
+            "CommandType".to_string(),
+            hr,
+            cmdtype_var.inner.vt,
+            "uint32",
+        ));
+
+        // Size: uint32 -> VT_I4
+        let size_var = ScopedVariant::from_cim_uint32(0);
+        let name = Bstr::new("Size");
+        let hr = ((*(*inst.as_ptr())).Put)(
+            inst.as_ptr() as *mut c_void,
+            name.as_ptr(),
+            0,
+            &size_var.inner,
+            0,
+        );
+        results.push(("Size".to_string(), hr, size_var.inner.vt, "uint32"));
+
+        // hpqBData: uint8[]
+        let data_var = ScopedVariant::from_bytes(&[0x01, 0x02]);
+        if let Ok(v) = data_var {
+            let name = Bstr::new("hpqBData");
+            let hr = ((*(*inst.as_ptr())).Put)(
+                inst.as_ptr() as *mut c_void,
+                name.as_ptr(),
+                0,
+                &v.inner,
+                0,
+            );
+            results.push(("hpqBData".to_string(), hr, v.inner.vt, "uint8[]"));
+        }
+    }
+    results
+}
+
 #[cfg(not(windows))]
-fn probe_input_class_types() -> Vec<(String, i32, i32)> {
+fn probe_input_envelope_construction() -> Vec<(String, i32, u16, &'static str)> {
     Vec::new()
 }
 
@@ -606,6 +753,15 @@ pub fn print_wmi_diagnostic() {
             println!(
                 "   {name:<12} Get HRESULT {hr:#010x}  CIM type {cim_type:#06x} ({})",
                 cim_type_label(cim_type)
+            );
+        }
+    }
+    let constr = probe_input_envelope_construction();
+    if !constr.is_empty() {
+        println!(" hpqBDataIn Construction Put Probe (evidence for 0x80041005):");
+        for (name, hr, vt, expected_cim) in constr {
+            println!(
+                "   {name:<12} Put HRESULT {hr:#010x}  VARIANT vt={vt:#06x} -> CIM {expected_cim}"
             );
         }
     }
