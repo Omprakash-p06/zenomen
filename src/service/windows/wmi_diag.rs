@@ -52,6 +52,7 @@ pub struct WmiDiagnosticReport {
     pub instance_path: Option<String>,
     pub instance_hresult: Option<i32>,
     pub readonly_probe_status: Option<String>,
+    pub thermal_profile_probe_status: Option<String>,
     pub category: WmiDiagnosticCategory,
     pub summary: String,
 }
@@ -81,6 +82,7 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_path: None,
                 instance_hresult: None,
                 readonly_probe_status: None,
+                thermal_profile_probe_status: None,
                 category: WmiDiagnosticCategory::ComFailure,
                 summary: format!("CoInitializeEx failed with HRESULT {hr:#010x}"),
             };
@@ -121,6 +123,7 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_path: None,
                 instance_hresult: None,
                 readonly_probe_status: None,
+                thermal_profile_probe_status: None,
                 category: WmiDiagnosticCategory::ComFailure,
                 summary: format!("CoCreateInstance(IWbemLocator) failed with HRESULT {hr:#010x}"),
             };
@@ -161,6 +164,7 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_path: None,
                 instance_hresult: None,
                 readonly_probe_status: None,
+                thermal_profile_probe_status: None,
                 category: cat,
                 summary: format!("ConnectServer(ROOT\\WMI) failed with HRESULT {hr:#010x}"),
             };
@@ -193,6 +197,7 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_path: None,
                 instance_hresult: None,
                 readonly_probe_status: None,
+                thermal_profile_probe_status: None,
                 category: WmiDiagnosticCategory::ClassMissing,
                 summary: format!("Class {HP_WMI_CLASS} not found: HRESULT {hr_class:#010x}"),
             };
@@ -322,21 +327,34 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
             instance_status = format!("ExecQuery error: HRESULT {hr_query:#010x}");
         }
 
-        // 8. If an instance is found, attempt a non-mutating, read-only probe (FAN_COUNT)
+        // 8. If an instance is found, attempt non-mutating, read-only probes
         let mut readonly_probe_status = None;
+        let mut thermal_profile_probe_status = None;
         if instance_path.is_some() {
             match RealWmiAdapter::connect() {
-                Ok(adapter) => match adapter.bios_call(REQ_READ, commands::FAN_COUNT, &[], 128) {
-                    Ok(payload) => {
-                        readonly_probe_status =
-                            Some(format!("Success (FAN_COUNT payload: {payload:02x?})"));
+                Ok(adapter) => {
+                    match adapter.bios_call(HPWMI_GM, commands::FAN_COUNT, &[0u8], 4) {
+                        Ok(payload) => {
+                            readonly_probe_status =
+                                Some(format!("Success (FAN_COUNT payload: {payload:02x?})"));
+                        }
+                        Err(e) => {
+                            readonly_probe_status = Some(format!("Failed: {e}"));
+                        }
                     }
-                    Err(e) => {
-                        readonly_probe_status = Some(format!("Failed: {e}"));
+                    match adapter.bios_call(HPWMI_GM, commands::THERMAL_PROFILE_QUERY, &[], 4) {
+                        Ok(payload) => {
+                            thermal_profile_probe_status =
+                                Some(format!("Success (Opcode 0x4C payload: {payload:02x?})"));
+                        }
+                        Err(e) => {
+                            thermal_profile_probe_status = Some(format!("Unsupported/Failed: {e}"));
+                        }
                     }
-                },
+                }
                 Err(e) => {
                     readonly_probe_status = Some(format!("Adapter connect failed: {e}"));
+                    thermal_profile_probe_status = Some(format!("Adapter connect failed: {e}"));
                 }
             }
         }
@@ -357,11 +375,12 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
         };
 
         let summary = format!(
-            "HP WMI Diagnostic: Category={}, Methods=[{}], Instance={}, Probe={}",
+            "HP WMI Diagnostic: Category={}, Methods=[{}], Instance={}, Probe={}, Opcode0x4C={}",
             category,
             methods_found.join(", "),
             instance_status,
-            readonly_probe_status.as_deref().unwrap_or("Skipped")
+            readonly_probe_status.as_deref().unwrap_or("Skipped"),
+            thermal_profile_probe_status.as_deref().unwrap_or("Skipped")
         );
 
         WmiDiagnosticReport {
@@ -377,6 +396,7 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
             instance_path,
             instance_hresult,
             readonly_probe_status,
+            thermal_profile_probe_status,
             category,
             summary,
         }
@@ -398,8 +418,124 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
         instance_path: None,
         instance_hresult: None,
         readonly_probe_status: None,
+        thermal_profile_probe_status: None,
         category: WmiDiagnosticCategory::NamespaceMissing,
         summary: "HP WMI is only supported on Windows".to_string(),
+    }
+}
+
+/// Report the CIM type of every `hpqBDataIn` property, plus the HRESULT of a
+/// typed `Get` on each one.
+///
+/// This is the evidence needed to explain `WBEM_E_INVALID_PARAMETER`
+/// (`0x80041008`): a `Put` against the wrong CIM type leaves the property unset,
+/// and the provider then rejects the whole input object.
+#[cfg(windows)]
+fn probe_input_class_types() -> Vec<(String, i32, i32)> {
+    use crate::service::windows::hp_wmi::HP_WMI_DATA_IN_CLASS;
+    use crate::service::windows::wmi_ffi::*;
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+
+    let mut results = Vec::new();
+    unsafe {
+        let init_hr = CoInitializeEx(null_mut(), 0);
+        if init_hr != S_OK && init_hr != S_FALSE && init_hr != RPC_E_CHANGED_MODE {
+            return results;
+        }
+        let mut locator_raw: *mut c_void = null_mut();
+        if CoCreateInstance(
+            &CLSID_WBEM_LOCATOR,
+            null_mut(),
+            1,
+            &IID_IWBEM_LOCATOR,
+            &mut locator_raw,
+        ) != S_OK
+            || locator_raw.is_null()
+        {
+            return results;
+        }
+        let locator = ComPtr::from_raw(locator_raw as *mut *const IWbemLocatorVtbl);
+
+        let ns_bstr = Bstr::new(r"ROOT\WMI");
+        let mut services_raw: *mut c_void = null_mut();
+        if ((*(*locator.as_ptr())).ConnectServer)(
+            locator.as_ptr() as *mut c_void,
+            ns_bstr.as_ptr(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            0,
+            null_mut(),
+            null_mut(),
+            &mut services_raw,
+        ) != S_OK
+            || services_raw.is_null()
+        {
+            return results;
+        }
+        let services = ComPtr::from_raw(services_raw as *mut *const IWbemServicesVtbl);
+
+        let class_bstr = Bstr::new(HP_WMI_DATA_IN_CLASS);
+        let mut class_raw: *mut c_void = null_mut();
+        if ((*(*services.as_ptr())).GetObject)(
+            services.as_ptr() as *mut c_void,
+            class_bstr.as_ptr(),
+            0,
+            null_mut(),
+            &mut class_raw,
+            null_mut(),
+        ) != S_OK
+            || class_raw.is_null()
+        {
+            return results;
+        }
+        let class_obj = ComPtr::from_raw(class_raw as *mut *const IWbemClassObjectVtbl);
+
+        for property in ["Sign", "Command", "CommandType", "Size", "hpqBData"] {
+            let name = Bstr::new(property);
+            let mut value = ScopedVariant::empty();
+            let mut cim_type: i32 = 0;
+            let hr = ((*(*class_obj.as_ptr())).Get)(
+                class_obj.as_ptr() as *mut c_void,
+                name.as_ptr(),
+                0,
+                &mut value.inner,
+                &mut cim_type,
+                null_mut(),
+            );
+            results.push((property.to_string(), hr, cim_type));
+        }
+    }
+    results
+}
+
+#[cfg(not(windows))]
+fn probe_input_class_types() -> Vec<(String, i32, i32)> {
+    Vec::new()
+}
+
+/// Human-readable label for a CIM property type word.
+fn cim_type_label(cim_type: i32) -> String {
+    const CIM_FLAG_ARRAY: i32 = 0x2000;
+    let base = cim_type & !CIM_FLAG_ARRAY;
+    let name = match base {
+        2 => "sint16",
+        3 => "sint32",
+        8 => "string",
+        11 => "boolean",
+        13 => "object",
+        17 => "uint8",
+        18 => "uint16",
+        19 => "uint32",
+        20 => "sint64",
+        21 => "uint64",
+        _ => "unknown",
+    };
+    if cim_type & CIM_FLAG_ARRAY != 0 {
+        format!("{name}[]")
+    } else {
+        name.to_string()
     }
 }
 
@@ -459,6 +595,19 @@ pub fn print_wmi_diagnostic() {
     }
     if let Some(ref probe) = report.readonly_probe_status {
         println!(" Read-only Probe Status  : {probe}");
+    }
+    if let Some(ref probe) = report.thermal_profile_probe_status {
+        println!(" Opcode 0x4C Probe Status: {probe}");
+    }
+    let types = probe_input_class_types();
+    if !types.is_empty() {
+        println!(" hpqBDataIn Property Types (evidence for 0x80041008):");
+        for (name, hr, cim_type) in types {
+            println!(
+                "   {name:<12} Get HRESULT {hr:#010x}  CIM type {cim_type:#06x} ({})",
+                cim_type_label(cim_type)
+            );
+        }
     }
     println!(" Overall Diagnosis       : {}", report.category);
     println!(" Summary                 : {}", report.summary);

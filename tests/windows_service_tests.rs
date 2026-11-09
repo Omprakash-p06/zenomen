@@ -1240,3 +1240,63 @@ fn test_live_windows_wmi_metadata_non_mutating() {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. Opcode 0x4C diagnostic probe verification
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_probe_thermal_profile_query_success() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x00, 0x01, 0x02, 0x03],
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let result = zenomen::service::windows::hp_wmi::probe_thermal_profile_query(&conn)
+        .expect("diagnostic probe success");
+
+    assert_eq!(result, vec![0x00, 0x01, 0x02, 0x03]);
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].command, HPWMI_GM);
+    assert_eq!(calls[0].command_type, commands::THERMAL_PROFILE_QUERY);
+    assert_eq!(calls[0].out_size, 4);
+}
+
+#[test]
+fn test_probe_thermal_profile_query_propagates_firmware_error() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::FirmwareError { status: 4 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let err = zenomen::service::windows::hp_wmi::probe_thermal_profile_query(&conn)
+        .expect_err("unsupported opcode error");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+}
+
+#[test]
+fn test_probe_thermal_profile_query_does_not_unlock_writes() {
+    // Probing 0x4C must strictly remain a diagnostic action and never grant
+    // write authorization or mutate the board validation record.
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    assert!(!validation.fan_write_verified);
+
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x00, 0x00, 0x00, 0x00],
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let probe_res = zenomen::service::windows::hp_wmi::probe_thermal_profile_query(&conn);
+    assert!(probe_res.is_ok());
+
+    // Fan write remains blocked by authorization
+    let req = HardwareRequest::SetFanMode {
+        mode: "max".to_string(),
+    };
+    let auth_res = authorize_mutation(&req, &board, Some(&validation));
+    assert!(auth_res.is_err());
+}
