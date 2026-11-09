@@ -36,6 +36,7 @@ pub const WBEM_E_NOT_FOUND: HRESULT = -2147217406i32; // 0x80041002
 pub const WBEM_E_ACCESS_DENIED: HRESULT = -2147217405i32; // 0x80041003
 pub const WBEM_E_PROVIDER_FAILURE: HRESULT = -2147217404i32; // 0x80041004
 pub const WBEM_E_INVALID_PARAMETER: HRESULT = -2147217400i32; // 0x80041008
+pub const WBEM_E_TYPE_MISMATCH: HRESULT = -2147217383i32; // 0x80041019
 pub const WBEM_E_INVALID_CLASS: HRESULT = -2147217392i32; // 0x80041010
 pub const WBEM_E_TRANSPORT_FAILURE: HRESULT = -2147217387i32; // 0x80041015
 pub const WBEM_S_NO_ERROR: HRESULT = 0;
@@ -175,6 +176,52 @@ unsafe extern "system" {
     pub fn SafeArrayGetUBound(psa: *mut SAFEARRAY, nDim: u32, plUbound: *mut i32) -> HRESULT;
     pub fn VariantInit(pvarg: *mut VARIANT);
     pub fn VariantClear(pvarg: *mut VARIANT) -> HRESULT;
+    pub fn GetErrorInfo(dwReserved: u32, pperrinfo: *mut *mut c_void) -> HRESULT;
+}
+
+/// Minimal `IErrorInfo` vtable — only `GetDescription` is needed for diagnostics.
+#[repr(C)]
+pub struct IErrorInfoVtbl {
+    pub QueryInterface: unsafe extern "system" fn(
+        this: *mut c_void,
+        riid: *const GUID,
+        ppvObject: *mut *mut c_void,
+    ) -> HRESULT,
+    pub AddRef: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub Release: unsafe extern "system" fn(this: *mut c_void) -> u32,
+    pub GetGUID: usize,
+    pub GetSource: usize,
+    pub GetDescription:
+        unsafe extern "system" fn(this: *mut c_void, pbstrDescription: *mut *mut u16) -> HRESULT,
+    pub GetHelpFile: usize,
+    pub GetHelpContext: usize,
+}
+
+/// Take (and clear) the calling thread's last `IErrorInfo` description.
+///
+/// Call this immediately after a failing COM call: the error object is owned by
+/// the thread and is consumed by `GetErrorInfo`.
+pub fn last_error_description() -> Option<String> {
+    unsafe {
+        let mut info: *mut c_void = null_mut();
+        if GetErrorInfo(0, &mut info) != S_OK || info.is_null() {
+            return None;
+        }
+        let vtbl = info as *mut *const IErrorInfoVtbl;
+        let mut description: *mut u16 = null_mut();
+        let hr = ((*(*vtbl)).GetDescription)(info, &mut description);
+        let mut text = None;
+        if hr == S_OK && !description.is_null() {
+            let mut len = 0;
+            while *description.add(len) != 0 {
+                len += 1;
+            }
+            text = String::from_utf16(std::slice::from_raw_parts(description, len)).ok();
+            SysFreeString(description);
+        }
+        ((*(*vtbl)).Release)(info);
+        text
+    }
 }
 
 // ────────────────────── COM VTABLE DEFINITIONS ──────────────────────────────

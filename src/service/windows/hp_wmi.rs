@@ -1,23 +1,32 @@
-//! HP BIOS WMI firmware interface driver (`hpqBIntM`) (WIN-04).
+//! HP BIOS WMI firmware interface driver (`hpqBIntM` / `hpqBIOSInt*`) (WIN-04).
 //!
-//! This module implements **real** WMI communication with the HP BIOS firmware on Windows.
-//! On non-Windows targets all public functions return `HardwareControlError::InterfaceMissing`.
+//! This module implements **real** WMI communication with the HP BIOS firmware on
+//! Windows. On non-Windows targets all public functions return
+//! `HardwareControlError::InterfaceMissing`.
 //!
 //! ## Architecture
 //!
-//! All firmware operations go through the [`WmiAdapter`] trait so that unit tests can inject a
-//! fake adapter without touching COM or real hardware. Production code uses [`RealWmiAdapter`]
-//! which initialises COM, connects to `ROOT\WMI`, and executes `hpqBIntM::hpqBMtdx`.
+//! All firmware operations go through the [`WmiAdapter`] trait so that unit tests
+//! can inject a fake adapter without touching COM or real hardware. Production
+//! code uses [`RealWmiAdapter`], which connects to `ROOT\WMI` and executes the
+//! `hpqBIntM::hpqBIOSInt*` method whose output size matches the request.
 //!
-//! ## Protocol (HP BIOS Mailbox)
+//! ## Protocol (HP BIOS mailbox)
 //!
-//! Every call to `hpqBMtdx` uses:
-//! - `Sign`     = `0x55434553` ("SECU")
-//! - `ReqType`  = `0x20008` (read) or `0x20009` (write)
-//! - `InBuf`    = `[command_id: u32 LE, subcommand: u32 LE, data_len: u32 LE, payload: [u8;128]]`
-//! - `OutBuf`   = `[status: u32 LE, out_len: u32 LE, payload: [u8;128]]`
+//! The transport envelope is identical for reads and writes, matching
+//! `hp_wmi_perform_query()` in `drivers/platform/x86/hp/hp-wmi.c`:
 //!
-//! Return code 0x00 = success; any other value is an error (see `FirmwareStatus`).
+//! - `Sign`        = `53 45 43 55` (ASCII `SECU`)
+//! - `Command`     = [`HPWMI_GM`] (`0x20008`) for **every** gaming/fan command
+//! - `CommandType` = the operation (`0x10`, `0x26`, `0x27`, `0x2D`, ...)
+//! - `Size`        = number of *meaningful* payload bytes
+//! - `hpqBData`    = payload; omitted entirely when `Size == 0`
+//!
+//! `Command = 0x20009` is the keyboard-lighting family, **not** a write flag.
+//! Using it for fan writes is rejected by firmware as an unknown command.
+//!
+//! Board `8A3D` is a Victus S board: fan speed comes from command `0x2D`
+//! (100 RPM units) and manual levels from `0x2E`. See [`crate::service::windows::victus_s`].
 //!
 //! ## Invariants
 //!
@@ -25,11 +34,16 @@
 //! - `query_fan_status` reads firmware state; it **never** reads process-local variables.
 //! - `set_fan_mode` reads firmware **after** writing; success is returned only after a matching
 //!   read-back. If read-back disagrees the error is `VerificationFailed`.
+//! - Every property `Put` result is checked. A rejected input object surfaces as a precise
+//!   `ProtocolError` naming the property instead of an opaque `0x80041008`.
 //! - No process-local fan or power statics exist.
+
+use std::sync::OnceLock;
 
 use crate::hardware::HardwareCapabilities;
 use crate::rgb::schema::RgbProfile;
 use crate::service::types::HardwareControlError;
+use crate::service::windows::victus_s::{self, FanTable};
 
 // ─────────────────────────── Public constants ──────────────────────────────
 
@@ -39,10 +53,16 @@ pub const HP_WMI_NAMESPACE: &str = r"ROOT\WMI";
 /// WMI class name for HP BIOS mailbox interface.
 pub const HP_WMI_CLASS: &str = "hpqBIntM";
 
-/// WMI method name on `hpqBIntM`.
-pub const HP_WMI_METHOD: &str = "hpqBIOSInt128";
+/// WMI method name for 128-byte payloads on `hpqBIntM`.
 pub const HP_WMI_METHOD_128: &str = "hpqBIOSInt128";
+/// WMI method name for 4-byte payloads.
 pub const HP_WMI_METHOD_4: &str = "hpqBIOSInt4";
+/// WMI method name for zero-length payloads (no `Data` output property).
+pub const HP_WMI_METHOD_0: &str = "hpqBIOSInt0";
+/// WMI method name for 1024-byte payloads.
+pub const HP_WMI_METHOD_1024: &str = "hpqBIOSInt1024";
+/// WMI method name for 4096-byte payloads.
+pub const HP_WMI_METHOD_4096: &str = "hpqBIOSInt4096";
 
 /// HP BIOS input and output class names.
 pub const HP_WMI_DATA_IN_CLASS: &str = "hpqBDataIn";
@@ -52,34 +72,97 @@ pub const HP_WMI_DATA_OUT_4_CLASS: &str = "hpqBDataOut4";
 /// HP BIOS WMI GUID (`5FB7F034-2C63-45E9-BE91-3D44E2C707E4`).
 pub const HPWMI_BIOS_GUID: &str = "5FB7F034-2C63-45E9-BE91-3D44E2C707E4";
 
-/// `Sign` parameter: ASCII "SECU".
+/// `Sign` property: ASCII "SECU".
 const SIGN_SECU_BYTES: [u8; 4] = *b"SECU";
 
-/// `ReqType` for read queries.
-pub const REQ_READ: u32 = 0x0002_0008;
+/// `HPWMI_GM` — command family for every gaming/thermal/fan operation (read and write).
+///
+/// Upstream `hp_wmi_perform_query()` passes `HPWMI_GM` for fan count, fan speed,
+/// Max Fan get/set, thermal profile and all Victus S queries.
+pub const HPWMI_GM: u32 = 0x0002_0008;
 
-/// `ReqType` for write mutations.
-pub const REQ_WRITE: u32 = 0x0002_0009;
+/// `0x20009` — keyboard-lighting command family. Not a write flag.
+pub const HPWMI_KB_LIGHTING: u32 = 0x0002_0009;
 
-/// HP Gaming command family identifiers.
+/// Upper bound on a plausible firmware fan count.
+pub const MAX_FAN_COUNT: u8 = 8;
+
+/// HP Gaming command family identifiers (`enum hp_wmi_gm_commandtype`).
 pub mod commands {
+    /// `HPWMI_FAN_COUNT_GET_QUERY` — also arms the 120 s user-defined fan state.
     pub const FAN_COUNT: u32 = 0x10;
+    /// `HPWMI_FAN_SPEED_GET_QUERY` — generic fan RPM (not used on Victus S).
     pub const FAN_SPEEDS: u32 = 0x11;
+    /// `HPWMI_SET_PERFORMANCE_MODE` — thermal profile write.
     pub const PERFORMANCE_MODE: u32 = 0x1A;
+    /// `HPWMI_FAN_SPEED_MAX_GET_QUERY` — read Max Fan state.
     pub const MAX_FAN_STATUS: u32 = 0x26;
+    /// `HPWMI_FAN_SPEED_MAX_SET_QUERY` — write Max Fan state.
     pub const MAX_FAN_SET: u32 = 0x27;
+    /// `HPWMI_GET_SYSTEM_DESIGN_DATA` — platform capability block.
     pub const SYSTEM_DESIGN_DATA: u32 = 0x28;
-    pub const FOUR_ZONE_RGB: u32 = 0x0002_0009;
+    /// `HPWMI_THERMAL_PROFILE_QUERY` (opcode `0x4C`) — candidate thermal profile query.
+    ///
+    /// Documented in upstream Linux `hp-wmi` (`thermal_profile_get()`). On platforms
+    /// with ACPI/WMI-managed platform profiles, this returns the active profile byte/int.
+    /// On board `8A3D`, the active profile is stored in EC register `0x95` instead, so
+    /// `0x4C` is candidate diagnostic evidence only, never used for production writes.
+    pub const THERMAL_PROFILE_QUERY: u32 = 0x4C;
+}
+
+/// Map a firmware return code onto a typed error.
+///
+/// Uses the documented `hp_return_value` values: `2` wrong signature,
+/// `3` unknown command, `4` unknown command type, `5` invalid parameters.
+/// Do not fold these into generic COM errors — they identify the failing layer.
+pub fn firmware_error(command_type: u32, code: u32) -> HardwareControlError {
+    match code {
+        2 => HardwareControlError::ProtocolError(format!(
+            "firmware rejected the BIOS signature ('SECU') for command type {command_type:#04x} \
+             (status 2 = wrong signature)"
+        )),
+        3 => HardwareControlError::UnsupportedMode(format!(
+            "firmware reports unknown command for command type {command_type:#04x} \
+             (status 3 = unknown command)"
+        )),
+        4 => HardwareControlError::UnsupportedMode(format!(
+            "firmware reports unknown command type {command_type:#04x} \
+             (status 4 = unknown command type)"
+        )),
+        5 => HardwareControlError::InvalidParameter(format!(
+            "firmware reports invalid parameters for command type {command_type:#04x} \
+             (status 5 = invalid parameters)"
+        )),
+        other => HardwareControlError::ProtocolError(format!(
+            "firmware returned undocumented status {other} for command type {command_type:#04x}"
+        )),
+    }
+}
+
+/// Select the `hpqBIOSInt*` method for a requested output size.
+///
+/// Matches `encode_outsize_for_pvsz()` in the upstream driver.
+pub fn method_for_output_size(out_size: u32) -> &'static str {
+    match out_size {
+        0 => HP_WMI_METHOD_0,
+        1..=4 => HP_WMI_METHOD_4,
+        5..=128 => HP_WMI_METHOD_128,
+        129..=1024 => HP_WMI_METHOD_1024,
+        _ => HP_WMI_METHOD_4096,
+    }
 }
 
 // ──────────────────────────── WmiAdapter trait ─────────────────────────────
 
 /// Injectable WMI adapter abstraction — real COM on Windows, fake in tests.
 ///
-/// The only requirement is that `exec_method` mirrors the semantics of
+/// The only requirement is that `bios_call` mirrors the semantics of
 /// `IWbemServices::ExecMethod` for the `hpqBIntM` class.
 pub trait WmiAdapter: Send + Sync {
     /// Execute an HP BIOS call using the real WMI interface `hpqBIOSInt*`.
+    ///
+    /// `command` is the command family ([`HPWMI_GM`]); `command_type` is the
+    /// operation (`0x10`, `0x27`, `0x2D`, ...). `out_size` selects the method.
     fn bios_call(
         &self,
         command: u32,
@@ -88,40 +171,13 @@ pub trait WmiAdapter: Send + Sync {
         out_size: u32,
     ) -> Result<Vec<u8>, HardwareControlError>;
 
-    /// Legacy buffer execution helper for backwards compatibility.
-    fn exec_method(
-        &self,
-        _sign: u32,
-        req_type: u32,
-        in_buf: &[u8; 140],
-    ) -> Result<Vec<u8>, HardwareControlError> {
-        let mut cmd_bytes = [0u8; 4];
-        cmd_bytes.copy_from_slice(&in_buf[0..4]);
-        let cmd = u32::from_le_bytes(cmd_bytes);
-        let mut len_bytes = [0u8; 4];
-        len_bytes.copy_from_slice(&in_buf[8..12]);
-        let len = u32::from_le_bytes(len_bytes) as usize;
-        let payload = if len > 0 && len <= 128 {
-            &in_buf[12..12 + len]
-        } else {
-            &[]
-        };
-        let out_bytes = self.bios_call(req_type, cmd, payload, 128)?;
-        let mut buf = vec![0u8; 136];
-        let out_len = out_bytes.len().min(128) as u32;
-        buf[4..8].copy_from_slice(&out_len.to_le_bytes());
-        let copy_len = out_bytes.len().min(128);
-        buf[8..8 + copy_len].copy_from_slice(&out_bytes[..copy_len]);
-        Ok(buf)
-    }
-
     /// Return `true` if the adapter is connected and the class exists.
     fn is_available(&self) -> bool;
 }
 
 // ─────────────────────── Real WMI adapter (Windows only) ──────────────────
 
-/// Real COM/WMI adapter that connects to `ROOT\WMI` and executes `hpqBMtdx`.
+/// Real COM/WMI adapter that connects to `ROOT\WMI` and executes `hpqBIOSInt*`.
 pub struct RealWmiAdapter {
     available: bool,
 }
@@ -186,7 +242,7 @@ impl RealWmiAdapter {
             let locator = ComPtr::from_raw(locator_raw as *mut *const IWbemLocatorVtbl);
 
             // 4. Connect to ROOT\WMI.
-            let ns_bstr = Bstr::new(r"ROOT\WMI");
+            let ns_bstr = Bstr::new(HP_WMI_NAMESPACE);
             let mut services_raw: *mut c_void = null_mut();
             let hr = ((*(*locator.as_ptr())).ConnectServer)(
                 locator.as_ptr() as *mut c_void,
@@ -266,6 +322,35 @@ impl WmiAdapter for RealWmiAdapter {
     }
 }
 
+/// Set one property on an `IWbemClassObject`, reporting the COM error text on failure.
+///
+/// # Safety
+///
+/// `obj` must be a live `IWbemClassObject` interface obtained from WMI, and the
+/// owning [`crate::service::windows::wmi_ffi::ComPtr`] must outlive this call.
+#[cfg(windows)]
+unsafe fn put_property(
+    obj: *mut *const crate::service::windows::wmi_ffi::IWbemClassObjectVtbl,
+    name: &str,
+    value: &crate::service::windows::wmi_ffi::VARIANT,
+    cim_type: i32,
+) -> Result<(), HardwareControlError> {
+    use crate::service::windows::wmi_ffi::{Bstr, S_OK, last_error_description};
+    use std::ffi::c_void;
+
+    let name_bstr = Bstr::new(name);
+    // SAFETY: see the function contract — `obj` is a live WMI object.
+    let hr = unsafe { ((*(*obj)).Put)(obj as *mut c_void, name_bstr.as_ptr(), 0, value, cim_type) };
+    if hr != S_OK {
+        let detail = last_error_description().unwrap_or_else(|| "no IErrorInfo".to_string());
+        return Err(HardwareControlError::ProtocolError(format!(
+            "IWbemClassObject::Put({name}) failed: HRESULT {hr:#010x} ({detail}); \
+             the hpqBDataIn envelope was rejected before ExecMethod"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 impl RealWmiAdapter {
     fn bios_call_windows(
@@ -279,8 +364,11 @@ impl RealWmiAdapter {
         use std::ffi::c_void;
         use std::ptr::null_mut;
 
+        let method_name = method_for_output_size(out_size);
+        let method_bstr = Bstr::new(method_name);
+
         unsafe {
-            // 1. Create IWbemLocator.
+            // 1. Create IWbemLocator and connect to ROOT\WMI.
             let mut locator_raw: *mut c_void = null_mut();
             let hr = CoCreateInstance(
                 &CLSID_WBEM_LOCATOR,
@@ -296,8 +384,7 @@ impl RealWmiAdapter {
             }
             let locator = ComPtr::from_raw(locator_raw as *mut *const IWbemLocatorVtbl);
 
-            // 2. Connect to ROOT\WMI.
-            let ns_bstr = Bstr::new(r"ROOT\WMI");
+            let ns_bstr = Bstr::new(HP_WMI_NAMESPACE);
             let mut services_raw: *mut c_void = null_mut();
             let hr = ((*(*locator.as_ptr())).ConnectServer)(
                 locator.as_ptr() as *mut c_void,
@@ -317,7 +404,7 @@ impl RealWmiAdapter {
             }
             let services = ComPtr::from_raw(services_raw as *mut *const IWbemServicesVtbl);
 
-            // 3. Get class object definition for method signature.
+            // 2. Fetch the hpqBIntM class definition and the method's in-signature.
             let class_bstr = Bstr::new(HP_WMI_CLASS);
             let mut class_obj_raw: *mut c_void = null_mut();
             let hr = ((*(*services.as_ptr())).GetObject)(
@@ -335,13 +422,6 @@ impl RealWmiAdapter {
             }
             let class_obj = ComPtr::from_raw(class_obj_raw as *mut *const IWbemClassObjectVtbl);
 
-            // 4. Method name: hpqBIOSInt128 (default) or hpqBIOSInt4
-            let method_name = if out_size <= 4 {
-                HP_WMI_METHOD_4
-            } else {
-                HP_WMI_METHOD_128
-            };
-            let method_bstr = Bstr::new(method_name);
             let mut in_def_raw: *mut c_void = null_mut();
             let hr = ((*(*class_obj.as_ptr())).GetMethod)(
                 class_obj.as_ptr() as *mut c_void,
@@ -357,7 +437,6 @@ impl RealWmiAdapter {
             }
             let in_def = ComPtr::from_raw(in_def_raw as *mut *const IWbemClassObjectVtbl);
 
-            // 5. Spawn instance of in-params for the method.
             let mut in_params_raw: *mut c_void = null_mut();
             let hr = ((*(*in_def.as_ptr())).SpawnInstance)(
                 in_def.as_ptr() as *mut c_void,
@@ -371,7 +450,7 @@ impl RealWmiAdapter {
             }
             let in_params = ComPtr::from_raw(in_params_raw as *mut *const IWbemClassObjectVtbl);
 
-            // 6. Spawn instance of hpqBDataIn.
+            // 3. Build the hpqBDataIn instance and populate every property.
             let datain_bstr = Bstr::new(HP_WMI_DATA_IN_CLASS);
             let mut datain_class_raw: *mut c_void = null_mut();
             let hr = ((*(*services.as_ptr())).GetObject)(
@@ -403,65 +482,34 @@ impl RealWmiAdapter {
             }
             let datain_inst = ComPtr::from_raw(datain_inst_raw as *mut *const IWbemClassObjectVtbl);
 
-            // 7. Populate hpqBDataIn:
-            // Sign = "SECU"
             let sign_var = ScopedVariant::from_bytes(&SIGN_SECU_BYTES)?;
-            let sign_name = Bstr::new("Sign");
-            ((*(*datain_inst.as_ptr())).Put)(
-                datain_inst.as_ptr() as *mut c_void,
-                sign_name.as_ptr(),
-                0,
-                &sign_var.inner,
-                0,
-            );
+            put_property(datain_inst.as_ptr(), "Sign", &sign_var.inner, 0)?;
 
-            // Command
             let cmd_var = ScopedVariant::from_u32(command);
-            let cmd_name = Bstr::new("Command");
-            ((*(*datain_inst.as_ptr())).Put)(
-                datain_inst.as_ptr() as *mut c_void,
-                cmd_name.as_ptr(),
-                0,
-                &cmd_var.inner,
-                0,
-            );
+            put_property(datain_inst.as_ptr(), "Command", &cmd_var.inner, 0)?;
 
-            // CommandType
             let cmdtype_var = ScopedVariant::from_u32(command_type);
-            let cmdtype_name = Bstr::new("CommandType");
-            ((*(*datain_inst.as_ptr())).Put)(
-                datain_inst.as_ptr() as *mut c_void,
-                cmdtype_name.as_ptr(),
-                0,
-                &cmdtype_var.inner,
-                0,
-            );
+            put_property(datain_inst.as_ptr(), "CommandType", &cmdtype_var.inner, 0)?;
 
-            // Size
+            // `Size` is the number of meaningful payload bytes, not the buffer size.
             let size_var = ScopedVariant::from_u32(payload.len() as u32);
-            let size_name = Bstr::new("Size");
-            ((*(*datain_inst.as_ptr())).Put)(
-                datain_inst.as_ptr() as *mut c_void,
-                size_name.as_ptr(),
-                0,
-                &size_var.inner,
-                0,
-            );
+            put_property(datain_inst.as_ptr(), "Size", &size_var.inner, 0)?;
 
-            // hpqBData
-            let data_var = ScopedVariant::from_bytes(payload)?;
-            let data_name = Bstr::new("hpqBData");
-            ((*(*datain_inst.as_ptr())).Put)(
-                datain_inst.as_ptr() as *mut c_void,
-                data_name.as_ptr(),
-                0,
-                &data_var.inner,
-                0,
-            );
+            // `hpqBData` is a variable-length array: omit it entirely for empty
+            // requests. A zero-element SAFEARRAY is not the same thing and is
+            // rejected by the provider.
+            // Keep the payload VARIANT alive until ExecMethod returns.
+            let _data_var = if payload.is_empty() {
+                None
+            } else {
+                let var = ScopedVariant::from_bytes(payload)?;
+                put_property(datain_inst.as_ptr(), "hpqBData", &var.inner, 0)?;
+                Some(var)
+            };
 
-            // 8. Put "InData" into method in_params.
-            let indata_name = Bstr::new("InData");
+            // 4. Attach the embedded object as the method's `InData` parameter.
             let indata_var = ScopedVariant::from_unknown(datain_inst.as_ptr() as *mut c_void);
+            let indata_name = Bstr::new("InData");
             let hr = ((*(*in_params.as_ptr())).Put)(
                 in_params.as_ptr() as *mut c_void,
                 indata_name.as_ptr(),
@@ -470,12 +518,14 @@ impl RealWmiAdapter {
                 CIM_OBJECT,
             );
             if hr != S_OK {
+                let detail =
+                    last_error_description().unwrap_or_else(|| "no IErrorInfo".to_string());
                 return Err(HardwareControlError::ProtocolError(format!(
-                    "Put(InData) failed: {hr:#010x}"
+                    "Put(InData) failed: HRESULT {hr:#010x} ({detail})"
                 )));
             }
 
-            // 9. Query instance of hpqBIntM to get __RELPATH.
+            // 5. Resolve a namespace-relative object path for the active instance.
             let query_bstr = Bstr::new(&format!("SELECT * FROM {HP_WMI_CLASS}"));
             let wql_bstr = Bstr::new("WQL");
             let mut enum_raw: *mut c_void = null_mut();
@@ -490,7 +540,8 @@ impl RealWmiAdapter {
             if hr != S_OK || enum_raw.is_null() {
                 if hr == WBEM_E_ACCESS_DENIED {
                     return Err(HardwareControlError::AuthorizationFailed(
-                        "Access denied querying hpqBIntM instance (administrative privileges required)".to_string(),
+                        "Access denied querying hpqBIntM instance (administrative privileges required)"
+                            .to_string(),
                     ));
                 }
                 return Err(HardwareControlError::InterfaceMissing(format!(
@@ -511,7 +562,8 @@ impl RealWmiAdapter {
             if hr != S_OK || instance_raw.is_null() || returned == 0 {
                 if hr == WBEM_E_ACCESS_DENIED {
                     return Err(HardwareControlError::AuthorizationFailed(
-                        "Access denied querying hpqBIntM instance (administrative privileges required)".to_string(),
+                        "Access denied querying hpqBIntM instance (administrative privileges required)"
+                            .to_string(),
                     ));
                 }
                 return Err(HardwareControlError::InterfaceMissing(format!(
@@ -520,60 +572,65 @@ impl RealWmiAdapter {
             }
             let instance = ComPtr::from_raw(instance_raw as *mut *const IWbemClassObjectVtbl);
 
-            // 10. Get __RELPATH of instance (ExecMethod requires relative object path without namespace).
-            let relpath_prop = Bstr::new("__RELPATH");
-            let mut path_var = ScopedVariant::empty();
-            let mut hr = ((*(*instance.as_ptr())).Get)(
-                instance.as_ptr() as *mut c_void,
-                relpath_prop.as_ptr(),
-                0,
-                &mut path_var.inner,
-                null_mut(),
-                null_mut(),
-            );
-            if hr != S_OK || path_var.inner.vt != VT_BSTR || path_var.inner.data == 0 {
-                // Fallback to __PATH only if __RELPATH failed
-                let path_prop = Bstr::new("__PATH");
-                hr = ((*(*instance.as_ptr())).Get)(
+            // `__RELPATH` is namespace-relative and is what ExecMethod requires.
+            // `__PATH` is only a diagnostic fallback: it is server-qualified.
+            let relpath = {
+                let mut var = ScopedVariant::empty();
+                let prop = Bstr::new("__RELPATH");
+                let hr = ((*(*instance.as_ptr())).Get)(
                     instance.as_ptr() as *mut c_void,
-                    path_prop.as_ptr(),
+                    prop.as_ptr(),
                     0,
-                    &mut path_var.inner,
+                    &mut var.inner,
                     null_mut(),
                     null_mut(),
                 );
-            }
-            if hr != S_OK || path_var.inner.vt != VT_BSTR || path_var.inner.data == 0 {
-                return Err(HardwareControlError::ProtocolError(
-                    "Could not retrieve __RELPATH or __PATH of hpqBIntM instance".to_string(),
-                ));
-            }
-            let path_bstr = path_var.inner.data as *const u16;
-            let relpath_str = path_var
-                .extract_bstr()
-                .unwrap_or_else(|| "<unknown>".to_string());
+                if hr == S_OK { var.extract_bstr() } else { None }
+            };
+            let relpath = match relpath {
+                Some(path) => path,
+                None => {
+                    let mut var = ScopedVariant::empty();
+                    let prop = Bstr::new("__PATH");
+                    let hr = ((*(*instance.as_ptr())).Get)(
+                        instance.as_ptr() as *mut c_void,
+                        prop.as_ptr(),
+                        0,
+                        &mut var.inner,
+                        null_mut(),
+                        null_mut(),
+                    );
+                    let path = if hr == S_OK { var.extract_bstr() } else { None };
+                    let path = path.ok_or_else(|| {
+                        HardwareControlError::ProtocolError(
+                            "Could not retrieve __RELPATH or __PATH of hpqBIntM instance"
+                                .to_string(),
+                        )
+                    })?;
+                    tracing::warn!(
+                        object_path = %path,
+                        "__RELPATH unavailable; falling back to server-qualified __PATH"
+                    );
+                    path
+                }
+            };
+            let path_bstr = Bstr::new(&relpath);
 
             tracing::debug!(
                 method = method_name,
-                object_path = %relpath_str,
+                object_path = %relpath,
                 command = format!("{command:#010x}"),
                 command_type = format!("{command_type:#010x}"),
                 payload_len = payload.len(),
                 out_size = out_size,
-                sign_vt = sign_var.inner.vt,
-                cmd_vt = cmd_var.inner.vt,
-                cmdtype_vt = cmdtype_var.inner.vt,
-                size_vt = size_var.inner.vt,
-                data_vt = data_var.inner.vt,
-                indata_vt = indata_var.inner.vt,
                 "Calling IWbemServices::ExecMethod"
             );
 
-            // 11. Execute ExecMethod.
+            // 6. Synchronous ExecMethod: lFlags = 0, ppOutParams non-NULL, ppCallResult NULL.
             let mut out_params_raw: *mut c_void = null_mut();
             let hr = ((*(*services.as_ptr())).ExecMethod)(
                 services.as_ptr() as *mut c_void,
-                path_bstr,
+                path_bstr.as_ptr(),
                 method_bstr.as_ptr(),
                 0,
                 null_mut(),
@@ -582,31 +639,27 @@ impl RealWmiAdapter {
                 null_mut(),
             );
 
-            tracing::debug!(
-                method = method_name,
-                object_path = %relpath_str,
-                exec_method_hr = format!("{hr:#010x}"),
-                "IWbemServices::ExecMethod returned"
-            );
-
             if hr != S_OK || out_params_raw.is_null() {
+                let detail =
+                    last_error_description().unwrap_or_else(|| "no IErrorInfo".to_string());
                 if hr == WBEM_E_ACCESS_DENIED {
                     return Err(HardwareControlError::AuthorizationFailed(format!(
                         "Access denied executing {method_name} (elevation required)"
                     )));
                 }
                 return Err(HardwareControlError::ConnectionFailed(format!(
-                    "ExecMethod({method_name}) failed: {hr:#010x}"
+                    "ExecMethod({method_name}) failed: HRESULT {hr:#010x} ({detail}); \
+                     command type {command_type:#04x}"
                 )));
             }
             let out_params = ComPtr::from_raw(out_params_raw as *mut *const IWbemClassObjectVtbl);
 
-            // 12. Extract "OutData" embedded instance (hpqBDataOut128 / hpqBDataOut4).
-            let outdata_prop = Bstr::new("OutData");
+            // 7. Extract the OutData embedded instance.
+            let outdata_name = Bstr::new("OutData");
             let mut outdata_var = ScopedVariant::empty();
             let hr = ((*(*out_params.as_ptr())).Get)(
                 out_params.as_ptr() as *mut c_void,
-                outdata_prop.as_ptr(),
+                outdata_name.as_ptr(),
                 0,
                 &mut outdata_var.inner,
                 null_mut(),
@@ -616,75 +669,79 @@ impl RealWmiAdapter {
                 || (outdata_var.inner.vt != VT_UNKNOWN && outdata_var.inner.vt != VT_DISPATCH)
                 || outdata_var.inner.data == 0
             {
-                return Err(HardwareControlError::ProtocolError(
-                    "OutData embedded instance missing in WMI response".to_string(),
-                ));
+                return Err(HardwareControlError::ProtocolError(format!(
+                    "OutData embedded instance missing in {method_name} response \
+                     (HRESULT {hr:#010x}, vt {:#x})",
+                    outdata_var.inner.vt
+                )));
             }
-            // outdata_var keeps the embedded instance alive and drops it cleanly via VariantClear.
+            // `outdata_var` keeps the embedded instance alive and releases it via VariantClear.
             let outdata_ptr = outdata_var.inner.data as *mut *const IWbemClassObjectVtbl;
 
-            // 13. Check rwReturnCode:
-            let rc_prop = Bstr::new("rwReturnCode");
+            // 8. Firmware status. A missing status is an error, never "assume success".
+            let rc_name = Bstr::new("rwReturnCode");
             let mut rc_var = ScopedVariant::empty();
             let hr = ((*(*outdata_ptr)).Get)(
                 outdata_ptr as *mut c_void,
-                rc_prop.as_ptr(),
+                rc_name.as_ptr(),
                 0,
                 &mut rc_var.inner,
                 null_mut(),
                 null_mut(),
             );
-            let return_code = if hr == S_OK {
-                rc_var.extract_u32().unwrap_or(0)
-            } else {
-                0
-            };
+            if hr != S_OK {
+                return Err(HardwareControlError::ProtocolError(format!(
+                    "OutData.rwReturnCode missing in {method_name} response: HRESULT {hr:#010x}"
+                )));
+            }
+            let return_code = rc_var.extract_u32().ok_or_else(|| {
+                HardwareControlError::ProtocolError(format!(
+                    "OutData.rwReturnCode had unexpected VARIANT type {:#x}",
+                    rc_var.inner.vt
+                ))
+            })?;
 
             tracing::debug!(
                 method = method_name,
                 return_code = return_code,
-                "Extracted firmware rwReturnCode from OutData"
+                command_type = format!("{command_type:#04x}"),
+                "Firmware status received"
             );
 
             if return_code != 0 {
-                return match return_code {
-                    1 => Err(HardwareControlError::ProtocolError(
-                        "Firmware returned general error".to_string(),
-                    )),
-                    2 => Err(HardwareControlError::InvalidParameter(
-                        "Firmware rejected invalid parameters".to_string(),
-                    )),
-                    3 => Err(HardwareControlError::UnsupportedMode(format!(
-                        "Firmware reports command {command_type:#x} unsupported on this board"
-                    ))),
-                    4 => Err(HardwareControlError::AuthorizationFailed(
-                        "Firmware access denied / BIOS password locked".to_string(),
-                    )),
-                    5 => Err(HardwareControlError::ConnectionFailed(
-                        "Firmware hardware timeout / EC busy".to_string(),
-                    )),
-                    other => Err(HardwareControlError::ProtocolError(format!(
-                        "Firmware returned unexpected return code {other}"
-                    ))),
-                };
+                return Err(firmware_error(command_type, return_code));
             }
 
-            // 14. Extract "Data" byte array:
-            let data_prop = Bstr::new("Data");
+            // `hpqBIOSInt0` carries no `Data` property at all.
+            if out_size == 0 {
+                return Ok(Vec::new());
+            }
+
+            // 9. Response payload.
+            let data_name = Bstr::new("Data");
             let mut out_data_var = ScopedVariant::empty();
             let hr = ((*(*outdata_ptr)).Get)(
                 outdata_ptr as *mut c_void,
-                data_prop.as_ptr(),
+                data_name.as_ptr(),
                 0,
                 &mut out_data_var.inner,
                 null_mut(),
                 null_mut(),
             );
             if hr != S_OK {
-                return Ok(Vec::new());
+                return Err(HardwareControlError::ProtocolError(format!(
+                    "OutData.Data missing in {method_name} response: HRESULT {hr:#010x}"
+                )));
             }
 
-            let bytes = out_data_var.extract_bytes().unwrap_or_default();
+            let mut bytes = out_data_var.extract_bytes().ok_or_else(|| {
+                HardwareControlError::ProtocolError(format!(
+                    "OutData.Data was not a byte array (vt {:#x})",
+                    out_data_var.inner.vt
+                ))
+            })?;
+            bytes.truncate(out_size as usize);
+
             tracing::debug!(
                 method = method_name,
                 bytes_len = bytes.len(),
@@ -697,9 +754,23 @@ impl RealWmiAdapter {
 
 // ─────────────────── Fake adapter for deterministic tests ─────────────────
 
+/// One firmware call recorded by [`FakeWmiAdapter`], for protocol regression tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedCall {
+    /// Command family passed to `bios_call`.
+    pub command: u32,
+    /// Operation identifier passed to `bios_call`.
+    pub command_type: u32,
+    /// Payload handed to the firmware.
+    pub payload: Vec<u8>,
+    /// Requested output size (selects the WMI method).
+    pub out_size: u32,
+}
+
 /// A deterministic fake WMI adapter for unit tests.
 pub struct FakeWmiAdapter {
     responses: std::sync::Mutex<std::collections::VecDeque<FakeResponse>>,
+    calls: std::sync::Mutex<Vec<RecordedCall>>,
     available: bool,
 }
 
@@ -707,7 +778,7 @@ pub struct FakeWmiAdapter {
 pub enum FakeResponse {
     /// Return a successful output buffer carrying the given payload bytes.
     Success { payload: Vec<u8> },
-    /// Return a firmware error status (non-zero status word).
+    /// Return a firmware error status word (`hp_return_value`).
     FirmwareError { status: u32 },
     /// Simulate a WMI-layer failure (the method could not be called at all).
     WmiError { message: String },
@@ -718,6 +789,7 @@ impl FakeWmiAdapter {
     pub fn new(available: bool) -> Self {
         Self {
             responses: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            calls: std::sync::Mutex::new(Vec::new()),
             available,
         }
     }
@@ -728,6 +800,11 @@ impl FakeWmiAdapter {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push_back(response);
+    }
+
+    /// Every firmware call this adapter has served, in order.
+    pub fn recorded_calls(&self) -> Vec<RecordedCall> {
+        self.calls.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// Assert that all pre-loaded responses were consumed (call in test teardown).
@@ -748,11 +825,21 @@ impl WmiAdapter for FakeWmiAdapter {
 
     fn bios_call(
         &self,
-        _command: u32,
-        _command_type: u32,
-        _payload: &[u8],
-        _out_size: u32,
+        command: u32,
+        command_type: u32,
+        payload: &[u8],
+        out_size: u32,
     ) -> Result<Vec<u8>, HardwareControlError> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(RecordedCall {
+                command,
+                command_type,
+                payload: payload.to_vec(),
+                out_size,
+            });
+
         let mut queue = self.responses.lock().unwrap_or_else(|p| p.into_inner());
         let resp = queue.pop_front().ok_or_else(|| {
             HardwareControlError::ProtocolError(
@@ -761,27 +848,28 @@ impl WmiAdapter for FakeWmiAdapter {
         })?;
         match resp {
             FakeResponse::Success { payload } => Ok(payload),
-            FakeResponse::FirmwareError { status } => match status {
-                0x01 => Err(HardwareControlError::UnsupportedMode(
-                    "Firmware rejected command as unsupported on this board".to_string(),
-                )),
-                0x02 | 0x03 => Err(HardwareControlError::UnsupportedMode(
-                    "Firmware rejected command".to_string(),
-                )),
-                0x04 => Err(HardwareControlError::AuthorizationFailed(
-                    "BIOS rejected command: access denied (BIOS password locked?)".to_string(),
-                )),
-                0x05 => Err(HardwareControlError::ConnectionFailed(
-                    "Embedded Controller busy / timeout".to_string(),
-                )),
-                other => Err(HardwareControlError::ProtocolError(format!(
-                    "Unexpected firmware status {other}"
-                ))),
-            },
+            FakeResponse::FirmwareError { status } => Err(firmware_error(command_type, status)),
             FakeResponse::WmiError { message } => {
                 Err(HardwareControlError::ConnectionFailed(message))
             }
         }
+    }
+}
+
+/// Lets tests keep a shared handle to the fake adapter for post-hoc assertions.
+impl WmiAdapter for std::sync::Arc<FakeWmiAdapter> {
+    fn is_available(&self) -> bool {
+        (**self).is_available()
+    }
+
+    fn bios_call(
+        &self,
+        command: u32,
+        command_type: u32,
+        payload: &[u8],
+        out_size: u32,
+    ) -> Result<Vec<u8>, HardwareControlError> {
+        (**self).bios_call(command, command_type, payload, out_size)
     }
 }
 
@@ -790,13 +878,28 @@ impl WmiAdapter for FakeWmiAdapter {
 /// An active handle to the HP BIOS WMI firmware interface.
 pub struct HpWmiConnection {
     adapter: Box<dyn WmiAdapter>,
+    board_id: Option<String>,
+    /// Cached fan count. Command `0x10` re-arms the firmware's 120 s manual-fan
+    /// window, so telemetry must not send it on every poll.
+    fan_count: OnceLock<u8>,
 }
 
 impl HpWmiConnection {
-    /// Create from an already-constructed adapter (used by tests).
+    /// Create from an already-constructed adapter without board identity (tests).
     pub fn from_adapter(adapter: impl WmiAdapter + 'static) -> Self {
         Self {
             adapter: Box::new(adapter),
+            board_id: None,
+            fan_count: OnceLock::new(),
+        }
+    }
+
+    /// Create from an adapter tagged with the detected motherboard ID.
+    pub fn from_adapter_for_board(adapter: impl WmiAdapter + 'static, board_id: &str) -> Self {
+        Self {
+            adapter: Box::new(adapter),
+            board_id: Some(board_id.trim().to_uppercase()),
+            fan_count: OnceLock::new(),
         }
     }
 
@@ -804,16 +907,48 @@ impl HpWmiConnection {
     pub fn is_available(&self) -> bool {
         self.adapter.is_available()
     }
+
+    /// Motherboard ID this connection was resolved against, if known.
+    pub fn board_id(&self) -> Option<&str> {
+        self.board_id.as_deref()
+    }
+
+    /// `true` when the board uses the dedicated Victus S fan protocol (`0x2D`/`0x2E`/`0x2F`).
+    pub fn is_victus_s(&self) -> bool {
+        self.board_id
+            .as_deref()
+            .is_some_and(victus_s::is_victus_s_board)
+    }
+
+    fn ensure_available(&self, operation: &str) -> Result<(), HardwareControlError> {
+        if self.is_available() {
+            Ok(())
+        } else {
+            Err(HardwareControlError::InterfaceMissing(format!(
+                "HP WMI interface not connected; cannot {operation}"
+            )))
+        }
+    }
 }
 
 // ─────────────────────── Public firmware operations ───────────────────────
 
-/// Connect to the HP BIOS WMI interface.
+/// Connect to the HP BIOS WMI interface and tag the connection with the detected board.
 pub fn connect_hp_wmi() -> Result<HpWmiConnection, HardwareControlError> {
     let adapter = RealWmiAdapter::connect()?;
-    Ok(HpWmiConnection {
-        adapter: Box::new(adapter),
-    })
+    let board_id = {
+        #[cfg(windows)]
+        {
+            crate::hardware::windows::device::read_board_id()
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    };
+    let mut conn = HpWmiConnection::from_adapter(adapter);
+    conn.board_id = board_id;
+    Ok(conn)
 }
 
 /// Query hardware capabilities from firmware.
@@ -834,15 +969,15 @@ pub fn query_hp_capabilities(
         });
     }
 
-    let fan_control_ok = probe_fan_count(conn).unwrap_or(false);
+    let fan_count = get_fan_count(conn).ok();
     let power_ok = probe_performance_mode(conn).unwrap_or(false);
 
     Ok(HardwareCapabilities {
         cpu_metrics: true,
         gpu_metrics: true,
         ram_metrics: true,
-        fan_rpm: false,
-        fan_control: fan_control_ok,
+        fan_rpm: fan_count.is_some(),
+        fan_control: fan_count.is_some(),
         power_profiles: power_ok,
         rgb_lighting: false,
         rgb_variant: None,
@@ -851,37 +986,46 @@ pub fn query_hp_capabilities(
 }
 
 /// Query actual fan mode and RPM speeds from firmware (WIN-04).
+///
+/// Fan count is cached after the first query: command `0x10` re-arms the
+/// firmware's 120-second user-defined fan window, so a 1 Hz telemetry poll must
+/// not resend it.
 pub fn query_fan_status(
     conn: &HpWmiConnection,
 ) -> Result<(String, Vec<u32>), HardwareControlError> {
-    if !conn.is_available() {
-        return Err(HardwareControlError::InterfaceMissing(
-            "HP WMI interface not connected; cannot read fan status".to_string(),
-        ));
-    }
+    conn.ensure_available("read fan status")?;
 
     let mode = read_fan_mode_from_firmware(conn)?;
-    Ok((mode, Vec::new()))
+
+    let fan_count = match cached_fan_count(conn) {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::warn!(error = %e, "fan count unavailable; reporting no tachometers");
+            0
+        }
+    };
+
+    let mut rpms = Vec::new();
+    for index in 0..fan_count {
+        match get_fan_rpm(conn, index) {
+            Ok(rpm) => rpms.push(rpm),
+            Err(e) => tracing::warn!(fan = index, error = %e, "fan RPM read failed"),
+        }
+    }
+
+    Ok((mode, rpms))
 }
 
 /// Set fan mode ("auto" or "max") with firmware read-back verification (WIN-04).
 pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, HardwareControlError> {
-    if !conn.is_available() {
-        return Err(HardwareControlError::InterfaceMissing(
-            "HP WMI interface not connected; cannot set fan mode".to_string(),
-        ));
-    }
+    conn.ensure_available("set fan mode")?;
 
     let normalized = mode.trim().to_lowercase();
-    let target_byte: u8 = match normalized.as_str() {
-        "auto" => 0x00,
-        "max" => 0x01,
-        other => {
-            return Err(HardwareControlError::InvalidParameter(format!(
-                "Invalid fan mode '{other}'. Supported: 'auto', 'max'"
-            )));
-        }
-    };
+    if normalized != "auto" && normalized != "max" {
+        return Err(HardwareControlError::InvalidParameter(format!(
+            "Invalid fan mode '{normalized}'. Supported: 'auto', 'max'"
+        )));
+    }
 
     let before = read_fan_mode_from_firmware(conn)?;
     tracing::debug!(before = %before, target = %normalized, "Fan mode: pre-write read-back");
@@ -891,12 +1035,11 @@ pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, Hardwa
         return Ok(normalized);
     }
 
-    conn.adapter
-        .bios_call(REQ_WRITE, commands::MAX_FAN_SET, &[target_byte], 128)
-        .map_err(|e| {
-            tracing::error!(error = %e, "WMI ExecMethod failed during fan write");
-            e
-        })?;
+    if normalized == "max" {
+        set_max_fan_state(conn, true)?;
+    } else {
+        restore_automatic_fan_control(conn, None)?;
+    }
 
     std::thread::sleep(std::time::Duration::from_millis(150));
     let after = read_fan_mode_from_firmware(conn)?;
@@ -905,7 +1048,7 @@ pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, Hardwa
     if after != normalized {
         return Err(HardwareControlError::VerificationFailed {
             target: normalized.clone(),
-            actual: after.clone(),
+            actual: after,
             retries: 1,
         });
     }
@@ -914,14 +1057,272 @@ pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, Hardwa
     Ok(normalized)
 }
 
-/// Query active ACPI platform performance profile from firmware.
-pub fn query_power_profile(conn: &HpWmiConnection) -> Result<String, HardwareControlError> {
-    if !conn.is_available() {
-        return Err(HardwareControlError::InterfaceMissing(
-            "HP WMI interface not connected; cannot read power profile".to_string(),
-        ));
+/// Read the firmware fan count (command `0x10`).
+///
+/// This query also arms the firmware's 120-second user-defined fan state, so it
+/// is deliberately reserved for capability probing and the manual-write arm step.
+pub fn get_fan_count(conn: &HpWmiConnection) -> Result<u8, HardwareControlError> {
+    conn.ensure_available("read fan count")?;
+
+    let payload = conn
+        .adapter
+        .bios_call(HPWMI_GM, commands::FAN_COUNT, &[0u8], 4)?;
+
+    let count = payload.first().copied().ok_or_else(|| {
+        HardwareControlError::ProtocolError("Fan count query returned no payload bytes".to_string())
+    })?;
+
+    if count == 0 || count > MAX_FAN_COUNT {
+        return Err(HardwareControlError::ProtocolError(format!(
+            "Firmware reported implausible fan count {count} (expected 1..={MAX_FAN_COUNT})"
+        )));
     }
 
+    let _ = conn.fan_count.set(count);
+    tracing::debug!(fan_count = count, "Firmware reported fan count");
+    Ok(count)
+}
+
+/// Read the firmware fan count without re-arming the manual-fan window after the
+/// first successful query. Use this from periodic telemetry.
+pub fn cached_fan_count(conn: &HpWmiConnection) -> Result<u8, HardwareControlError> {
+    if let Some(count) = conn.fan_count.get() {
+        return Ok(*count);
+    }
+    get_fan_count(conn)
+}
+
+/// Diagnostic probe for opcode `0x4C` (`HPWMI_THERMAL_PROFILE_QUERY`).
+///
+/// Upstream Linux `hp-wmi` driver exposes `HPWMI_THERMAL_PROFILE_QUERY = 0x4C`
+/// to read the active thermal profile on platforms where the profile is exposed
+/// via ACPI/WMI rather than the Embedded Controller.
+///
+/// On motherboard `8A3D`, the active thermal profile is maintained in EC register `0x95`
+/// (unreachable from unprivileged userland without an EC driver), so this probe is
+/// strictly diagnostic. It must never be used to assume write capability or bypass
+/// board validation.
+pub fn probe_thermal_profile_query(
+    conn: &HpWmiConnection,
+) -> Result<Vec<u8>, HardwareControlError> {
+    conn.ensure_available("diagnostic probe thermal profile (0x4C)")?;
+    conn.adapter
+        .bios_call(HPWMI_GM, commands::THERMAL_PROFILE_QUERY, &[], 4)
+}
+
+/// Read one fan's RPM.
+///
+/// Victus S boards (`8A3D`) answer `0x2D` with one level byte per fan in 100 RPM
+/// units. Other boards use the generic `0x11` response, where RPM is the
+/// big-endian word at bytes 2..4.
+pub fn get_fan_rpm(conn: &HpWmiConnection, fan_index: u8) -> Result<u32, HardwareControlError> {
+    conn.ensure_available("read fan RPM")?;
+
+    if conn.is_victus_s() {
+        let levels = get_victus_fan_levels(conn)?;
+        let level = levels.get(fan_index as usize).copied().ok_or_else(|| {
+            HardwareControlError::ProtocolError(format!(
+                "Victus S fan response covered {} fans; index {fan_index} is out of range",
+                levels.len()
+            ))
+        })?;
+        return Ok(victus_s::rpm_for_level(level));
+    }
+
+    let payload = conn
+        .adapter
+        .bios_call(HPWMI_GM, commands::FAN_SPEEDS, &[fan_index], 4)?;
+    if payload.len() < 4 {
+        return Err(HardwareControlError::ProtocolError(format!(
+            "Fan speed query returned {} bytes, expected 4",
+            payload.len()
+        )));
+    }
+    Ok(u32::from(payload[2]) << 8 | u32::from(payload[3]))
+}
+
+/// Read the raw Victus S per-fan level table (command `0x2D`).
+///
+/// Each byte is the fan's current level in 100 RPM units; `0x00` means the fan
+/// is under automatic firmware control.
+pub fn get_victus_fan_levels(conn: &HpWmiConnection) -> Result<Vec<u8>, HardwareControlError> {
+    conn.ensure_available("read Victus S fan levels")?;
+
+    let payload = conn
+        .adapter
+        .bios_call(HPWMI_GM, victus_s::FAN_LEVEL_GET_QUERY, &[0u8], 128)?;
+
+    if payload.is_empty() {
+        return Err(HardwareControlError::ProtocolError(
+            "Victus S fan level query returned no payload".to_string(),
+        ));
+    }
+    Ok(payload)
+}
+
+/// Read and parse the Victus S fan table (command `0x2F`).
+pub fn get_victus_fan_table(conn: &HpWmiConnection) -> Result<FanTable, HardwareControlError> {
+    conn.ensure_available("read Victus S fan table")?;
+
+    let payload = conn
+        .adapter
+        .bios_call(HPWMI_GM, victus_s::FAN_TABLE_QUERY, &[0u8; 4], 128)?;
+    victus_s::parse_fan_table(&payload)
+}
+
+/// Read the current Max Fan state (command `0x26`).
+pub fn get_max_fan_state(conn: &HpWmiConnection) -> Result<bool, HardwareControlError> {
+    conn.ensure_available("read Max Fan state")?;
+
+    let payload = conn
+        .adapter
+        .bios_call(HPWMI_GM, commands::MAX_FAN_STATUS, &[0u8], 4)?;
+
+    let state = payload.first().copied().ok_or_else(|| {
+        HardwareControlError::ProtocolError(
+            "Max Fan state query returned no payload bytes".to_string(),
+        )
+    })?;
+
+    match state {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(HardwareControlError::ProtocolError(format!(
+            "Firmware returned unexpected Max Fan state 0x{other:02x}"
+        ))),
+    }
+}
+
+/// Write the Max Fan state (command `0x27`).
+///
+/// The firmware takes a 4-byte little-endian integer, matching the upstream
+/// driver's `int enabled` and OMEN Gaming Hub's `[0|1, 0, 0, 0]` payload.
+pub fn set_max_fan_state(
+    conn: &HpWmiConnection,
+    enabled: bool,
+) -> Result<(), HardwareControlError> {
+    conn.ensure_available("set Max Fan state")?;
+
+    let payload = if enabled {
+        [1u8, 0, 0, 0]
+    } else {
+        [0u8, 0, 0, 0]
+    };
+    conn.adapter
+        .bios_call(HPWMI_GM, commands::MAX_FAN_SET, &payload, 0)?;
+    Ok(())
+}
+
+/// Return a board to automatic cooling without stranding its fans.
+///
+/// Most boards just clear Max Fan (`0x27 = 0`). Victus S boards additionally
+/// need the fan-level sentinel (`0x2E {0x00, 0x00}`) so the EC regains the curve.
+///
+/// Board `8A3D` is the exception. The 2026-10-24 upstream patch reports that the
+/// `0x2E {0,0}` reset freezes its fans at 0 RPM under load; upstream restores it
+/// with `0x27 = 0` followed by re-applying the active EC thermal profile through
+/// `0x1A`. That profile is only readable from EC register `0x95`, which needs a
+/// kernel driver, so when `active_profile` is unknown nothing is written at all
+/// rather than risking a fan stall.
+///
+/// The GPU CTGP/PPAB bytes that upstream's `platform_profile_victus_s_set_ec`
+/// also writes (`0x22`) are deliberately left untouched: ZenOmen never changes
+/// them, so re-applying the thermal curve is enough to hand cooling back.
+pub fn restore_automatic_fan_control(
+    conn: &HpWmiConnection,
+    active_profile: Option<victus_s::ThermalProfile>,
+) -> Result<(), HardwareControlError> {
+    conn.ensure_available("restore automatic fan control")?;
+
+    let board = conn.board_id().unwrap_or("unknown");
+    if victus_s::requires_thermal_profile_restore(board) {
+        let profile = active_profile.ok_or_else(|| {
+            HardwareControlError::UnsupportedMode(format!(
+                "Board {board} restores automatic cooling through its EC thermal profile \
+                 (offset 0x{:02X}); the active profile is not readable from userland, so the \
+                 unsafe 0x2E automatic-level reset is refused",
+                victus_s::EC_THERMAL_PROFILE_OFFSET
+            ))
+        })?;
+
+        // No firmware write happens before this point: an unknown profile must
+        // leave the machine exactly as it was found.
+        set_max_fan_state(conn, false)?;
+        get_fan_count(conn)?;
+        let payload = victus_s::thermal_profile_payload(profile);
+        conn.adapter
+            .bios_call(HPWMI_GM, commands::PERFORMANCE_MODE, &payload, 0)?;
+        tracing::info!(
+            profile = profile.as_str(),
+            "Re-applied the EC thermal profile to restore automatic fan control"
+        );
+        return Ok(());
+    }
+
+    if conn.is_victus_s() {
+        return set_victus_fan_levels(
+            conn,
+            victus_s::FAN_SPEED_AUTOMATIC,
+            victus_s::FAN_SPEED_AUTOMATIC,
+        );
+    }
+
+    set_max_fan_state(conn, false)
+}
+
+/// Apply manual Victus S fan levels using the upstream command ordering.
+///
+/// 1. `0x10` — refresh/arm the firmware's user-defined fan state.
+/// 2. `0x27` = 0 — Max Fan must be explicitly disabled.
+/// 3. `0x2F` — read the fan table and validate the requested levels.
+/// 4. `0x2E {cpu, gpu}` — write both levels in one request.
+///
+/// `FAN_SPEED_AUTOMATIC` (`0x00`) hands a fan back to the firmware curve.
+pub fn set_victus_fan_levels(
+    conn: &HpWmiConnection,
+    cpu_level: u8,
+    gpu_level: u8,
+) -> Result<(), HardwareControlError> {
+    conn.ensure_available("set Victus S fan levels")?;
+
+    if !conn.is_victus_s() {
+        return Err(HardwareControlError::UnsupportedMode(format!(
+            "Board {} does not use the Victus S fan-level protocol",
+            conn.board_id().unwrap_or("unknown")
+        )));
+    }
+
+    // 1. Arm / refresh the manual fan state (0x10).
+    get_fan_count(conn)?;
+
+    // 2. Max Fan must be off before manual levels are accepted (0x27 = 0).
+    set_max_fan_state(conn, false)?;
+
+    // 3. Validate against the firmware's own level range before writing.
+    let table = get_victus_fan_table(conn)?;
+    victus_s::validate_level("cpu", cpu_level, &table)?;
+    victus_s::validate_level("gpu", gpu_level, &table)?;
+
+    // 4. One 0x2E request carries both fan levels.
+    conn.adapter.bios_call(
+        HPWMI_GM,
+        victus_s::FAN_LEVEL_SET_QUERY,
+        &[cpu_level, gpu_level],
+        0,
+    )?;
+
+    tracing::info!(
+        cpu_level = cpu_level,
+        gpu_level = gpu_level,
+        max_level = table.max_rpm,
+        "Victus S fan levels submitted"
+    );
+    Ok(())
+}
+
+/// Query active ACPI platform performance profile from firmware.
+pub fn query_power_profile(conn: &HpWmiConnection) -> Result<String, HardwareControlError> {
+    conn.ensure_available("read power profile")?;
     read_performance_mode_from_firmware(conn)
 }
 
@@ -930,11 +1331,7 @@ pub fn set_performance_mode(
     conn: &HpWmiConnection,
     profile: &str,
 ) -> Result<String, HardwareControlError> {
-    if !conn.is_available() {
-        return Err(HardwareControlError::InterfaceMissing(
-            "HP WMI interface not connected; cannot set performance mode".to_string(),
-        ));
-    }
+    conn.ensure_available("set performance mode")?;
 
     let normalized = profile.trim().to_lowercase();
     let target_byte: u8 = match normalized.as_str() {
@@ -953,8 +1350,14 @@ pub fn set_performance_mode(
         return Ok(normalized);
     }
 
-    conn.adapter
-        .bios_call(REQ_WRITE, commands::PERFORMANCE_MODE, &[target_byte], 128)?;
+    // Upstream `omen_thermal_profile_set()` sends two bytes: a leading 0xFF
+    // (matching OMEN Gaming Hub) followed by the profile value.
+    conn.adapter.bios_call(
+        HPWMI_GM,
+        commands::PERFORMANCE_MODE,
+        &[0xFF, target_byte],
+        0,
+    )?;
 
     std::thread::sleep(std::time::Duration::from_millis(150));
     let after = read_performance_mode_from_firmware(conn)?;
@@ -969,81 +1372,62 @@ pub fn set_performance_mode(
     Ok(normalized)
 }
 
-/// Write 4-Zone keyboard RGB colors via HP Gaming lighting command 0x20009.
+/// Report that 4-zone keyboard lighting is not implemented.
+///
+/// The previous implementation sent `0x20009` — a command *family*, not a
+/// command type — in the `CommandType` field, which the firmware rejects. No
+/// verified 4-zone payload contract exists for these boards yet.
 pub fn set_rgb_profile(
     conn: &HpWmiConnection,
     profile: &RgbProfile,
 ) -> Result<String, HardwareControlError> {
-    if !conn.is_available() {
-        return Err(HardwareControlError::InterfaceMissing(
-            "HP WMI interface not connected; cannot set RGB profile".to_string(),
-        ));
-    }
-
-    if profile.zones.len() < 4 {
-        return Err(HardwareControlError::InvalidParameter(format!(
-            "Expected 4 zones for FourZone profile, got {}",
-            profile.zones.len()
-        )));
-    }
-
-    let mut payload = [0u8; 16];
-    for (i, zone) in profile.zones.iter().take(4).enumerate() {
-        let offset = i * 4;
-        payload[offset] = zone.r;
-        payload[offset + 1] = zone.g;
-        payload[offset + 2] = zone.b;
-        payload[offset + 3] = 0x00;
-    }
-
-    conn.adapter
-        .bios_call(REQ_WRITE, commands::FOUR_ZONE_RGB, &payload, 128)?;
-    Ok(profile.name.clone())
+    conn.ensure_available("set RGB profile")?;
+    Err(HardwareControlError::UnsupportedMode(format!(
+        "4-zone keyboard lighting has no verified firmware contract; \
+         refusing to send an unvalidated payload for profile '{}'",
+        profile.name
+    )))
 }
 
 // ────────────────────── Internal firmware helpers ─────────────────────────
 
-/// Read the current fan mode from firmware via command 0x27.
+/// Read the current fan mode from firmware via the Max Fan state query (`0x26`).
 fn read_fan_mode_from_firmware(conn: &HpWmiConnection) -> Result<String, HardwareControlError> {
-    let payload = conn
-        .adapter
-        .bios_call(REQ_READ, commands::MAX_FAN_SET, &[], 128)?;
-
-    if payload.is_empty() {
-        return Err(HardwareControlError::ProtocolError(
-            "Fan mode read returned zero-length payload".to_string(),
-        ));
-    }
-
-    let mode = match payload[0] {
-        0x00 => "auto",
-        0x01 => "max",
-        0x02 => "quiet",
-        other => {
-            return Err(HardwareControlError::ProtocolError(format!(
-                "Unknown fan mode byte from firmware: 0x{other:02X}"
-            )));
-        }
+    let mode = if get_max_fan_state(conn)? {
+        "max"
+    } else {
+        "auto"
     };
-
     Ok(mode.to_string())
 }
 
-/// Read the current performance mode from firmware via command 0x1A.
+/// Read the current performance mode from firmware.
+///
+/// Victus S boards expose the thermal profile through the EC — register `0x95`
+/// for board `8A3D` after the 2026-10-24 upstream patch
+/// (`victus_s_ec_thermal_params`), `0x59` where `omen_v1_thermal_params` applies —
+/// which requires a kernel driver. There is no WMI read path, so this reports
+/// `UnsupportedMode` instead of guessing at the value.
 fn read_performance_mode_from_firmware(
     conn: &HpWmiConnection,
 ) -> Result<String, HardwareControlError> {
-    let payload = conn
-        .adapter
-        .bios_call(REQ_READ, commands::PERFORMANCE_MODE, &[], 128)?;
-
-    if payload.is_empty() {
-        return Err(HardwareControlError::ProtocolError(
-            "Performance mode read returned zero-length payload".to_string(),
+    if conn.is_victus_s() {
+        return Err(HardwareControlError::UnsupportedMode(
+            "Victus S thermal profile is read from the EC; no WMI read path exists".to_string(),
         ));
     }
 
-    let profile = match payload[0] {
+    let payload = conn
+        .adapter
+        .bios_call(HPWMI_GM, commands::PERFORMANCE_MODE, &[0u8], 4)?;
+
+    let byte = payload.first().copied().ok_or_else(|| {
+        HardwareControlError::ProtocolError(
+            "Performance mode read returned zero-length payload".to_string(),
+        )
+    })?;
+
+    let profile = match byte {
         0x00 => "balanced",
         0x01 => "performance",
         0x02 => "cool",
@@ -1057,26 +1441,7 @@ fn read_performance_mode_from_firmware(
     Ok(profile.to_string())
 }
 
-/// Probe fan count to verify that command 0x10 is accepted (capability check).
-fn probe_fan_count(conn: &HpWmiConnection) -> Result<bool, HardwareControlError> {
-    match conn
-        .adapter
-        .bios_call(REQ_READ, commands::FAN_COUNT, &[], 128)
-    {
-        Err(_) => Ok(false),
-        Ok(payload) => {
-            if !payload.is_empty() {
-                let count = payload[0];
-                tracing::info!(fan_count = count, "Firmware reported fan count");
-                Ok(count > 0)
-            } else {
-                Ok(false)
-            }
-        }
-    }
-}
-
-/// Probe performance mode command 0x1A to check availability.
+/// Probe performance mode command `0x1A` to check availability.
 fn probe_performance_mode(conn: &HpWmiConnection) -> Result<bool, HardwareControlError> {
     match read_performance_mode_from_firmware(conn) {
         Ok(_) => Ok(true),
@@ -1088,6 +1453,17 @@ fn probe_performance_mode(conn: &HpWmiConnection) -> Result<bool, HardwareContro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    fn write_ack() -> FakeResponse {
+        FakeResponse::Success { payload: vec![] }
+    }
+
+    fn max_fan_state(on: bool) -> FakeResponse {
+        FakeResponse::Success {
+            payload: vec![u8::from(on)],
+        }
+    }
 
     #[test]
     fn test_wmi_constants_and_guid() {
@@ -1107,36 +1483,103 @@ mod tests {
     }
 
     #[test]
-    fn test_req_opcodes() {
-        assert_eq!(REQ_READ, 0x0002_0008);
-        assert_eq!(REQ_WRITE, 0x0002_0009);
+    fn test_command_family_and_opcodes() {
+        // One command family for reads and writes; 0x20009 is keyboard lighting.
+        assert_eq!(HPWMI_GM, 0x0002_0008);
+        assert_eq!(HPWMI_KB_LIGHTING, 0x0002_0009);
         assert_eq!(commands::FAN_COUNT, 0x10);
+        assert_eq!(commands::FAN_SPEEDS, 0x11);
         assert_eq!(commands::PERFORMANCE_MODE, 0x1A);
+        assert_eq!(commands::MAX_FAN_STATUS, 0x26);
         assert_eq!(commands::MAX_FAN_SET, 0x27);
+        assert_eq!(commands::SYSTEM_DESIGN_DATA, 0x28);
+        assert_eq!(victus_s::FAN_LEVEL_GET_QUERY, 0x2D);
+        assert_eq!(victus_s::FAN_LEVEL_SET_QUERY, 0x2E);
+        assert_eq!(victus_s::FAN_TABLE_QUERY, 0x2F);
     }
 
     #[test]
-    fn test_fake_adapter_empty_payload_and_consumption() {
+    fn test_method_selection_matches_upstream_output_sizes() {
+        assert_eq!(method_for_output_size(0), HP_WMI_METHOD_0);
+        assert_eq!(method_for_output_size(4), HP_WMI_METHOD_4);
+        assert_eq!(method_for_output_size(128), HP_WMI_METHOD_128);
+        assert_eq!(method_for_output_size(1024), HP_WMI_METHOD_1024);
+        assert_eq!(method_for_output_size(4096), HP_WMI_METHOD_4096);
+    }
+
+    #[test]
+    fn test_firmware_return_codes_map_to_documented_layers() {
+        assert!(matches!(
+            firmware_error(0x27, 2),
+            HardwareControlError::ProtocolError(_)
+        ));
+        assert!(matches!(
+            firmware_error(0x27, 3),
+            HardwareControlError::UnsupportedMode(_)
+        ));
+        assert!(matches!(
+            firmware_error(0x27, 4),
+            HardwareControlError::UnsupportedMode(_)
+        ));
+        assert!(matches!(
+            firmware_error(0x27, 5),
+            HardwareControlError::InvalidParameter(_)
+        ));
+        assert!(matches!(
+            firmware_error(0x27, 9),
+            HardwareControlError::ProtocolError(_)
+        ));
+    }
+
+    #[test]
+    fn test_fake_adapter_records_fan_count_call() {
         let adapter = FakeWmiAdapter::new(true);
         adapter.expect_call(FakeResponse::Success {
-            payload: vec![0x02], // 2 fans
+            payload: vec![0x02],
         });
         let conn = HpWmiConnection::from_adapter(adapter);
-        let count_ok = probe_fan_count(&conn).expect("probe fan count");
-        assert!(count_ok);
+        assert_eq!(get_fan_count(&conn).expect("fan count"), 2);
     }
 
     #[test]
-    fn test_read_fan_mode_parsing() {
-        for (byte, expected) in [(0x00, "auto"), (0x01, "max"), (0x02, "quiet")] {
+    fn test_fan_count_rejects_implausible_values() {
+        for value in [0u8, MAX_FAN_COUNT + 1] {
             let adapter = FakeWmiAdapter::new(true);
             adapter.expect_call(FakeResponse::Success {
-                payload: vec![byte],
+                payload: vec![value],
             });
             let conn = HpWmiConnection::from_adapter(adapter);
-            let mode = read_fan_mode_from_firmware(&conn).unwrap();
-            assert_eq!(mode, expected);
+            assert!(matches!(
+                get_fan_count(&conn).unwrap_err(),
+                HardwareControlError::ProtocolError(_)
+            ));
         }
+    }
+
+    #[test]
+    fn test_cached_fan_count_does_not_rearm_firmware_state() {
+        let adapter = Arc::new(FakeWmiAdapter::new(true));
+        adapter.expect_call(FakeResponse::Success {
+            payload: vec![0x02],
+        });
+        let conn = HpWmiConnection::from_adapter(adapter.clone());
+
+        assert_eq!(cached_fan_count(&conn).expect("first"), 2);
+        assert_eq!(cached_fan_count(&conn).expect("cached"), 2);
+        // Only one 0x10 query reached firmware.
+        assert_eq!(adapter.recorded_calls().len(), 1);
+    }
+
+    #[test]
+    fn test_read_fan_mode_uses_max_fan_status_opcode() {
+        let adapter = Arc::new(FakeWmiAdapter::new(true));
+        adapter.expect_call(max_fan_state(false));
+        let conn = HpWmiConnection::from_adapter(adapter.clone());
+        assert_eq!(read_fan_mode_from_firmware(&conn).unwrap(), "auto");
+
+        let call = &adapter.recorded_calls()[0];
+        assert_eq!(call.command, HPWMI_GM);
+        assert_eq!(call.command_type, commands::MAX_FAN_STATUS);
     }
 
     #[test]
@@ -1146,8 +1589,10 @@ mod tests {
             payload: Vec::new(),
         });
         let conn = HpWmiConnection::from_adapter(adapter);
-        let err = read_fan_mode_from_firmware(&conn).unwrap_err();
-        assert!(matches!(err, HardwareControlError::ProtocolError(_)));
+        assert!(matches!(
+            read_fan_mode_from_firmware(&conn).unwrap_err(),
+            HardwareControlError::ProtocolError(_)
+        ));
     }
 
     #[test]
@@ -1157,21 +1602,10 @@ mod tests {
             payload: vec![0x99],
         });
         let conn = HpWmiConnection::from_adapter(adapter);
-        let err = read_fan_mode_from_firmware(&conn).unwrap_err();
-        assert!(matches!(err, HardwareControlError::ProtocolError(_)));
-    }
-
-    #[test]
-    fn test_read_performance_mode_parsing() {
-        for (byte, expected) in [(0x00, "balanced"), (0x01, "performance"), (0x02, "cool")] {
-            let adapter = FakeWmiAdapter::new(true);
-            adapter.expect_call(FakeResponse::Success {
-                payload: vec![byte],
-            });
-            let conn = HpWmiConnection::from_adapter(adapter);
-            let profile = read_performance_mode_from_firmware(&conn).unwrap();
-            assert_eq!(profile, expected);
-        }
+        assert!(matches!(
+            read_fan_mode_from_firmware(&conn).unwrap_err(),
+            HardwareControlError::ProtocolError(_)
+        ));
     }
 
     #[test]
@@ -1180,5 +1614,119 @@ mod tests {
         let conn = HpWmiConnection::from_adapter(adapter);
         let err = set_fan_mode(&conn, "turbo_extreme").unwrap_err();
         assert!(matches!(err, HardwareControlError::InvalidParameter(_)));
+    }
+
+    #[test]
+    fn test_generic_fan_rpm_decodes_big_endian_word() {
+        let adapter = FakeWmiAdapter::new(true);
+        // Real 8A4F capture: 36 3C 0F A7 -> 4007 RPM.
+        adapter.expect_call(FakeResponse::Success {
+            payload: vec![0x36, 0x3C, 0x0F, 0xA7],
+        });
+        let conn = HpWmiConnection::from_adapter(adapter);
+        assert_eq!(get_fan_rpm(&conn, 0).expect("rpm"), 4007);
+    }
+
+    #[test]
+    fn test_victus_s_fan_rpm_uses_0x2d_hundred_rpm_units() {
+        let adapter = Arc::new(FakeWmiAdapter::new(true));
+        let mut levels = vec![0u8; 128];
+        levels[0] = 0x27; // 3900 RPM
+        levels[1] = 0x23; // 3500 RPM
+        adapter.expect_call(FakeResponse::Success { payload: levels });
+
+        let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+        assert_eq!(get_fan_rpm(&conn, 0).expect("fan 0"), 3900);
+        let call = &adapter.recorded_calls()[0];
+        assert_eq!(call.command_type, victus_s::FAN_LEVEL_GET_QUERY);
+        assert_eq!(call.out_size, 128);
+    }
+
+    #[test]
+    fn test_set_max_fan_state_sends_four_byte_integer_without_output() {
+        let adapter = Arc::new(FakeWmiAdapter::new(true));
+        adapter.expect_call(write_ack());
+        let conn = HpWmiConnection::from_adapter(adapter.clone());
+
+        set_max_fan_state(&conn, true).expect("set max fan");
+        let call = &adapter.recorded_calls()[0];
+        assert_eq!(call.command, HPWMI_GM);
+        assert_eq!(call.command_type, commands::MAX_FAN_SET);
+        assert_eq!(call.payload, vec![1, 0, 0, 0]);
+        assert_eq!(call.out_size, 0);
+    }
+
+    #[test]
+    fn test_victus_s_level_write_follows_upstream_sequence() {
+        let adapter = Arc::new(FakeWmiAdapter::new(true));
+        adapter.expect_call(FakeResponse::Success {
+            payload: vec![0x02],
+        }); // 0x10
+        adapter.expect_call(write_ack()); // 0x27 = 0
+        let mut table = vec![0u8; 128];
+        table[0] = 2;
+        table[2] = 0x35; // max cpu level 53
+        table[3] = 0x2E;
+        adapter.expect_call(FakeResponse::Success { payload: table }); // 0x2F
+        adapter.expect_call(write_ack()); // 0x2E
+
+        let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+        set_victus_fan_levels(&conn, 40, 35).expect("set levels");
+
+        let calls = adapter.recorded_calls();
+        let opcodes: Vec<u32> = calls.iter().map(|c| c.command_type).collect();
+        assert_eq!(
+            opcodes,
+            vec![
+                commands::FAN_COUNT,
+                commands::MAX_FAN_SET,
+                victus_s::FAN_TABLE_QUERY,
+                victus_s::FAN_LEVEL_SET_QUERY,
+            ]
+        );
+        assert!(calls.iter().all(|c| c.command == HPWMI_GM));
+        assert_eq!(calls[1].payload, vec![0, 0, 0, 0]);
+        assert_eq!(calls[3].payload, vec![40, 35]);
+        assert_eq!(calls[3].out_size, 0);
+    }
+
+    #[test]
+    fn test_victus_s_level_write_rejects_out_of_range_without_writing() {
+        let adapter = Arc::new(FakeWmiAdapter::new(true));
+        adapter.expect_call(FakeResponse::Success {
+            payload: vec![0x02],
+        });
+        adapter.expect_call(write_ack());
+        let mut table = vec![0u8; 128];
+        table[0] = 2;
+        table[2] = 0x35;
+        adapter.expect_call(FakeResponse::Success { payload: table });
+
+        let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+        let err = set_victus_fan_levels(&conn, 200, 35).unwrap_err();
+        assert!(matches!(err, HardwareControlError::InvalidParameter(_)));
+        // No 0x2E request was issued.
+        assert!(
+            adapter
+                .recorded_calls()
+                .iter()
+                .all(|c| c.command_type != victus_s::FAN_LEVEL_SET_QUERY)
+        );
+    }
+
+    #[test]
+    fn test_victus_s_level_write_refused_on_non_victus_board() {
+        let adapter = FakeWmiAdapter::new(true);
+        let conn = HpWmiConnection::from_adapter(adapter);
+        let err = set_victus_fan_levels(&conn, 10, 10).unwrap_err();
+        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    }
+
+    #[test]
+    fn test_victus_s_thermal_profile_read_is_explicitly_unsupported() {
+        let adapter = FakeWmiAdapter::new(true);
+        let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+        let err = read_performance_mode_from_firmware(&conn).unwrap_err();
+        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
     }
 }

@@ -148,7 +148,10 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             model_family: "HP Victus 15-fb0xxx (AMD)".to_string(),
             fan_count: 2,
             has_max_fan: true,
-            has_custom_curves: false,
+            // The upstream Linux driver routes 8A3D to `victus_s_board_params`
+            // with `fan_table = true` (0x2D/0x2E/0x2F fan-level protocol).
+            // This is a protocol capability, not a write authorization.
+            has_custom_curves: true,
             supported_power_profiles: vec!["quiet".to_string(), "balanced".to_string()],
             rgb_zone_count: 0,
         }),

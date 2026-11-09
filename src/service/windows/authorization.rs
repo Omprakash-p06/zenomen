@@ -39,6 +39,12 @@ pub fn authorize_mutation(
                     val.board_id, board.board_id
                 )));
             }
+            if !val.fan_write_verified {
+                return Err(HardwareControlError::UnsupportedMode(format!(
+                    "Motherboard {} fan write operation is not validated in validation record",
+                    board.board_id
+                )));
+            }
 
             let normalized = mode.trim().to_lowercase();
             match normalized.as_str() {
@@ -47,12 +53,6 @@ pub fn authorize_mutation(
                     if !board.has_max_fan {
                         return Err(HardwareControlError::UnsupportedMode(format!(
                             "Motherboard {} does not support Maximum Fan override",
-                            board.board_id
-                        )));
-                    }
-                    if !val.fan_write_verified {
-                        return Err(HardwareControlError::UnsupportedMode(format!(
-                            "Motherboard {} fan write operation is not validated in validation record",
                             board.board_id
                         )));
                     }

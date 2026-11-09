@@ -369,11 +369,20 @@ pub fn run_pipe_server(
         }
 
         // Graceful shutdown: restore fan mode to Auto so EC resumes autonomous cooling.
-        if conn.is_available() {
+        // Only boards whose fan writes are validated may be mutated here; an
+        // unvalidated board was never placed in Max Fan mode, so there is nothing
+        // to restore and no reason to send a firmware write.
+        if conn.is_available() && validation.fan_write_verified {
             tracing::info!("Service shutdown: restoring fan mode to Auto for EC safety");
             if let Err(e) = hp_wmi::set_fan_mode(&conn, "auto") {
                 tracing::warn!(error = %e, "Could not restore fan mode to Auto on shutdown");
             }
+        } else {
+            tracing::info!(
+                board = %board.board_id,
+                fan_write_verified = validation.fan_write_verified,
+                "Service shutdown: skipping Auto restore (fan writes not validated on this board)"
+            );
         }
 
         unsafe { CloseHandle(pipe) };

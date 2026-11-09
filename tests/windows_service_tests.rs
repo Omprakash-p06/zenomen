@@ -15,7 +15,9 @@
 
 use zenomen::service::types::HardwareControlError;
 use zenomen::service::windows::authorization::authorize_mutation;
-use zenomen::service::windows::hp_wmi::{FakeResponse, FakeWmiAdapter, HpWmiConnection};
+use zenomen::service::windows::hp_wmi::{
+    FakeResponse, FakeWmiAdapter, HPWMI_GM, HpWmiConnection, commands,
+};
 use zenomen::service::windows::profiles::{
     BoardValidation, resolve_board_profile, resolve_board_validation,
 };
@@ -23,6 +25,7 @@ use zenomen::service::windows::protocol::{
     HardwareRequest, HardwareResponse, MAX_PAYLOAD_SIZE, decode_frame, encode_frame,
 };
 use zenomen::service::windows::server::handle_request;
+use zenomen::service::windows::victus_s;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -43,6 +46,21 @@ fn write_ack() -> FakeResponse {
 /// Build an unavailable fake connection (WMI not present).
 fn unavailable_conn() -> HpWmiConnection {
     HpWmiConnection::from_adapter(FakeWmiAdapter::new(false))
+}
+
+/// Pre-load a fan count response (`0x10`).
+fn fan_count_response(count: u8) -> FakeResponse {
+    FakeResponse::Success {
+        payload: vec![count],
+    }
+}
+
+/// Build a 128-byte Victus S fan table with `num_fans` and one `cpu` row.
+fn fan_table_response(cpu_level: u8) -> FakeResponse {
+    let mut table = vec![0u8; victus_s::MAX_RESPONSE_LEN];
+    table[0] = 1;
+    table[victus_s::FAN_TABLE_HEADER_LEN] = cpu_level;
+    FakeResponse::Success { payload: table }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -331,18 +349,20 @@ fn test_authorization_blocks_unvalidated_hardware_mutations() {
 #[test]
 fn test_authorization_blocks_8a3d_mutations_from_resolve() {
     // Even if someone passes the resolved (unvalidated) record for 8A3D,
-    // mutations must be blocked.
+    // mutations must be blocked for both max and auto modes.
     let board = resolve_board_profile("8A3D").unwrap();
     let validation = resolve_board_validation("8A3D", "F.22");
 
     assert!(!validation.fan_write_verified);
 
-    let fan_req = HardwareRequest::SetFanMode {
-        mode: "max".to_string(),
-    };
-    let err = authorize_mutation(&fan_req, &board, Some(&validation))
-        .expect_err("8A3D fan write must be blocked");
-    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    for mode in ["max", "auto"] {
+        let fan_req = HardwareRequest::SetFanMode {
+            mode: mode.to_string(),
+        };
+        let err = authorize_mutation(&fan_req, &board, Some(&validation))
+            .expect_err("8A3D fan write must be blocked");
+        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    }
 }
 
 #[test]
@@ -362,12 +382,14 @@ fn test_authorization_power_rgb_flags_cannot_authorize_fan_write() {
         validation_record_version: 1,
     };
 
-    let fan_req = HardwareRequest::SetFanMode {
-        mode: "max".to_string(),
-    };
-    let err = authorize_mutation(&fan_req, &board, Some(&mixed))
-        .expect_err("fan write must require fan_write_verified");
-    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    for mode in ["max", "auto"] {
+        let fan_req = HardwareRequest::SetFanMode {
+            mode: mode.to_string(),
+        };
+        let err = authorize_mutation(&fan_req, &board, Some(&mixed))
+            .expect_err("fan write must require fan_write_verified");
+        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -453,55 +475,85 @@ fn test_set_fan_mode_returns_verification_failed_when_readback_disagrees() {
 fn test_set_fan_mode_returns_unsupported_when_firmware_rejects_command() {
     let adapter = FakeWmiAdapter::new(true);
     adapter.expect_call(fan_mode_response(0x00)); // pre-read succeeds
-    // Write response: firmware status 0x01 = UnknownCommand
-    adapter.expect_call(FakeResponse::FirmwareError { status: 0x01 });
+    // Firmware status 3 = unknown command (e.g. wrong command family).
+    adapter.expect_call(FakeResponse::FirmwareError { status: 3 });
 
     let conn = HpWmiConnection::from_adapter(adapter);
     let err = zenomen::service::windows::hp_wmi::set_fan_mode(&conn, "max")
         .expect_err("firmware rejection must propagate as error");
     assert!(
         matches!(err, HardwareControlError::UnsupportedMode(_)),
-        "expected UnsupportedMode for firmware status 0x01, got {err:?}"
+        "expected UnsupportedMode for firmware status 3, got {err:?}"
     );
 }
 
 #[test]
-fn test_set_fan_mode_returns_authorization_failed_when_access_denied() {
-    let adapter = FakeWmiAdapter::new(true);
-    adapter.expect_call(fan_mode_response(0x00)); // pre-read
-    // Firmware returns 0x04 = AccessDenied (BIOS password locked)
-    adapter.expect_call(FakeResponse::FirmwareError { status: 0x04 });
+fn test_firmware_status_codes_map_to_documented_layers() {
+    // Upstream `hp_return_value`: 2 wrong signature, 3 unknown command,
+    // 4 unknown command type, 5 invalid parameters. 0 is the only success.
+    for (status, expect_invalid_parameter) in [(2u32, false), (3, false), (4, false), (5, true)] {
+        let adapter = FakeWmiAdapter::new(true);
+        adapter.expect_call(fan_mode_response(0x00));
+        adapter.expect_call(FakeResponse::FirmwareError { status });
 
-    let conn = HpWmiConnection::from_adapter(adapter);
-    let err = zenomen::service::windows::hp_wmi::set_fan_mode(&conn, "max")
-        .expect_err("access denied must propagate");
-    assert!(
-        matches!(err, HardwareControlError::AuthorizationFailed(_)),
-        "expected AuthorizationFailed, got {err:?}"
-    );
+        let conn = HpWmiConnection::from_adapter(adapter);
+        let err = zenomen::service::windows::hp_wmi::set_fan_mode(&conn, "max")
+            .expect_err("firmware status must propagate");
+        if expect_invalid_parameter {
+            assert!(
+                matches!(err, HardwareControlError::InvalidParameter(_)),
+                "status {status} must map to InvalidParameter, got {err:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    err,
+                    HardwareControlError::ProtocolError(_)
+                        | HardwareControlError::UnsupportedMode(_)
+                ),
+                "status {status} must map to a protocol/unsupported error, got {err:?}"
+            );
+        }
+    }
 }
 
 #[test]
-fn test_query_fan_status_returns_honest_empty_rpms() {
+fn test_query_fan_status_reads_real_rpms_from_firmware() {
     let adapter = FakeWmiAdapter::new(true);
-    // Firmware reports "auto" (0x00)
+    // 0x26 -> auto, 0x10 -> 2 fans, then one 0x11 read per fan.
     adapter.expect_call(fan_mode_response(0x00));
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x36, 0x3C, 0x0F, 0xA7], // 4007 RPM
+    });
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x36, 0x3C, 0x0D, 0xFD], // 3581 RPM
+    });
 
     let conn = HpWmiConnection::from_adapter(adapter);
     let (mode, rpms) = zenomen::service::windows::hp_wmi::query_fan_status(&conn)
         .expect("query_fan_status must succeed");
     assert_eq!(mode, "auto");
-    // RPMs must be empty — no fabricated values.
-    assert!(
-        rpms.is_empty(),
-        "Fan RPMs must be empty (no tachometer on this platform); got {rpms:?}"
-    );
+    assert_eq!(rpms, vec![4007, 3581]);
+}
+
+#[test]
+fn test_query_fan_status_reports_no_rpms_when_fan_count_unavailable() {
+    let adapter = FakeWmiAdapter::new(true);
+    adapter.expect_call(fan_mode_response(0x00));
+    // No further responses: the fan-count query fails.
+
+    let conn = HpWmiConnection::from_adapter(adapter);
+    let (mode, rpms) = zenomen::service::windows::hp_wmi::query_fan_status(&conn)
+        .expect("mode read still succeeds");
+    assert_eq!(mode, "auto");
+    assert!(rpms.is_empty(), "no tachometer data may be invented");
 }
 
 #[test]
 fn test_query_fan_status_propagates_firmware_error() {
     let adapter = FakeWmiAdapter::new(true);
-    adapter.expect_call(FakeResponse::FirmwareError { status: 0x01 }); // UnknownCommand
+    adapter.expect_call(FakeResponse::FirmwareError { status: 3 }); // unknown command
 
     let conn = HpWmiConnection::from_adapter(adapter);
     let err = zenomen::service::windows::hp_wmi::query_fan_status(&conn)
@@ -875,7 +927,283 @@ fn test_lifecycle_and_server_guards_on_non_windows() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 9. Windows HP BIOS WMI diagnostic & metadata verification
+// 9. Victus S board 8A3D protocol regression
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_victus_s_query_uses_0x2d_levels_and_0x10_fan_count() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_mode_response(0x00)); // 0x26
+    adapter.expect_call(fan_count_response(2)); // 0x10
+    let mut levels = vec![0u8; victus_s::MAX_RESPONSE_LEN];
+    levels[0] = 0x27; // 3900 RPM
+    levels[1] = 0x23; // 3500 RPM
+    adapter.expect_call(FakeResponse::Success { payload: levels });
+    adapter.expect_call(FakeResponse::Success {
+        payload: {
+            let mut l = vec![0u8; victus_s::MAX_RESPONSE_LEN];
+            l[0] = 0x27;
+            l[1] = 0x23;
+            l
+        },
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let (mode, rpms) =
+        zenomen::service::windows::hp_wmi::query_fan_status(&conn).expect("victus s status");
+    assert_eq!(mode, "auto");
+    assert_eq!(rpms, vec![3900, 3500]);
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_STATUS);
+    assert_eq!(calls[1].command_type, commands::FAN_COUNT);
+    assert!(
+        calls[2..]
+            .iter()
+            .all(|c| c.command_type == victus_s::FAN_LEVEL_GET_QUERY),
+        "Victus S RPM must come from 0x2D, not 0x11: {calls:?}"
+    );
+}
+
+#[test]
+fn test_8a3d_auto_restore_refuses_the_0x2e_level_reset() {
+    // Upstream patch 2026-10-24: `0x2E {0,0}` freezes 8A3D fans at 0 RPM under
+    // load, so the generic Victus S auto reset must never run on this board.
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_mode_response(0x01)); // pre-read: max
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let err = zenomen::service::windows::hp_wmi::set_fan_mode(&conn, "auto")
+        .expect_err("8A3D must not fall back to the unsafe level reset");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    let calls = adapter.recorded_calls();
+    assert_eq!(
+        calls.len(),
+        1,
+        "the refusal must precede every firmware write: {calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != victus_s::FAN_LEVEL_SET_QUERY),
+        "0x2E must never be sent as an 8A3D auto restore: {calls:?}"
+    );
+}
+
+#[test]
+fn test_8a3d_auto_restore_reapplies_the_active_thermal_profile() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack()); // 0x27 = 0
+    adapter.expect_call(fan_count_response(2)); // 0x10 arm
+    adapter.expect_call(write_ack()); // 0x1A {0xFF, quiet}
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control(
+        &conn,
+        Some(victus_s::ThermalProfile::Quiet),
+    )
+    .expect("profile-based restore");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[0].payload, vec![0, 0, 0, 0]);
+    assert_eq!(calls[1].command_type, commands::FAN_COUNT);
+    assert_eq!(calls[2].command_type, commands::PERFORMANCE_MODE);
+    assert_eq!(calls[2].payload, vec![0xFF, 0x03]);
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != victus_s::FAN_LEVEL_SET_QUERY),
+        "the EC restore path must not send the 0x2E level reset: {calls:?}"
+    );
+}
+
+#[test]
+fn test_8a3d_auto_restore_stops_when_the_max_fan_clear_fails() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::FirmwareError { status: 5 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    assert!(
+        zenomen::service::windows::hp_wmi::restore_automatic_fan_control(
+            &conn,
+            Some(victus_s::ThermalProfile::Performance),
+        )
+        .is_err()
+    );
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != commands::PERFORMANCE_MODE),
+        "a failed Max Fan clear must not be followed by a profile write"
+    );
+}
+
+#[test]
+fn test_8a3d_auto_restore_without_a_known_profile_writes_nothing() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    assert!(zenomen::service::windows::hp_wmi::restore_automatic_fan_control(&conn, None).is_err());
+    assert!(
+        adapter.recorded_calls().is_empty(),
+        "an unknown profile must not cause any firmware write: {:?}",
+        adapter.recorded_calls()
+    );
+}
+
+#[test]
+fn test_other_victus_s_boards_keep_the_level_reset_restore() {
+    // Only 8A3D is routed to the EC thermal profile; other Victus S boards keep
+    // the upstream two-step fan-level reset.
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_count_response(2)); // 0x10
+    adapter.expect_call(write_ack()); // 0x27 = 0
+    adapter.expect_call(fan_table_response(0x35)); // 0x2F
+    adapter.expect_call(write_ack()); // 0x2E {0,0}
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8C99");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control(&conn, None)
+        .expect("victus s level reset");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls[3].command_type, victus_s::FAN_LEVEL_SET_QUERY);
+    assert_eq!(calls[3].payload, vec![0, 0]);
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != commands::PERFORMANCE_MODE),
+        "non-EC boards must not write a thermal profile: {calls:?}"
+    );
+}
+
+#[test]
+fn test_generic_board_auto_restore_only_clears_max_fan() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "88F8");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control(&conn, None)
+        .expect("generic max fan clear");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[0].payload, vec![0, 0, 0, 0]);
+}
+
+#[test]
+fn test_8a3d_auto_request_cannot_reach_the_unsafe_reset() {
+    // `SetFanMode { auto }` is blocked by authorization when fan_write_verified
+    // is false, so zero calls reach the firmware adapter.
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let resp = handle_request(
+        HardwareRequest::SetFanMode {
+            mode: "auto".to_string(),
+        },
+        &board,
+        Some(&validation),
+        &conn,
+    );
+
+    assert!(matches!(resp, HardwareResponse::Error(_)), "{resp:?}");
+    assert!(
+        adapter.recorded_calls().is_empty(),
+        "unvalidated 8A3D must reject SetFanMode(auto) before reaching firmware: {:?}",
+        adapter.recorded_calls()
+    );
+}
+
+#[test]
+fn test_fan_write_uses_gaming_family_not_lighting_family() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_mode_response(0x00));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_mode_response(0x01));
+
+    let conn = HpWmiConnection::from_adapter(adapter.clone());
+    zenomen::service::windows::hp_wmi::set_fan_mode(&conn, "max").expect("set max");
+
+    for call in adapter.recorded_calls() {
+        assert_eq!(
+            call.command, HPWMI_GM,
+            "every HP gaming command uses family 0x20008; 0x20009 is keyboard lighting"
+        );
+        assert_ne!(
+            call.command,
+            zenomen::service::windows::hp_wmi::HPWMI_KB_LIGHTING
+        );
+        // Reads ask for 4 bytes; the Max Fan write has no output payload.
+        if call.command_type == commands::MAX_FAN_SET {
+            assert_eq!(call.out_size, 0);
+            assert_eq!(call.payload.len(), 4);
+        }
+    }
+}
+
+#[test]
+fn test_8a3d_fan_write_still_blocked_before_firmware() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    let resp = handle_request(
+        HardwareRequest::SetFanMode {
+            mode: "max".to_string(),
+        },
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    assert!(matches!(resp, HardwareResponse::Error(_)));
+    assert!(
+        adapter.recorded_calls().is_empty(),
+        "an unvalidated board must never reach firmware: {:?}",
+        adapter.recorded_calls()
+    );
+}
+
+#[test]
+fn test_8a3d_read_only_status_is_permitted() {
+    // Read-only discovery remains available on an unvalidated board.
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_mode_response(0x00));
+    adapter.expect_call(fan_count_response(1));
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x27],
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let resp = handle_request(
+        HardwareRequest::GetFanStatus,
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    match resp {
+        HardwareResponse::FanStatus { mode, rpms } => {
+            assert_eq!(mode, "auto");
+            assert_eq!(rpms, vec![3900]);
+        }
+        other => panic!("expected FanStatus, got {other:?}"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. Windows HP BIOS WMI diagnostic & metadata verification
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]

@@ -9,6 +9,7 @@ pub mod profiles;
 pub mod protocol;
 pub mod security;
 pub mod server;
+pub mod victus_s;
 pub mod wmi_diag;
 #[cfg(windows)]
 pub mod wmi_ffi;
