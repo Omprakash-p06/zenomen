@@ -113,6 +113,10 @@ export component AppWindow inherits Window {
     in-out property <bool> preset-result-success: false;
     in-out property <string> service-status-text: "Disconnected";
     in-out property <string> polkit-status-text: "Unknown";
+    in-out property <string> diag-service-title: "Hardware Control Service (com.zenomen.Hardware1)";
+    in-out property <string> diag-auth-label: "Polkit Permissions:";
+    in-out property <string> diag-sandboxing-label: "Sandboxing:";
+    in-out property <string> diag-sandboxing-text: "ProtectSystem=strict, ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi";
     in-out property <string> control-error-message: "";
 
     in-out property <int> polling-interval-ms: 1000;
@@ -170,14 +174,14 @@ export component AppWindow inherits Window {
         root.has-battery-metrics,
     ];
     private property <[string]> capability-reasons: [
-        root.has-cpu-metrics ? "" : "No CPU temperature hwmon device (coretemp/k10temp) found.",
-        root.has-gpu-metrics ? "" : "No NVIDIA nvidia-smi or supported DRM card detected.",
-        root.has-ram-metrics ? "" : "/proc/meminfo could not be read.",
-        root.has-fan-rpm ? "" : "No fan tachometer found in hwmon.",
-        root.has-fan-control ? "" : "hp-wmi exposes no writable pwm1_enable here.",
-        root.has-power-profiles ? "" : "ACPI platform_profile sysfs interface not exposed.",
-        root.has-rgb-lighting ? "" : "No supported OMEN 4-zone or legacy interface detected.",
-        root.has-battery-metrics ? "" : "No /sys/class/power_supply battery device found.",
+        root.has-cpu-metrics ? "" : (root.provider-mode == "windows" ? "PDH CPU performance counters unavailable." : "No CPU temperature hwmon device (coretemp/k10temp) found."),
+        root.has-gpu-metrics ? "" : (root.provider-mode == "windows" ? "No DirectX/DXGI adapter or NVAPI device detected." : "No NVIDIA nvidia-smi or supported DRM card detected."),
+        root.has-ram-metrics ? "" : (root.provider-mode == "windows" ? "GlobalMemoryStatusEx query failed." : "/proc/meminfo could not be read."),
+        root.has-fan-rpm ? "" : (root.provider-mode == "windows" ? "HP BIOS does not expose hardware tachometer RPM readings on Windows." : "No fan tachometer found in hwmon."),
+        root.has-fan-control ? "" : (root.provider-mode == "windows" ? "HP WMI fan control interface not exposed or service offline." : "hp-wmi exposes no writable pwm1_enable here."),
+        root.has-power-profiles ? "" : (root.provider-mode == "windows" ? "HP WMI thermal profile interface not exposed or service offline." : "ACPI platform_profile sysfs interface not exposed."),
+        root.has-rgb-lighting ? "" : (root.provider-mode == "windows" ? "HP WMI 4-zone or omen-rgb interface not detected." : "No supported OMEN 4-zone or legacy interface detected."),
+        root.has-battery-metrics ? "" : (root.provider-mode == "windows" ? "GetSystemPowerStatus query failed." : "No /sys/class/power_supply battery device found."),
     ];
 
     /// Emitted when the user activates a nav row. `src/app.rs` forwards this
@@ -303,6 +307,7 @@ export component AppWindow inherits Window {
                                 has-fan-rpm: root.has-fan-rpm;
                                 has-fan-control: root.has-fan-control;
                                 service-connected: root.service-connected;
+                                is-windows: root.provider-mode == "windows";
                                 fan-mode: root.fan-mode;
                                 pending-fan-mode: root.pending-fan-mode;
                                 control-error-message: root.control-error-message;
@@ -322,6 +327,7 @@ export component AppWindow inherits Window {
                             if root.current-screen == 2 : Performance {
                                 has-power-profiles: root.has-power-profiles;
                                 service-connected: root.service-connected;
+                                is-windows: root.provider-mode == "windows";
                                 power-profile: root.power-profile;
                                 power-profile-choices: root.power-profile-choices;
                                 pending-power-profile: root.pending-power-profile;
@@ -346,6 +352,7 @@ export component AppWindow inherits Window {
 
                             if root.current-screen == 3 : Lighting {
                                 has-rgb-lighting: root.has-rgb-lighting;
+                                is-windows: root.provider-mode == "windows";
                                 rgb-variant: root.rgb-variant;
                                 active-profile-name: root.rgb-profile-name;
                                 active-profile-desc: root.rgb-profile-desc;
@@ -413,6 +420,10 @@ export component AppWindow inherits Window {
                                 export-status: root.export-status;
                                 service-status: root.service-status-text;
                                 polkit-status: root.polkit-status-text;
+                                service-title: root.diag-service-title;
+                                auth-label: root.diag-auth-label;
+                                isolation-label: root.diag-sandboxing-label;
+                                isolation-text: root.diag-sandboxing-text;
                                 capability-names: root.capability-names;
                                 capability-flags: root.capability-flags;
                                 capability-reasons: root.capability-reasons;

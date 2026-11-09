@@ -60,14 +60,69 @@ Once query probing succeeds:
    - Visually inspect keyboard zones for accurate color rendering.
 
 ### Phase 5: Profile Ratification
-Add the verified entry to `src/service/windows/profiles.rs`:
-```rust
-BoardProfile {
-    board_id: "88EE",
-    model_name: "HP OMEN 16 (2022 AMD)",
-    supported_fan_modes: &[FanMode::Auto, FanMode::Max],
-    supported_power_presets: &[PowerPreset::Balanced, PowerPreset::Performance],
-    rgb_zones: 4,
+Add the verified entry to `src/service/windows/profiles.rs` with an explicit `bios_version` match guard.
+Never grant write authorization based solely on a recognized board ID without physical hardware-in-the-loop evidence.
+
+---
+
+## 3. Dedicated Target Validation Procedure: HP Victus 15-fb0xxx (8A3D, BIOS F.22)
+
+### Target Machine Baseline:
+- **Manufacturer:** HP
+- **Product:** HP Victus Gaming Laptop 15-fb0xxx
+- **Motherboard ID:** `8A3D`
+- **BIOS Version:** `F.22`
+- **OS:** Windows 10/11 64-bit
+
+### Current Status:
+- **Implemented:** Yes (`RealWmiAdapter`, `hpqBIntM`, `hpqBMtdx`).
+- **Unit Tested:** Yes (36 tests in `tests/windows_service_tests.rs`).
+- **Physical Validation:** **PENDING EXECUTION BY OPERATOR ON TARGET HARDWARE**.
+- **Mutations Allowed:** **NONE** (Safely blocked by `resolve_board_validation("8A3D", "F.22")`).
+
+### Step-by-Step Operator Runbook (Run in PowerShell as Administrator):
+
+#### Step 1: Verify Hardware and Interface Discovery
+```powershell
+Write-Host "=== 1. Hardware Identity ==="
+$board = Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product, Version
+$bios = Get-CimInstance Win32_BIOS | Select-Object SMBIOSBIOSVersion, ReleaseDate
+Write-Host "Board: $($board.Product), BIOS: $($bios.SMBIOSBIOSVersion)"
+
+Write-Host "`n=== 2. Check HP WMI Class ==="
+$wmiClass = Get-CimClass -Namespace ROOT/WMI -ClassName hpqBIntM -ErrorAction SilentlyContinue
+if ($wmiClass) {
+    Write-Host "SUCCESS: hpqBIntM found with methods: $($wmiClass.CimClassMethods.Name -join ', ')"
+} else {
+    Write-Host "FAIL: hpqBIntM not present in ROOT\WMI"
 }
 ```
-Submit PR accompanied by diagnostic log evidence.
+
+#### Step 2: Run ZenOmen Hardware Daemon in Console Mode
+From the build directory:
+```powershell
+.\target\debug\zenomen-hw.exe --console
+```
+Observe standard output:
+- It should log the detected board `8A3D`, BIOS `F.22`.
+- It will log that `fan_write_verified = false`, `power_write_verified = false`.
+- It will verify the real WMI connection and start the named pipe server on `\\.\pipe\ZenOmen.Hardware.v1`.
+
+#### Step 3: Run Safe Hardware Query Tests
+From a separate PowerShell prompt:
+```powershell
+# Using the client test or pipe query:
+# Fan status query will read actual firmware via WMI command 0x27 subcmd 0x00.
+```
+
+#### Step 4: Physical Fan Mutation Verification (When Approved)
+If the operator authorizes physical testing:
+1. Verify initial fan state is `auto`.
+2. Issue `SetFanMode("max")`.
+3. Check daemon log:
+   - Does `hpqBMtdx` return `0x00` (Success) or `0x01` (Unsupported)?
+   - If `0x00`, does the post-write read-back confirm `max`?
+   - Do the fans audibly spool up to 100% RPM within 3 seconds?
+4. Immediately issue `SetFanMode("auto")` or stop the daemon (daemon automatically restores `auto` on shutdown).
+5. Record whether the BIOS accepted or restricted manual fan control.
+6. If confirmed working, update `resolve_board_validation` in `src/service/windows/profiles.rs` to mark `fan_write_verified: true` for `8A3D` with BIOS `F.22`.

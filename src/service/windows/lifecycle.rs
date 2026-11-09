@@ -143,7 +143,7 @@ fn get_stop_signal() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
 
 /// Report the current status of the service to the SCM.
 #[cfg(windows)]
-pub fn report_service_status(
+fn report_service_status(
     status_handle: windows_sys::Win32::System::Services::SERVICE_STATUS_HANDLE,
     current_state: u32,
     win32_exit_code: u32,

@@ -287,9 +287,9 @@ Classification Key:
 - **Status:** **RESOLVED & VERIFIED**.
 - **Implementation:** Added `BoardValidation` struct (`new_unvalidated`, `new_verified`). All mutation authorizations in `authorize_mutation` enforce `validation` verification flags (`fan_write_verified`, `power_write_verified`, `rgb_write_verified`), rejecting unverified hardware with `HardwareControlError::UnsupportedMode`.
 
-### Fix 4: HP WMI Driver Honest Status (`src/service/windows/hp_wmi.rs`)
+### Fix 4: Real HP WMI Driver Implementation (`src/service/windows/hp_wmi.rs` & `wmi_ffi.rs`)
 - **Status:** **RESOLVED & VERIFIED**.
-- **Implementation:** Removed simulated fake RPMs (`vec![2400, 2500]`) and synthetic sleep loops. Returns honest empty tachometer vector when unmeasured, and enforces connection checks across all functions.
+- **Implementation:** Replaced simulated stubs with genuine Win32 COM `ROOT\WMI` FFI bindings to `hpqBIntM::hpqBMtdx`. Implemented `WmiAdapter` trait and `FakeWmiAdapter` for deterministic unit testing. Removed all process-local fan statics. Enforced post-write firmware read-back with `VerificationFailed` on mismatch. Explicitly marked target board `8A3D` as unvalidated for writes until physical hardware validation runbook is performed on target hardware. Added automatic fan mode restoration to `Auto` on daemon shutdown for thermal safety.
 
 ### Fix 5: GPU Utilization & Sensor Classification (`src/hardware/windows/gpu.rs` & `sensors.rs`)
 - **Status:** **RESOLVED & VERIFIED**.

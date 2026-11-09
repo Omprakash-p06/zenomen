@@ -1,4 +1,5 @@
 //! Tests for Linux procfs CPU and memory parsers.
+#![cfg(target_os = "linux")]
 
 use zenomen::hardware::linux::cpu::{CpuSampler, read_cpu_model};
 use zenomen::hardware::linux::memory::parse_proc_meminfo;

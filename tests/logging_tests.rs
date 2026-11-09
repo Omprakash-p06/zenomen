@@ -1,4 +1,5 @@
 //! Tests for the process-wide logging setup.
+#![cfg(not(target_os = "windows"))]
 //!
 //! One test only: installing a subscriber is process-wide state, so a second
 //! parallel test would race on `XDG_STATE_HOME` and on the global dispatcher.

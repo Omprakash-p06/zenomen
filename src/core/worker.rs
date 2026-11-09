@@ -424,14 +424,41 @@ fn execute_mutating_action_with_timeout<F, R>(
                 });
             let res = match rx.recv_timeout(timeout) {
                 Ok(r) => r,
-                Err(mpsc::RecvTimeoutError::Timeout) => Err(
-                    "Operation timed out waiting for authorization or hardware response"
-                        .to_string(),
-                ),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    tracing::error!(
+                        function = "execute_mutating_action",
+                        action = name,
+                        timeout_ms = timeout.as_millis(),
+                        "mutating hardware action timed out"
+                    );
+                    Err(
+                        "Operation timed out waiting for authorization or hardware response"
+                            .to_string(),
+                    )
+                }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    tracing::error!(
+                        function = "execute_mutating_action",
+                        action = name,
+                        "mutating hardware RPC thread disconnected unexpectedly"
+                    );
                     Err("Control RPC thread exited prematurely".to_string())
                 }
             };
+            if let Err(ref e) = res {
+                tracing::error!(
+                    function = "execute_mutating_action",
+                    action = name,
+                    error = %e,
+                    "hardware mutating action failed"
+                );
+            } else if res.is_ok() {
+                tracing::info!(
+                    function = "execute_mutating_action",
+                    action = name,
+                    "hardware mutating action completed successfully"
+                );
+            }
             let _ = event_sender.send(event_builder(res));
         });
 }

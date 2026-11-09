@@ -165,10 +165,39 @@ Plans:
 **Wave 6: Packaging, Full Testing Matrix, Documentation Deliverables & Final Acceptance Gates**
 - [x] 06-06: Cross-platform packaging (WiX MSI, DEB, AppImage), dual-OS release gate matrix, architecture ADRs (ADR-001..004), and 14 final acceptance criteria
 
+### Phase 7: Windows Native Runtime Validation and Security Hardening
+
+**Goal**: Execute comprehensive native Windows 10/11 runtime validation, multi-session security authorization, and physical HP firmware ratification before declaring hardware control release-verified.
+**Mode:** quality
+**Depends on**: Phase 6
+**Requirements**: WIN-01, WIN-02, WIN-03, WIN-04, WIN-07, WIN-08, WIN-09, SEC-01, SEC-02, SEC-03, TEST-01, TEST-02, TEST-03, TEST-04
+**Success Criteria** (what must be TRUE):
+  1. Set up a native Windows 10 and Windows 11 test environment.
+  2. Test actual SCM installation, startup, stop, and recovery under `LocalSystem`.
+  3. Test named-pipe security using real Windows tokens across session boundaries (active interactive user, elevated administrator, secondary local session, RDP session, service account).
+  4. Verify session isolation and fail-closed behavior on failed impersonation, failed token query, or `RevertToSelf` failure.
+  5. Exercise the persistent PDH GPU collector across AMD, Intel, and NVIDIA configurations to validate engine aggregation and prevent multi-engine distortion.
+  6. Test repeated service connection, rapid disconnection, broken pipe handling, and resource/handle cleanup under sustained load.
+  7. Perform read-only HP WMI discovery on physical OMEN and Victus laptops to verify ACPI buffer query unpacking.
+  8. Ratify firmware writes separately through the documented hardware-validation procedure (`docs/testing/HP_BOARD_VALIDATION.md`) before enabling mutation gates.
+  9. Update the audit with test evidence, not assumptions.
+
+**Plans**: 3 plans
+
+Plans:
+**Wave 1: SCM Lifecycle & Security Token Verification**
+- [ ] 07-01: Native Windows service lifecycle (SCM install/start/stop/recover) and named-pipe multi-session token authorization testing
+
+**Wave 2: Multi-GPU Telemetry & Handle Robustness**
+- [ ] 07-02: GPU PDH multi-engine aggregation validation across AMD/Intel/NVIDIA and named-pipe connection resilience/leak testing
+
+**Wave 3: Physical HP WMI Discovery & Hardware Ratification**
+- [ ] 07-03: Real HP WMI COM driver integration (`src/service/windows/hp_wmi.rs` and `wmi_ffi.rs`) implemented and unit tested. Physical HP Victus 15-fb0xxx (board 8A3D, BIOS F.22) ratification procedure execution and audit evidence recording.
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -178,3 +207,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
 | 6. Cross-Platform Release | 6/6 | Complete | 2026-11-07 |
+| 7. Windows Runtime Validation | 0/3 | Planning | - |

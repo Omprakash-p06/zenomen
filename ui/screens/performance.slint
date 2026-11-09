@@ -17,6 +17,7 @@ import { Icon } from "../components/icons.slint";
 export component Performance inherits Rectangle {
     in property <bool> has-power-profiles: true;
     in property <bool> service-connected: false;
+    in property <bool> is-windows: false;
     /// Active profile name, empty when the interface did not report one.
     in property <string> power-profile: "";
     /// Advertised profiles from `platform_profile_choices`.
@@ -133,11 +134,19 @@ export component Performance inherits Rectangle {
                 alignment: start;
 
                 Text {
-                    text: "Coordinate ACPI power profiles and cooling fans together with verified read-back.";
+                    text: root.is-windows
+                        ? "Coordinate power profiles and cooling fans together with verified read-back."
+                        : "Coordinate ACPI power profiles and cooling fans together with verified read-back.";
                     color: ThemeColors.text-secondary;
                     font-family: ThemeTypography.font-prose;
                     font-size: ThemeTypography.label;
                     wrap: word-wrap;
+                }
+
+                if !root.service-connected : CapabilityNotice {
+                    text: root.is-windows
+                        ? "Hardware service (ZenOmenHardwareService) is offline. Start the service (or run zenomen-hw --console) to apply hardware changes."
+                        : "Hardware service (com.zenomen.Hardware1) is disconnected. Controls will request daemon connection when toggled.";
                 }
 
                 HorizontalLayout {
@@ -363,7 +372,9 @@ export component Performance inherits Rectangle {
 
         if !root.has-power-profiles : UnavailablePanel {
             heading: "Platform profiles aren't available on this machine";
-            reason: "ACPI platform_profile sysfs interface not exposed.";
+            reason: root.is-windows
+                ? "Platform power profiles not exposed by ACPI firmware or service offline."
+                : "ACPI platform_profile sysfs interface not exposed.";
             open-diagnostics => {
                 root.open-diagnostics();
             }

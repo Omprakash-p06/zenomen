@@ -5,8 +5,11 @@
 //!
 //! Reads `/proc/self/smaps_rollup` with fallback to `/proc/self/status`.
 
+#[cfg(not(target_os = "windows"))]
 use std::fs;
-use std::io::{self, BufRead, BufReader};
+use std::io;
+#[cfg(not(target_os = "windows"))]
+use std::io::{BufRead, BufReader};
 use std::time::{Duration, Instant};
 
 /// Memory consumption metrics measured from the OS.
@@ -39,21 +42,62 @@ impl MemoryMetrics {
 
 /// Read memory consumption for the current process.
 ///
-/// Attempts `/proc/self/smaps_rollup` first; falls back to `/proc/self/status`
-/// if `smaps_rollup` is unavailable.
+/// On Windows: queries `K32GetProcessMemoryInfo` for WorkingSetSize (RSS) and PrivateUsage.
+/// On Linux: attempts `/proc/self/smaps_rollup` first; falls back to `/proc/self/status`.
 pub fn read_memory_metrics() -> Result<MemoryMetrics, io::Error> {
-    if let Ok(metrics) = read_from_smaps_rollup() {
-        return Ok(metrics);
+    #[cfg(target_os = "windows")]
+    {
+        read_from_windows_process_memory()
     }
-    read_from_status()
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(metrics) = read_from_smaps_rollup() {
+            return Ok(metrics);
+        }
+        read_from_status()
+    }
 }
 
+#[cfg(target_os = "windows")]
+fn read_from_windows_process_memory() -> Result<MemoryMetrics, io::Error> {
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    unsafe {
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+
+        let success = K32GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            &mut counters as *mut _ as *mut _,
+            counters.cb,
+        );
+
+        if success == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let rss_kb = (counters.WorkingSetSize / 1024) as u64;
+        let private_dirty_kb = (counters.PrivateUsage / 1024) as u64;
+
+        Ok(MemoryMetrics {
+            rss_kb,
+            pss_kb: rss_kb, // PSS not exposed by Win32, bounded by RSS
+            private_dirty_kb,
+        })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 fn parse_kb(rest: &str) -> Option<u64> {
     rest.split_whitespace()
         .next()
         .and_then(|val| val.parse::<u64>().ok())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn read_from_smaps_rollup() -> Result<MemoryMetrics, io::Error> {
     let file = fs::File::open("/proc/self/smaps_rollup")?;
     let reader = BufReader::new(file);
@@ -83,6 +127,7 @@ fn read_from_smaps_rollup() -> Result<MemoryMetrics, io::Error> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn read_from_status() -> Result<MemoryMetrics, io::Error> {
     let file = fs::File::open("/proc/self/status")?;
     let reader = BufReader::new(file);
@@ -142,7 +187,7 @@ impl BenchmarkTimer {
 /// Standard Linux USER_HZ default (100 ticks per second).
 pub const USER_HZ: u64 = 100;
 
-/// Dynamically query system clock ticks per second via sysconf(_SC_CLK_TCK) on Linux.
+/// Dynamically query system clock ticks per second via sysconf(_SC_CLK_TCK) on Linux, or 100ns units on Windows.
 pub fn get_clock_ticks_per_second() -> u64 {
     #[cfg(target_os = "linux")]
     {
@@ -151,10 +196,15 @@ pub fn get_clock_ticks_per_second() -> u64 {
             return ticks as u64;
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        return 10_000_000; // 100-nanosecond FILETIME intervals
+    }
+    #[allow(unreachable_code)]
     USER_HZ
 }
 
-/// CPU timing sample taken from `/proc/self/stat`.
+/// CPU timing sample taken from the operating system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuSample {
     /// Combined user and system CPU ticks (utime + stime).
@@ -163,52 +213,87 @@ pub struct CpuSample {
     pub at: Instant,
 }
 
-/// Read CPU ticks for the current process from `/proc/self/stat`.
+/// Read CPU ticks for the current process.
 ///
-/// Handles process names (`comm`) that contain spaces and parentheses by
-/// splitting after the closing parenthesis `)`.
+/// On Windows: queries `GetProcessTimes` for kernel and user time in 100ns units.
+/// On Linux: reads and parses `/proc/self/stat`.
 pub fn read_cpu_sample() -> Result<CpuSample, io::Error> {
-    let stat = fs::read_to_string("/proc/self/stat")?;
-    let rparen_idx = stat.rfind(')').ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Malformed /proc/self/stat: closing parenthesis missing",
-        )
-    })?;
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 
-    // Fields after ')' start from field 3 (state)
-    let rest = &stat[rparen_idx + 1..];
-    let fields: Vec<&str> = rest.split_whitespace().collect();
+        unsafe {
+            let mut creation: FILETIME = std::mem::zeroed();
+            let mut exit: FILETIME = std::mem::zeroed();
+            let mut kernel: FILETIME = std::mem::zeroed();
+            let mut user: FILETIME = std::mem::zeroed();
 
-    // utime is field 14 (index 11 in post-comm fields)
-    // stime is field 15 (index 12 in post-comm fields)
-    if fields.len() < 13 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "Malformed /proc/self/stat: expected >= 13 post-comm fields, found {}",
-                fields.len()
-            ),
-        ));
+            if GetProcessTimes(
+                GetCurrentProcess(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+
+            let kernel_time =
+                ((kernel.dwHighDateTime as u64) << 32) | (kernel.dwLowDateTime as u64);
+            let user_time = ((user.dwHighDateTime as u64) << 32) | (user.dwLowDateTime as u64);
+
+            Ok(CpuSample {
+                jiffies: kernel_time + user_time,
+                at: Instant::now(),
+            })
+        }
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let stat = fs::read_to_string("/proc/self/stat")?;
+        let rparen_idx = stat.rfind(')').ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Malformed /proc/self/stat: closing parenthesis missing",
+            )
+        })?;
 
-    let utime: u64 = fields[11].parse().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Invalid utime field: {e}"),
-        )
-    })?;
-    let stime: u64 = fields[12].parse().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Invalid stime field: {e}"),
-        )
-    })?;
+        // Fields after ')' start from field 3 (state)
+        let rest = &stat[rparen_idx + 1..];
+        let fields: Vec<&str> = rest.split_whitespace().collect();
 
-    Ok(CpuSample {
-        jiffies: utime + stime,
-        at: Instant::now(),
-    })
+        // utime is field 14 (index 11 in post-comm fields)
+        // stime is field 15 (index 12 in post-comm fields)
+        if fields.len() < 13 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Malformed /proc/self/stat: expected >= 13 post-comm fields, found {}",
+                    fields.len()
+                ),
+            ));
+        }
+
+        let utime: u64 = fields[11].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid utime field: {e}"),
+            )
+        })?;
+        let stime: u64 = fields[12].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid stime field: {e}"),
+            )
+        })?;
+
+        Ok(CpuSample {
+            jiffies: utime + stime,
+            at: Instant::now(),
+        })
+    }
 }
 
 /// Calculate average CPU utilization percentage between two samples.

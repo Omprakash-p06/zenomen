@@ -12,6 +12,7 @@ import { CapabilityNotice } from "../components/capability-notice.slint";
 
 export component Lighting inherits Rectangle {
     in property <bool> has-rgb-lighting: true;
+    in property <bool> is-windows: false;
     in property <string> rgb-variant: "Four-Zone";
     in property <string> active-profile-name: "White";
     in property <string> active-profile-desc: "Clean static white illumination on all 4 zones";
@@ -479,13 +480,17 @@ export component Lighting inherits Rectangle {
             }
 
             CapabilityNotice {
-                text: "OpenOMEN profiles in ~/.config/openomen/rgb/ are automatically imported without modifying original files (RGB-05).";
+                text: root.is-windows
+                    ? "OpenOMEN profiles in %LOCALAPPDATA%\\zenomen\\rgb\\ are automatically imported without modifying original files (RGB-05)."
+                    : "OpenOMEN profiles in ~/.config/openomen/rgb/ are automatically imported without modifying original files (RGB-05).";
             }
         }
 
         if !root.has-rgb-lighting : UnavailablePanel {
             heading: "RGB control isn't available on this machine";
-            reason: "No supported OMEN 4-zone, legacy, or kernel patch RGB interface detected.";
+            reason: root.is-windows
+                ? "No supported OMEN 4-zone, legacy, or HP WMI RGB interface detected."
+                : "No supported OMEN 4-zone, legacy, or kernel patch RGB interface detected.";
             open-diagnostics => {
                 root.open-diagnostics();
             }

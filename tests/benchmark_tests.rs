@@ -9,14 +9,15 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use zenomen::core::benchmark::{BenchmarkTimer, read_memory_metrics};
+use zenomen::core::benchmark::BenchmarkTimer;
 use zenomen::core::events::AppEvent;
 use zenomen::core::spawn_monitoring_worker;
 use zenomen::hardware::{MockHardware, MockScenario};
 
 #[test]
 fn memory_instrumentation_reads_valid_process_rss() {
-    let metrics = read_memory_metrics().expect("read_memory_metrics must succeed on Linux");
+    use zenomen::core::benchmark::read_memory_metrics;
+    let metrics = read_memory_metrics().expect("read_memory_metrics must succeed");
 
     assert!(
         metrics.rss_kb > 0,
@@ -114,6 +115,7 @@ fn worker_thread_samples_and_dispatches_headlessly() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_read_cpu_sample_and_calculation() {
     use zenomen::core::benchmark::{
         CpuSample, USER_HZ, cpu_percent_between, measure_stage, read_cpu_sample,

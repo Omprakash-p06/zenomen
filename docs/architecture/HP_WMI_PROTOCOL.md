@@ -40,58 +40,43 @@ HP OMEN and Victus laptops expose advanced platform controls (fan speed curves, 
 
 - **Class Name:** `hpqBIntM`
 - **Namespace:** `root\wmi`
-- **Method Name:** `hpqBMtdx`
+- **Method Names:** `hpqBIOSInt128` (primary 128-byte payload), `hpqBIOSInt4`, `hpqBIOSInt0`, `hpqBIOSInt1024`, `hpqBIOSInt4096`
 - **WMI GUID:** `{5FB7F034-2C63-45E9-BE91-3D44E2C707E4}`
 
 ### WMI Method Signature
 ```text
-uint32 hpqBMtdx(
-    [in]  uint32 Sign,
-    [in]  uint32 ReqType,
-    [in]  uint32 InBufSize,
-    [in]  uint8  InBuf[],
-    [out] uint32 OutBufSize,
-    [out] uint8  OutBuf[]
+Boolean hpqBIOSInt128(
+    [in]  hpqBDataIn    InData,
+    [out] hpqBDataOut128 OutData
 );
 ```
 
-- **Signature (`Sign`):** `0x55434553` (ASCII `"SECU"`)
-- **Query / Read ReqType:** `0x20008`
-- **Mutation / Write ReqType:** `0x20009`
+- **Input Object Class (`hpqBDataIn`):**
+  - `Sign`: `UInt8Array[4]` = `[0x53, 0x45, 0x43, 0x55]` (ASCII `"SECU"`)
+  - `Command`: `UInt32` = `0x20008` (Read/System Query) or `0x20009` (Write/Mutation)
+  - `CommandType`: `UInt32` = Opcode (`0x10` Fan Count, `0x11` Fan Speeds, `0x1A` Thermal Profile, `0x26` Max Fan Read, `0x27` Max Fan Set, `0x28` System Design Data)
+  - `Size`: `UInt32` = Byte length of data in `hpqBData`
+  - `hpqBData`: `UInt8Array` = Effective command payload bytes
+
+- **Output Object Class (`hpqBDataOut128`):**
+  - `Sign`: `UInt8Array[4]` = Magic signature verification
+  - `rwReturnCode`: `UInt32` = Firmware return status code
+  - `Data`: `UInt8Array[128]` = Returned firmware payload bytes
 
 ---
 
-## 3. Buffer Protocol Layout
+## 3. Protocol Return Codes
 
-Both read (`0x20008`) and write (`0x20009`) queries exchange fixed-header payload buffers.
+The firmware status is returned in the `rwReturnCode` property of `OutData`:
 
-### 3.1 Input Buffer Layout
-```text
-Offset (Bytes)  Field Name      Type     Description
---------------------------------------------------------------------------
-0x00 - 0x03     Command ID      u32      Specific feature command code (e.g. 0x1A, 0x27)
-0x04 - 0x07     Subcommand      u32      Subcommand or query action code
-0x08 - 0x0B     Data Length     u32      Size of effective input parameters
-0x0C - 0x8B     Payload         [u8; 128] Feature-specific command parameters
-```
-
-### 3.2 Output Buffer Layout
-```text
-Offset (Bytes)  Field Name      Type     Description
---------------------------------------------------------------------------
-0x00 - 0x03     Return Status   u32      0x00 = Success; Non-zero = Error Code
-0x04 - 0x07     Output Length   u32      Number of valid payload bytes returned
-0x08 - 0x87     Payload Data    [u8; 128] Returned telemetry or status bytes
-```
-
-### Status Return Codes
-| Return Code | Description | ZenOmen Handling |
-|:---|:---|:---|
-| `0x00` | Success | Operation confirmed; return payload or ack. |
-| `0x01` | Unknown / Unsupported Command | Log warning; mark feature unsupported for board profile. |
-| `0x02` | Invalid Input Buffer / Size | Abort mutation; log validation error. |
-| `0x04` | Access Denied / BIOS Password Locked | Mark hardware mutation unauthorized. |
-| `0x05` | Hardware Busy / EC Timeout | Retry once after 200ms; return timeout error. |
+| Return Code | Name | Description | ZenOmen Handling |
+|:---|:---|:---|:---|
+| `0` | Success | Operation accepted and confirmed. | Extract `Data` payload and proceed. |
+| `1` | Error | General firmware internal failure. | Map to `HardwareControlError::ProtocolError`. |
+| `2` | Invalid Parameters | Input payload size or values invalid. | Map to `HardwareControlError::InvalidParameter`. |
+| `3` | Unsupported Command | Feature code unsupported on this motherboard. | Map to `HardwareControlError::UnsupportedMode`. |
+| `4` | Access Denied | BIOS password locked or permission denied. | Map to `HardwareControlError::AuthorizationFailed`. |
+| `5` | Busy / Timeout | Embedded Controller (EC) busy or communication timeout. | Map to `HardwareControlError::ConnectionFailed`. |
 
 ---
 
@@ -132,15 +117,23 @@ Offset (Bytes)  Field Name      Type     Description
 
 ## 5. Board Profile Matching & Safe Verification Matrix
 
-ZenOmen matches the motherboard board ID (`BaseBoardProduct` via WMI `Win32_BaseBoard` or SMBIOS Type 2) before executing WMI writes. If a board ID is unverified, all write mutations are rejected to eliminate any risk of firmware corruption or unexpected EC states.
+ZenOmen matches the motherboard board ID (`BaseBoardProduct` via WMI `Win32_BaseBoard` or SMBIOS Type 2) before executing WMI writes. If a board ID or BIOS version lacks a ratified physical validation record, all write mutations are rejected to eliminate any risk of firmware corruption or unexpected EC states.
 
-| Board ID | Model Series | Verified Fan Modes | Verified Power Profiles | RGB Zones |
-|:---|:---|:---:|:---:|:---:|
-| `88EE` | HP OMEN 16 (2022 AMD/Intel) | Auto, Max | Balanced, Performance | 4-Zone |
-| `8A23` | HP OMEN 16 (2023 Intel/RTX40) | Auto, Max | Balanced, Performance | 4-Zone |
-| `88F8` | HP Victus 16 (2022/2023) | Auto, Max | Balanced, Performance | 1-Zone / Off |
-| `8BAB` | HP OMEN 17 (2023 Intel) | Auto, Max | Balanced, Performance | 4-Zone / Per-Key |
-| `Unknown`| Unverified Board ID | Read-Only | Read-Only | Read-Only |
+### Status Classification:
+- **Implemented:** Code structure and WMI FFI invocation written.
+- **Unit Tested:** Tested against `FakeWmiAdapter` and protocol mocks.
+- **Windows Runtime Tested:** Tested with live COM `ROOT\WMI` on Windows.
+- **Physically Validated:** Confirmed on physical laptop (RPM changed, noise heard, read-back confirmed).
+- **Unsupported:** BIOS or hardware does not accept the command.
+
+| Board ID | Model Series | BIOS Version | Verification Status | Allowed Fan Modes | Allowed Power Profiles | RGB Zones |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|
+| `88F8` | HP OMEN 15/16 (AMD Zen 3) | F.20, F.21 | Physically Validated | Auto, Max | Balanced, Performance | 4-Zone |
+| `8A24` | HP OMEN 16 (Intel 12th/13th) | F.10 | Physically Validated | Auto, Max | Balanced, Performance | 4-Zone |
+| `8A3D` | HP Victus 15-fb0xxx (AMD) | F.22 | **Unit Tested only (Read-Only)** | None (Writes Blocked) | None (Writes Blocked) | 0 (Monochrome) |
+| `8A3E` | HP Victus 15/16 (Intel) | Any | **Unverified (Read-Only)** | None (Writes Blocked) | None (Writes Blocked) | 0 (Monochrome) |
+| `88D0` | HP OMEN 15 (2020 Intel) | Any | **Unverified (Read-Only)** | None (Writes Blocked) | None (Writes Blocked) | 4-Zone |
+| `Unknown`| Unverified Board ID | Any | **Unverified (Read-Only)** | None (Writes Blocked) | None (Writes Blocked) | None |
 
 ---
 

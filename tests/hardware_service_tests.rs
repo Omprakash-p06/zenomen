@@ -115,14 +115,16 @@ fn test_write_and_verify_mismatch_failure() {
     let target = temp_file.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
     let handle = std::thread::spawn(move || {
+        let _ = started_tx.send(());
         while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
             let _ = fs::write(&target, "sticky_value");
-            std::thread::sleep(Duration::from_millis(1));
         }
     });
+    started_rx.recv().unwrap();
 
-    let res = write_and_verify(&temp_file, "wanted_value", 3, Duration::from_millis(5));
+    let res = write_and_verify(&temp_file, "wanted_value", 3, Duration::from_millis(20));
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = handle.join();
 

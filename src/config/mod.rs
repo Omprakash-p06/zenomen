@@ -98,11 +98,12 @@ pub fn save_atomic(path: &Path, config: &AppConfig) -> io::Result<()> {
         .unwrap_or("config");
     let pid = std::process::id();
     let tmp_path = parent_dir.join(format!(".{file_stem}.{pid}.tmp"));
-    fs::write(&tmp_path, toml_str)?;
-
-    let file = fs::File::open(&tmp_path)?;
-    file.sync_all()?;
-    drop(file);
+    {
+        use std::io::Write;
+        let mut file = fs::File::create(&tmp_path)?;
+        file.write_all(toml_str.as_bytes())?;
+        file.sync_all()?;
+    }
 
     fs::rename(&tmp_path, path)?;
 

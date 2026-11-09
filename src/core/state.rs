@@ -178,6 +178,7 @@ impl AppState {
                         self.last_control_error = None;
                     }
                     Err(e) => {
+                        tracing::warn!(error = %e, "fan mode change error recorded in state");
                         self.last_control_error = Some(e.clone());
                     }
                 }
@@ -188,6 +189,7 @@ impl AppState {
                     self.last_control_error = None;
                 }
                 Err(e) => {
+                    tracing::warn!(error = %e, "power profile change error recorded in state");
                     self.last_control_error = Some(e.clone());
                 }
             },
@@ -213,6 +215,7 @@ impl AppState {
                     }
                 }
                 Err(e) => {
+                    tracing::warn!(error = %e, "preset application error recorded in state");
                     self.last_control_error = Some(e.clone());
                 }
             },
@@ -232,6 +235,7 @@ impl AppState {
                     self.last_control_error = None;
                 }
                 Err(e) => {
+                    tracing::warn!(error = %e, "RGB profile application error recorded in state");
                     self.last_control_error = Some(e.clone());
                 }
             },
@@ -241,6 +245,7 @@ impl AppState {
                     self.last_control_error = None;
                 }
                 Err(e) => {
+                    tracing::warn!(error = %e, "RGB power toggle error recorded in state");
                     self.last_control_error = Some(e.clone());
                 }
             },

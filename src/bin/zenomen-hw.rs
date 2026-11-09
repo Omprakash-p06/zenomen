@@ -33,6 +33,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    if args.iter().any(|a| a == "--wmi-diag" || a == "--diag") {
+        info!("Running read-only HP BIOS WMI diagnostics...");
+        zenomen::service::windows::wmi_diag::print_wmi_diagnostic();
+        return Ok(());
+    }
+
     info!(
         "Starting zenomen-hw privileged hardware control service v{}",
         env!("CARGO_PKG_VERSION")

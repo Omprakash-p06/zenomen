@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use zenomen::hardware::rgb::{RgbInterfaceVariant, detect_rgb_interface};
+use zenomen::hardware::rgb::RgbInterfaceVariant;
 use zenomen::rgb::migration::{builtin_presets, migrate_openomen_profiles, parse_openomen_profile};
 use zenomen::rgb::schema::{RgbColor, RgbError};
 use zenomen::service::backend::HardwareBackend;
@@ -199,7 +199,9 @@ fn openomen_migration_is_strictly_non_destructive() {
 }
 
 #[test]
+#[cfg(not(target_os = "windows"))]
 fn interface_variant_discovery_all_three_variants() {
+    use zenomen::hardware::rgb::detect_rgb_interface;
     let base_dir = temp_test_dir("discovery");
 
     // 1. FourZone: /sys/devices/platform/hp-wmi/rgb_zones/zone00
@@ -331,6 +333,7 @@ fn backend_hardware_writes_and_verification_legacy() {
 }
 
 #[test]
+#[cfg(not(target_os = "windows"))]
 fn backend_hardware_writes_and_verification_kernel_patch() {
     let root = temp_test_dir("backend_kernel_patch");
     let led_dir = root.join("sys/class/leds/hp_omen::kbd_backlight");

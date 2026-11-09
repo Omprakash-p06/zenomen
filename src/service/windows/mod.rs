@@ -9,6 +9,9 @@ pub mod profiles;
 pub mod protocol;
 pub mod security;
 pub mod server;
+pub mod wmi_diag;
+#[cfg(windows)]
+pub mod wmi_ffi;
 
 pub use client::WindowsServiceClient;
 pub use profiles::{BoardProfile, resolve_board_profile};

@@ -12,6 +12,7 @@ pub struct WindowsHardwareProvider {
     primary_gpu: Option<gpu::GpuAdapterInfo>,
     gpu_collector: Mutex<gpu::GpuPerformanceCollector>,
     has_battery: bool,
+    board_profile: Option<crate::service::windows::profiles::BoardProfile>,
 }
 
 impl WindowsHardwareProvider {
@@ -29,6 +30,11 @@ impl WindowsHardwareProvider {
 
         let has_battery = battery::read_battery_presence();
 
+        let board_id = crate::hardware::windows::device::read_board_id();
+        let board_profile = board_id
+            .as_deref()
+            .and_then(crate::service::windows::profiles::resolve_board_profile);
+
         #[allow(unused_mut)]
         let mut sampler = cpu::WindowsCpuSampler::new();
         #[cfg(windows)]
@@ -42,6 +48,7 @@ impl WindowsHardwareProvider {
             primary_gpu,
             gpu_collector: Mutex::new(gpu::GpuPerformanceCollector::new()),
             has_battery,
+            board_profile,
         }
     }
 }
@@ -54,15 +61,33 @@ impl Default for WindowsHardwareProvider {
 
 impl HardwareProvider for WindowsHardwareProvider {
     fn capabilities(&self) -> HardwareCapabilities {
+        let (fan_rpm, fan_control, power_profiles, rgb_lighting, rgb_variant) =
+            if let Some(ref board) = self.board_profile {
+                let variant = match board.rgb_zone_count {
+                    4 => Some(crate::hardware::rgb::RgbInterfaceVariant::FourZone),
+                    1 => Some(crate::hardware::rgb::RgbInterfaceVariant::Legacy),
+                    _ => None,
+                };
+                (
+                    false,
+                    board.has_max_fan,
+                    !board.supported_power_profiles.is_empty(),
+                    board.rgb_zone_count > 0,
+                    variant,
+                )
+            } else {
+                (false, false, false, false, None)
+            };
+
         HardwareCapabilities {
             cpu_metrics: true,
             gpu_metrics: self.primary_gpu.is_some(),
             ram_metrics: true,
-            fan_rpm: false,
-            fan_control: false,
-            power_profiles: false,
-            rgb_lighting: false,
-            rgb_variant: None,
+            fan_rpm,
+            fan_control,
+            power_profiles,
+            rgb_lighting,
+            rgb_variant,
             battery_metrics: self.has_battery,
         }
     }
@@ -92,6 +117,22 @@ impl HardwareProvider for WindowsHardwareProvider {
 
         let battery = battery::sample_battery_telemetry();
 
+        let (fan_mode, power_profile, power_profiles) = if let Some(ref board) = self.board_profile
+        {
+            let p_first = board
+                .supported_power_profiles
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "balanced".to_string());
+            (
+                "auto".to_string(),
+                p_first,
+                board.supported_power_profiles.clone(),
+            )
+        } else {
+            (String::new(), String::new(), Vec::new())
+        };
+
         Ok(TelemetrySnapshot {
             cpu_name: self.cpu_model.clone(),
             cpu_utilization,
@@ -103,9 +144,9 @@ impl HardwareProvider for WindowsHardwareProvider {
             ram_total_mb: ram_total_mb.unwrap_or(0) as u64,
             ram_used_mb: ram_used_mb.unwrap_or(0) as u64,
             fan_rpms: sensors::read_fan_rpms(),
-            fan_mode: String::new(),
-            power_profile: String::new(),
-            power_profiles: Vec::new(),
+            fan_mode,
+            power_profile,
+            power_profiles,
             rgb_profile: None,
             battery,
         })

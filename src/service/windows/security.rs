@@ -18,52 +18,88 @@ pub fn verify_client_session(
         use windows_sys::Win32::Security::{
             GetTokenInformation, RevertToSelf, TOKEN_QUERY, TokenSessionId,
         };
-        use windows_sys::Win32::System::Pipes::ImpersonateNamedPipeClient;
+        use windows_sys::Win32::System::Pipes::{
+            GetNamedPipeClientSessionId, ImpersonateNamedPipeClient,
+        };
         use windows_sys::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
         use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
 
         unsafe {
-            if ImpersonateNamedPipeClient(pipe as HANDLE) == 0 {
+            let mut pipe_session_id = 0u32;
+            if GetNamedPipeClientSessionId(pipe as HANDLE, &mut pipe_session_id) == 0 {
                 return Err(HardwareControlError::AccessDenied(format!(
-                    "Failed to impersonate named pipe client (error {})",
+                    "Failed to query named pipe client session ID (error {})",
                     GetLastError()
                 )));
             }
 
-            let mut thread_token: HANDLE = std::ptr::null_mut();
-            let open_res = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut thread_token);
-
-            if open_res == 0 {
-                RevertToSelf();
-                return Err(HardwareControlError::AccessDenied(
-                    "Unable to open caller thread token for session verification".to_string(),
-                ));
-            }
-
-            let mut session_id = 0u32;
-            let mut returned_len = 0u32;
-            let query_res = GetTokenInformation(
-                thread_token,
-                TokenSessionId,
-                &mut session_id as *mut _ as *mut std::ffi::c_void,
-                std::mem::size_of::<u32>() as u32,
-                &mut returned_len,
-            );
-
-            CloseHandle(thread_token);
-            RevertToSelf();
-
-            if query_res == 0 {
-                return Err(HardwareControlError::AccessDenied(
-                    "Failed to query TokenSessionId from client token".to_string(),
-                ));
-            }
-
             let active_console_session = WTSGetActiveConsoleSessionId();
-            if session_id != active_console_session {
+            if pipe_session_id != active_console_session {
                 return Err(HardwareControlError::AccessDenied(format!(
-                    "Caller session ID {session_id} does not match active console session {active_console_session}"
+                    "Caller pipe session ID {pipe_session_id} does not match active console session {active_console_session}"
                 )));
+            }
+
+            // In elevated SCM service mode (LocalSystem), SeImpersonatePrivilege is held,
+            // allowing deep token inspection as defense-in-depth.
+            // In unprivileged console testing (--console), ImpersonateNamedPipeClient may fail
+            // with error 1368 (ERROR_CANNOT_IMPERSONATE) or 1314 (ERROR_PRIVILEGE_NOT_HELD);
+            // in that case, the GetNamedPipeClientSessionId verification above provides enforcement.
+            if ImpersonateNamedPipeClient(pipe as HANDLE) != 0 {
+                let mut thread_token: HANDLE = std::ptr::null_mut();
+                let open_res =
+                    OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut thread_token);
+
+                if open_res == 0 {
+                    let err = GetLastError();
+                    if RevertToSelf() == 0 {
+                        tracing::error!(
+                            "FATAL: RevertToSelf failed after OpenThreadToken failure (error {})",
+                            GetLastError()
+                        );
+                        std::process::exit(1);
+                    }
+                    return Err(HardwareControlError::AccessDenied(format!(
+                        "Unable to open caller thread token for session verification (error {err})"
+                    )));
+                }
+
+                let mut session_id = 0u32;
+                let mut returned_len = 0u32;
+                let query_res = GetTokenInformation(
+                    thread_token,
+                    TokenSessionId,
+                    &mut session_id as *mut _ as *mut std::ffi::c_void,
+                    std::mem::size_of::<u32>() as u32,
+                    &mut returned_len,
+                );
+
+                CloseHandle(thread_token);
+                if RevertToSelf() == 0 {
+                    tracing::error!(
+                        "FATAL: RevertToSelf failed after querying token (error {})",
+                        GetLastError()
+                    );
+                    std::process::exit(1);
+                }
+
+                if query_res == 0 {
+                    return Err(HardwareControlError::AccessDenied(
+                        "Failed to query TokenSessionId from client token".to_string(),
+                    ));
+                }
+
+                if session_id != active_console_session {
+                    return Err(HardwareControlError::AccessDenied(format!(
+                        "Caller token session ID {session_id} does not match active console session {active_console_session}"
+                    )));
+                }
+            } else {
+                let imp_err = GetLastError();
+                tracing::debug!(
+                    error_code = imp_err,
+                    "ImpersonateNamedPipeClient skipped in console/dev mode; session validated via GetNamedPipeClientSessionId"
+                );
             }
 
             Ok(())

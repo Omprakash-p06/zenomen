@@ -1,4 +1,5 @@
 //! Tests for Linux GPU DRM enumeration and telemetry parsing.
+#![cfg(target_os = "linux")]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

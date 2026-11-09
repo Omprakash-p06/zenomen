@@ -137,14 +137,19 @@ pub enum HardwareControlError {
 
     #[error("Access denied: {0}")]
     AccessDenied(String),
+
+    /// Firmware-level authorization failure (e.g. BIOS password locked, EC rejected write).
+    /// Distinct from `AccessDenied` (OS-level) and `PolkitDenied` (Polkit-level).
+    #[error("Firmware authorization failed: {0}")]
+    AuthorizationFailed(String),
 }
 
 impl From<HardwareControlError> for zbus::fdo::Error {
     fn from(err: HardwareControlError) -> Self {
         match err {
-            HardwareControlError::PolkitDenied(msg) | HardwareControlError::AccessDenied(msg) => {
-                zbus::fdo::Error::AccessDenied(msg)
-            }
+            HardwareControlError::PolkitDenied(msg)
+            | HardwareControlError::AccessDenied(msg)
+            | HardwareControlError::AuthorizationFailed(msg) => zbus::fdo::Error::AccessDenied(msg),
             HardwareControlError::InvalidParameter(msg)
             | HardwareControlError::ProtocolError(msg) => zbus::fdo::Error::InvalidArgs(msg),
             HardwareControlError::UnsupportedMode(msg) => zbus::fdo::Error::NotSupported(msg),

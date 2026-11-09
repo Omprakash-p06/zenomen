@@ -260,10 +260,21 @@ bash scripts/measure-budget.sh
 
 ## Requirements & Compatibility
 
-- **Kernel Drivers**: `hp-wmi` module loaded (`lsmod | grep hp_wmi` or `sudo modprobe hp-wmi`).
-- **Hardware**: HP OMEN and Victus gaming laptops (e.g., OMEN 15/16/17, Victus 15/16).
-- **Desktop Environment**: Wayland or X11 (GNOME, KDE Plasma, XFCE, Cinnamon). Freedesktop StatusNotifierItem supported for system tray.
-- **Graphics**: OpenGL 2.1+ or Vulkan (software rendering fallback via Mesa llvmpipe).
+### Supported Platforms
+- **Linux**: Kernel 5.15+ with `hp-wmi` module loaded (`lsmod | grep hp_wmi` or `sudo modprobe hp-wmi`). Wayland or X11 desktop environments (GNOME, KDE Plasma, XFCE, Cinnamon). Freedesktop StatusNotifierItem supported for system tray.
+- **Windows**: Windows 10/11 (x86_64). Desktop UI runs as a standard unprivileged user; optional privileged background service (`ZenOmenHardwareService` / `zenomen-hw.exe`) provides HP WMI ACPI integration over a secure local named pipe (`\\.\pipe\ZenOmen.Hardware.v1`).
+
+### Hardware Compatibility & Testing Status
+ZenOmen is designed for HP OMEN and Victus gaming laptops. Because HP uses differing embedded controller (EC) registers, WMI GUIDs, and BIOS interfaces across hardware generations and AMD/Intel motherboard revisions, hardware features are gated by strict motherboard profile matching:
+
+- **Verified Testing**:
+  - **HP Victus 15-fb0xxx (AMD)** — Motherboard Board ID `8A3D`, BIOS `F.22`:
+    - CPU, GPU, RAM, and Battery telemetry verified operational.
+    - Process memory monitoring validated with native Win32 `K32GetProcessMemoryInfo`.
+    - Physical firmware mutations (fan speed boost, thermal power profiles) are safely gated by `BoardValidation` safety checks to protect unvalidated hardware until write-cycle ratification is completed.
+- **Untested Variants & Community Call for Testers**:
+  - Other OMEN (15, 16, 17, Transcend) and Victus (15, 16) variants (Intel/AMD) have varying BIOS and EC revisions.
+  - **We need community contributors and testers!** If you own an OMEN or Victus laptop, run `zenomen` (or `zenomen --export-diagnostics`), open the **Diagnostics** tab, and share your diagnostic report or submit a pull request with your motherboard Board ID and verified read/write capabilities.
 
 ---
 

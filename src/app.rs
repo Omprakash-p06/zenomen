@@ -317,6 +317,30 @@ impl ZenOmenApp {
             } else if let Some(vendor) = report.sys_vendor {
                 ui.set_model_name(vendor.into());
             }
+
+            #[cfg(target_os = "windows")]
+            {
+                ui.set_diag_service_title(
+                    "Hardware Control Service (ZenOmenHardwareService)".into(),
+                );
+                ui.set_diag_auth_label("Authorization:".into());
+                ui.set_diag_sandboxing_label("Pipe Security:".into());
+                ui.set_diag_sandboxing_text(
+                    r"DACL: SYSTEM, Administrators, Interactive Users | Named Pipe: \\.\pipe\ZenOmen.Hardware.v1".into(),
+                );
+                if let Some(sensor) = &report.cpu_sensor {
+                    ui.set_cpu_sensor(sensor.as_str().into());
+                } else {
+                    ui.set_cpu_sensor("Unavailable (unprivileged ring-3)".into());
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                if let Some(sensor) = &report.cpu_sensor {
+                    ui.set_cpu_sensor(sensor.as_str().into());
+                }
+            }
+
             ui.set_polling_interval_ms(state.config.telemetry.polling_interval_ms as i32);
             ui.set_history_window(state.config.telemetry.history_window as i32);
             ui.set_start_minimized(state.config.general.start_minimized);

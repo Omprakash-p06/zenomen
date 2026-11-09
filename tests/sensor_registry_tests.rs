@@ -3,8 +3,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use zenomen::hardware::HardwareProvider;
-use zenomen::hardware::linux::provider::LinuxHardwareProvider;
 use zenomen::hardware::registry::SensorRegistry;
 
 struct TestHwmonTree(PathBuf);
@@ -243,7 +241,10 @@ fn a_fully_capable_machine_is_not_degraded() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn live_host_initialization_resolves_real_sensors() {
+    use zenomen::hardware::HardwareProvider;
+    use zenomen::hardware::linux::provider::LinuxHardwareProvider;
     let provider = LinuxHardwareProvider::new();
     let capabilities = provider.capabilities();
 

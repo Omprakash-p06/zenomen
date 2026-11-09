@@ -112,7 +112,8 @@ impl From<HardwareControlError> for ServiceError {
     fn from(err: HardwareControlError) -> Self {
         match err {
             HardwareControlError::PolkitDenied(reason)
-            | HardwareControlError::AccessDenied(reason) => Self::Unauthorized { reason },
+            | HardwareControlError::AccessDenied(reason)
+            | HardwareControlError::AuthorizationFailed(reason) => Self::Unauthorized { reason },
             HardwareControlError::InvalidParameter(reason)
             | HardwareControlError::UnsupportedMode(reason)
             | HardwareControlError::ProtocolError(reason) => Self::InvalidRequest { reason },

@@ -25,14 +25,18 @@ ZenOmen on Windows operates across two isolated privilege tiers:
 Motherboard product IDs read from `HARDWARE\DESCRIPTION\System\BIOS\BaseBoardProduct` are resolved via `resolve_board_profile`:
 - `88F8`: HP OMEN 15/16 AMD (2 fans, max fan support, 4-zone RGB, balanced/performance)
 - `8A24`: HP OMEN 16 Intel (2 fans, max fan support, 4-zone RGB, balanced/performance)
-- `8A3E`: HP Victus 15/16 (2 fans, no max fan, 1-zone RGB, quiet/default/performance)
+- `8A3D`: HP Victus 15-fb0xxx (2 fans, max fan support in spec, 0 RGB zones, quiet/balanced) - **UNVALIDATED for writes; read-only**
+- `8A3E`: HP Victus 15/16 Intel (2 fans, max fan support in spec, 0 RGB zones, quiet/balanced) - **UNVALIDATED for writes; read-only**
+- `88D0`: HP OMEN 15 2020 Intel (2 fans, max fan support, 4-zone RGB, default/performance/cool) - **UNVALIDATED for writes; read-only**
 - Unknown motherboards return `None`, defaulting to safe read-only operation.
 
 ### 2.2. Physical Hardware Validation Contract (`BoardValidation`)
-Firmware mutations (fan mode, power profile, presets, RGB) are gated by `BoardValidation`:
-- `new_unvalidated(board_id, bios_version)`: Default baseline where all write capabilities (`fan_write_verified`, `power_write_verified`, `rgb_write_verified`) are `false`. Read requests succeed, but mutations return `HardwareControlError::UnsupportedMode`.
-- `new_verified(board_id, bios_version)`: Explicitly verified hardware record for tested models and BIOS revisions.
+Firmware mutations (fan mode, power profile, presets, RGB) are strictly gated by `BoardValidation`:
+- `new_unvalidated(board_id, bios_version)`: Default baseline where write capabilities (`fan_write_verified`, `power_write_verified`, `rgb_write_verified`) are `false`. Read requests succeed, but mutations return `HardwareControlError::UnsupportedMode`.
+- `new_verified(board_id, bios_version)`: Explicitly verified hardware record for physically tested models and BIOS revisions with evidence attached.
 - `authorize_mutation(req, board, validation)`: Evaluates request against both profile invariants and physical validation flags.
+- **In-Memory Statics Forbiddance:** The hardware service never stores requested fan state in static memory as ground truth. All status queries evaluate live firmware state, and mutations require an independent post-write read-back confirmation.
+- **Firmware Shutdown Safety:** When the service stops or SCM signals shutdown, fan mode is restored to `Auto` (`0x00`) to guarantee autonomous firmware thermal control.
 
 ---
 
