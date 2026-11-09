@@ -1,348 +1,282 @@
-<!-- refreshed: 2026-11-08 -->
+<!-- refreshed: 2026-11-09 -->
 # Codebase Concerns
 
-**Analysis Date:** 2026-11-08
+**Analysis Date:** 2026-11-09
 
-Scope: whole repository, verified against source on 2026-11-08. Severity reflects user-visible risk, not effort.
-
-## Priority Summary
-
-| # | Concern | Severity | Primary file |
-|---|---------|----------|--------------|
-| 1 | Windows hardware control is simulated, not implemented, and reports success | Critical | `src/service/windows/hp_wmi.rs` |
-| 2 | Windows GUI hangs on exit when `close_to_tray = false` (leaked channel sender) | High | `src/desktop/windows/tray.rs`, `src/main.rs` |
-| 3 | Hardware mutations can leak a thread + pipe handle forever after timeout | High | `src/core/worker.rs`, `src/service/windows/client.rs` |
-| 4 | Autostart toggle on Windows writes an XDG file and never touches HKCU Run | High | `src/core/worker.rs` |
-| 5 | Root install copies `zenomen-hw` from a user-writable location without verification | High | `src/desktop/system_integration.rs` |
-| 6 | Named-pipe DACL admits every interactive local user; session ID is the only gate | High | `src/service/windows/security.rs` |
-| 7 | Blocking `ConnectNamedPipe` + 30 s timeout makes service shutdown hang-prone | Medium | `src/service/windows/server.rs`, `lifecycle.rs` |
-| 8 | Two incompatible wire protocols; the versioned one is unused | Medium | `src/service/protocol.rs`, `src/service/windows/protocol.rs` |
-| 9 | Diagnostics fabricate OS, authorization, and BIOS values | Medium | `src/core/diagnostics.rs`, `src/hardware/windows/device.rs` |
-| 10 | Windows tests assert the simulated success path as correct behavior | Medium | `tests/windows_service_tests.rs` |
+Scope: full repository, branch `fix/zenomen-reliability`, with a dirty working tree (46 modified tracked files, 3 untracked files). Windows-specific findings were verified against source on a Windows host; the daemon compiles (`cargo check --no-default-features --bin zenomen-hw --offline` passed) and `tests/windows_service_tests.rs` passes 36/36, but **all** Windows automated tests currently execute against `FakeWmiAdapter` and do not exercise live COM, WMI BIOS methods, named pipes, SCM, or security tokens.
 
 ---
 
 ## Tech Debt
 
-**Windows hardware control is a simulation layer:**
-- Issue: Every Windows hardware operation is faked. `connect_hp_wmi()` returns `Ok(HpWmiConnection { is_available: true })` without opening `ROOT\WMI` or checking `hpqBIntM` (`src/service/windows/hp_wmi.rs:33-45`). Capabilities are unconditionally reported as fully present (`src/service/windows/hp_wmi.rs:48-68`). Fan mode and power profile are stored in process-local statics (`src/service/windows/hp_wmi.rs:70-71`) and `query_fan_status` never reads firmware (`src/service/windows/hp_wmi.rs:78`). The RGB writer builds a 24-byte payload and discards it (`let _ = payload;` at `src/service/windows/hp_wmi.rs:195`) before returning `Ok(profile.name.clone())`.
-- Files: `src/service/windows/hp_wmi.rs`, `src/service/windows/profiles.rs`, `src/service/windows/server.rs`, `src/hardware/windows/provider.rs`
-- Impact: The Windows build claims fan control, power profiles, RGB, battery, and full telemetry that it cannot deliver. `HardwareResponse::RgbEnabledSet(enabled)` is returned directly from the request with no hardware call (`src/service/windows/server.rs:102`). `resolve_board_validation` marks boards `88F8`, `8A24`, `88D0`, `8A3D`, `8A3E` as write-verified purely from the board ID (`src/service/windows/profiles.rs:138-164`), so the "verified" gate passes while writes do nothing. This contradicts `src/hardware/unavailable.rs:1-11` ("it must not lie") and AGENTS.md rules 5 and 9.
-- Fix approach: Make `HpWmiConnection` hold a real WMI session (or a declared "not implemented" state) and return `HardwareControlError::InterfaceMissing` when the class cannot be opened. Delete the process-local statics; read state back from firmware. Propagate write failures instead of returning the requested value. Until then, route Windows through `UnavailableHardwareProvider` so the UI renders `Unavailable`.
+**Two divergent wire protocols for the same service surface:**
+- Issue: `src/service/protocol.rs` defines the versioned, little-endian, typed contract (`RequestEnvelope`/`ServiceRequest`/`ServiceResponse`, `PROTOCOL_VERSION`) that its module doc states "the Linux daemon speaks ... the Windows service speaks the same contract". The Windows service actually uses a second, incompatible protocol in `src/service/windows/protocol.rs`: 4-byte **big-endian** length prefix, no `protocol_version`, no `request_id`, and stringly typed payloads (`SetFanMode { mode: String }`, `ApplyRgbProfile { profile_json: String }`).
+- Files: `src/service/protocol.rs:1-11`, `src/service/protocol.rs:22-25`, `src/service/windows/protocol.rs:9-23`, `src/service/windows/protocol.rs:41-90`, `src/service/windows/server.rs:341`, `src/service/windows/client.rs:121-185`.
+- Impact: Windows IPC has no version negotiation or correlation ID; two schemas for the same nine operations must be maintained in sync by hand. `ServiceRequest::ApplyRgbProfile(RgbProfile)` (typed struct) vs `HardwareRequest::ApplyRgbProfile { profile_json: String }` (JSON nested inside JSON string) represents an architectural shape divergence.
+- Fix approach: Route the Windows pipe through `src/service/protocol.rs` (`encode_frame`/`decode_frame` + `RequestEnvelope::validate`) and delete `src/service/windows/protocol.rs`, or explicitly document the Windows protocol as intentionally separate and add versioning and `request_id` fields.
 
-**Two wire protocols, neither authoritative:**
-- Issue: `src/service/protocol.rs` defines a little-endian, versioned, request-id envelope (`PROTOCOL_VERSION = 1`, `MAX_FRAME_BYTES = 64 * 1024` at lines 25 and 209-232) with a typestate `HardwareService` contract; `src/service/windows/protocol.rs` defines a separate big-endian, unversioned 4-byte length prefix (`MAX_PAYLOAD_SIZE = 65_536`, lines 40-90) with a different request/response enum. `src/service/contract.rs` uses neither: it exposes string-based D-Bus methods and JSON for capabilities.
-- Files: `src/service/protocol.rs`, `src/service/windows/protocol.rs`, `src/service/contract.rs`, `src/service/backend.rs`
-- Impact: The versioned protocol cannot detect a peer speaking the Windows framing, and request IDs (`RequestEnvelope.id`) are never correlated with responses on Windows. The typed `HardwareService` abstraction is dead code relative to the shipped transport, so protocol changes must be made three times.
-- Fix approach: Pick one framing (the versioned one), delete the duplicate enum, and make `src/service/contract.rs` and the Windows client encode/decode through it. Add a version-mismatch test.
+**Linux-only service modules are compiled and linked into Windows binaries:**
+- Issue: `src/service/mod.rs:1-4` declares `backend`, `contract`, and `polkit` unconditionally (and re-exports them at `src/service/mod.rs:9-12`). `src/service/types.rs:147` implements `From<HardwareControlError> for zbus::fdo::Error` unconditionally. `Cargo.toml:34` declares `zbus = { version = "5", features = ["blocking"] }` under top-level `[dependencies]`, rather than under `[target.'cfg(unix)'.dependencies]`.
+- Files: `Cargo.toml:34`, `src/service/mod.rs:1-4`, `src/service/mod.rs:9-12`, `src/service/types.rs:147-163`, `src/service/backend.rs` (sysfs paths), `src/service/polkit.rs:28-70` (D-Bus/PolicyKit), `src/service/contract.rs` (zbus interface).
+- Impact: `zenomen.exe` and `zenomen-hw.exe` on Windows link `zbus` plus its async runtime stack (`async-executor`, `async-io`, `rustix`, `uds_windows`) for code that can never run on Windows. This directly conflicts with AGENTS rule 4 (no unnecessary async runtimes, lean dependencies) and the $\le 40$ MB RSS budget; it also pulls in two versions of `windows-sys` (`0.59` and `0.61`) via `Cargo.lock`.
+- Fix approach: Add `#[cfg(not(target_os = "windows"))]` to `backend`, `contract`, `polkit`, and the `zbus::fdo::Error` conversion; move `zbus` to `[target.'cfg(unix)'.dependencies]`; gate re-exports in `src/service/mod.rs`.
 
-**Windows hardening logic duplicated and asymmetric:**
-- Issue: Fan-control detection in the GUI is `dev.name == "hp" || dev.name == "hp-wmi" || dev.name.contains("platform")` (`src/hardware/registry.rs:281`), while the daemon resolves a stricter `hp`/`hp-wmi` match. Temperature input selection is lexicographic over `temp1_input`, `temp10_input`, `temp2_input` (`src/hardware/registry.rs:260`), so `temp10_input` wins over `temp2_input`.
-- Files: `src/hardware/registry.rs`, `src/service/backend.rs`
-- Impact: GUI and daemon can disagree about which sysfs node is writable; a machine exposing both `platform` and `hp-wmi` can show fan control in the UI and have the daemon reject the write. Lexicographic sensor selection can bind the wrong temperature channel on kernels with >9 inputs.
-- Fix approach: Move path discovery into one shared function used by both binaries (or make the daemon authoritative and have the GUI consume daemon capabilities only). Sort by parsed numeric index, not string.
+**Hand-rolled COM/WMI FFI instead of `windows-sys` bindings:**
+- Issue: `src/service/windows/wmi_ffi.rs` (currently untracked) re-declares `GUID`, `VARIANT`, `SAFEARRAY`, and four COM vtables (`IWbemLocatorVtbl`, `IWbemServicesVtbl`, `IWbemClassObjectVtbl`, `IEnumWbemClassObjectVtbl`) using raw `usize` placeholder slots for unused methods. No unit test compiles or exercises these vtable layouts beyond basic type checking.
+- Files: `src/service/windows/wmi_ffi.rs:27-322`, `src/service/windows/hp_wmi.rs:180-556`.
+- Impact: Vtable slot ordering and struct layouts are hand-maintained; an offset mistake silently invokes the wrong COM method at runtime. Some declarations use raw `usize` placeholders (`src/service/windows/wmi_ffi.rs:196-241`), so compiler signature checks cannot catch mistakes.
+- Fix approach: Transition to the `windows` or `windows-sys` crate WMI/COM bindings already available; if the custom FFI layer is retained, commit `wmi_ffi.rs` and add compile-time layout assertions (`size_of::<VARIANT>() == 24`) and Windows-gated mock COM vtable tests.
 
-**Silent fallbacks hide failures from the user:**
-- Issue: `load_or_default` returns defaults when the config file exists but is unreadable, without surfacing a notice (`src/config/mod.rs`); `show_notification` logs a warning but returns `Ok(())` on `Shell_NotifyIconW` failure (`src/desktop/windows/notifications.rs:40-50`); diagnostics export spawn errors are discarded (`let _ =` in `src/app.rs`); service start/stop errors are discarded in the worker (`src/core/worker.rs:181-182,204`).
-- Files: `src/config/mod.rs`, `src/desktop/windows/notifications.rs`, `src/app.rs`, `src/core/worker.rs`
-- Impact: Failures present as "the setting did nothing" with no UI message. The autostart case is worse: the Windows toggle silently writes a Linux `.desktop` file and reports success (see Known Bugs).
-- Fix approach: Extend the existing `corrupt_notice` mechanism to unreadable-file errors; make `show_notification` return `Err`; surface `AppEvent::ConfigSaveFailed`-style events for autostart/service operations.
+**Dead or unreachable command constants and sensor stubs:**
+- Issue: `commands::FAN_SPEEDS` (`0x11`), `commands::MAX_FAN_STATUS` (`0x26`), and `commands::SYSTEM_DESIGN_DATA` (`0x28`) are defined in `src/service/windows/hp_wmi.rs:58-66` but never used. Sensor queries `read_fan_rpms`, `read_fan_readings`, `read_temperature_readings`, `enumerate_pnp_devices`, `read_gpu_temperature`, and `sample_gpu_utilization` have no callers or return static empty data. `has_custom_curves` is always `false` and unread. `profile.zones.len() < 4` in `set_rgb_profile` is a constant-false check because `zones` is a fixed-size array `[RgbColor; 4]`.
+- Files: `src/service/windows/hp_wmi.rs:58-66`, `src/service/windows/hp_wmi.rs:882-887`, `src/hardware/windows/sensors.rs:43-69`, `src/hardware/windows/device.rs:171-174`, `src/hardware/windows/gpu.rs:324-333`, `src/service/windows/profiles.rs:35`.
+- Impact: Readers and maintainers infer capabilities that do not exist in the compiled binary; the RGB length check provides false security.
+- Fix approach: Delete unused stubs/constants or mark them `#[allow(dead_code)]` with explicit phase-tracking comments; remove constant-false condition checks.
 
-**`unsafe impl Send/Sync` on raw Win32 handles:**
-- Issue: `unsafe impl Send/Sync for TrayHandle` (`src/desktop/windows/tray.rs:64-65`, carrying a raw `HWND` and `NOTIFYICONDATAW`) and `unsafe impl Send/Sync for MutexHandle` (`src/desktop/windows/single_instance.rs:30-31`). `TrayHandle::drop` calls into Win32 from the main thread while the tray pump thread is still alive.
-- Files: `src/desktop/windows/tray.rs`, `src/desktop/windows/single_instance.rs`
-- Impact: Correctness depends on `Shell_NotifyIconW` and `PostMessageW` being safe cross-thread (true) and on the message pump exiting before the process (not guaranteed). No compile-time protection against future misuse.
-- Fix approach: Keep the raw handles inside a single owning thread and expose only a command channel; or document the invariants with a `SAFETY:` comment per block and add a teardown handshake (join the pump thread).
+**Documentation drift regarding commands and verification:**
+- Issue: `docs/architecture/HP_WMI_PROTOCOL.md` §4 specifies fan command `0x27`, power command `0x28`, and RGB command `0x1A`. The code uses `PERFORMANCE_MODE = 0x1A`, `SYSTEM_DESIGN_DATA = 0x28` (unused), and `FOUR_ZONE_RGB = 0x0002_0009` (a `ReqType` value passed as a command ID). `docs/architecture/HP_WMI_PROTOCOL.md` §6.2 claims `authorization.rs` enforces an allowlist on raw command ID/subcommand/payload bytes over IPC; `src/service/windows/authorization.rs` only matches typed enum variants, and command bytes are assembled server-side. `docs/architecture/WINDOWS_FUNCTION_CONTRACTS.md` §2.1 lists `88F8` profiles as balanced/performance, while `src/service/windows/profiles.rs:122-126` lists quiet/balanced/performance.
+- Files: `docs/architecture/HP_WMI_PROTOCOL.md` §4, §6.2; `docs/architecture/WINDOWS_FUNCTION_CONTRACTS.md` §2.1, §3.2; `src/service/windows/hp_wmi.rs:58-66`, `src/service/windows/authorization.rs:16-201`.
+- Impact: Engineers implementing hardware support based on ratified protocol documentation will assemble incorrect firmware command buffers; architectural contracts cannot serve as release gates until reconciled.
+- Fix approach: Reconcile command IDs against a single authoritative source, update protocol documentation, and add integration tests verifying command byte construction.
 
-**Blocking API used inside D-Bus method handlers:**
-- Issue: `StatusNotifierItem`/`TrayDbusMenu`/`ApplicationService` call `SyncSender::send` (blocking, capacity 16 from `src/main.rs:108`) from zbus handler threads (`src/desktop/tray.rs:87,93,99,168,171`, `src/desktop/single_instance.rs:39,46,53`).
-- Files: `src/desktop/tray.rs`, `src/desktop/single_instance.rs`
-- Impact: If the desktop-action thread is stalled (e.g., inside `slint::invoke_from_event_loop` during teardown), zbus dispatch blocks for the full channel capacity. Teardown at `src/main.rs:353-364` relies on `drop(_session_conn)` to release those sender clones implicitly.
-- Fix approach: Use `try_send` and drop/log on full, as the UI path already does. Explicitly remove the D-Bus objects before joining the action thread.
-
-**Log sink selection by executable name:**
-- Issue: `src/logging.rs` decides "am I the service" by checking whether the executable name contains `zenomen-hw`.
-- Files: `src/logging.rs`
-- Impact: A renamed or symlinked binary writes logs to the wrong sink; tests that rename the binary can silently change behavior.
-- Fix approach: Pass an explicit `LogRole` from each `main`.
+**Release builds abort on panic:**
+- Issue: `panic = "abort"` is set in `[profile.release]`. Combined with the unchecked FFI and raw pointers in WMI/COM and Win32 calls, any unexpected panic inside the LocalSystem daemon terminates the process immediately: no stack unwinding, no execution of the shutdown hook that restores fan mode to Auto (`src/service/windows/server.rs:371-379`), and no panic hook output beyond the abort message. The test profile (`[profile.test]`) uses unwinding, so this behavior is never exercised in CI.
+- Files: `Cargo.toml:89-96`, `src/service/windows/server.rs:371-379`.
+- Impact: A malformed WMI response or unexpected null pointer can abruptly crash the hardware daemon and leave the Embedded Controller locked in its last fan mode (e.g. Max fan at 100% RPM).
+- Fix approach: Use `panic = "unwind"` for service binaries with a custom top-level panic hook that dispatches the Auto fan restore command before process exit.
 
 ---
 
 ## Known Bugs
 
-**Windows GUI never exits when `close_to_tray = false`:**
-- Symptoms: Closing the window destroys the UI, but the process stays alive with no visible window until killed.
-- Files: `src/desktop/windows/tray.rs:150-155,238-242,297-308`, `src/main.rs:186-197,361-364`
-- Trigger: Set "close to tray" off, then close the window. `on_close_requested` calls `slint::quit_event_loop()` (`src/main.rs:194`) without sending `DesktopAction::Quit`.
-- Mechanism: The tray thread stores the `SyncSender<DesktopAction>` with `Box::into_raw` into `GWLP_USERDATA` (`src/desktop/windows/tray.rs:152`) and never frees it on `WM_DESTROY` (`:303-308`). The leaked sender keeps the channel open after the pump exits, so `for action in action_receiver` (`src/main.rs:205`) never ends and `desktop_action_thread.join()` (`src/main.rs:364`) blocks forever. The `Quit` path happens to work because it `break`s the loop (`src/main.rs:232`).
-- Fix approach: Free the boxed sender in `WM_DESTROY` (`Box::from_raw` after clearing `GWLP_USERDATA`), and assert on teardown that the tray thread has exited. Add a regression test with a fake pump.
+**Double free of `SAFEARRAY` (memory unsafety) in the WMI execution path:**
+- Symptoms: `InBuf` is wrapped into a `VARIANT` via `ScopedVariant::from_safearray(sa)`, then the same `sa` pointer is explicitly destroyed with `SafeArrayDestroy(sa)`. When `sa_var` drops at scope exit, its `Drop` implementation calls `VariantClear(&mut self.0)`, which invokes `SafeArrayDestroy` a second time on the already-freed pointer.
+- Files: `src/service/windows/hp_wmi.rs:422-447`, `src/service/windows/wmi_ffi.rs:405-415`.
+- Trigger: Every `RealWmiAdapter::exec_method` call (i.e. every physical fan, power profile, or RGB lighting read/write on Windows).
+- Workaround: In unit tests this is masked because tests execute against `FakeWmiAdapter`. On live Windows COM, `VariantClear` will trigger heap corruption or access violation.
+- Fix: Remove the explicit `SafeArrayDestroy(sa)` call and let `ScopedVariant` own and release the `SAFEARRAY`, or call `VariantClear` explicitly and `std::mem::forget(sa_var)`.
 
-**Windows autostart toggle is a no-op:**
-- Symptoms: Toggling "start on login" persists `autostart = true` in `config.toml` and creates `%APPDATA%\autostart\zenomen.desktop`, but the app does not start at login.
-- Files: `src/core/worker.rs:181-182,204`, `src/desktop/autostart.rs`, `src/desktop/mod.rs:11,28`, `src/desktop/windows/autostart.rs`
-- Trigger: Any Windows autostart toggle from Settings.
-- Mechanism: The worker always calls `crate::desktop::autostart::set_autostart_enabled` (the XDG implementation) and discards the result. The HKCU implementation is only re-exported as `set_windows_autostart_enabled` (`src/desktop/mod.rs:28`) and has no caller. `AppState` then reflects the requested config value, so the UI shows "on".
-- Fix approach: Route through a `#[cfg(windows)]` dispatcher, return the error to the UI, and re-read the effective state (`is_windows_autostart_enabled`) instead of echoing config.
+**Unchecked `SafeArray` HRESULTs risk memory corruption on malformed buffers:**
+- Symptoms: `SafeArrayAccessData(sa, &mut sa_data)` is called without checking the returned HRESULT; `copy_nonoverlapping(..., sa_data as *mut u8, 140)` immediately writes 140 bytes even if `sa_data` is null. On the output side, `SafeArrayGetUBound`, `SafeArrayAccessData`, and `std::slice::from_raw_parts(out_data as *const u8, len)` are all unchecked; `ubound` defaults to `0` on failure, constructing a 1-byte slice from an invalid or null pointer.
+- Files: `src/service/windows/hp_wmi.rs:433-436`, `src/service/windows/hp_wmi.rs:543-551`.
+- Impact: Memory corruption or instant daemon crash if WMI returns an unexpected buffer structure or fails data locking.
+- Fix: Assert every HRESULT with `win32_check`, validate `ubound >= 0` and `len <= 128`, and return `HardwareControlError::ProtocolError` instead of blindly dereferencing raw pointers.
 
-**Temperature history "300 s" option exceeds documented retention:**
-- Symptoms: Selecting the 300 s history window works, but the `TelemetryHistory` docs claim retention "never more than `MAX_SAMPLES`" (120).
-- Files: `src/core/telemetry.rs:27,172-180,195-203`, `src/config/schema.rs:98`
-- Trigger: Choose 300 s in Settings.
-- Mechanism: `set_capacity(300)` correctly sets `capacity = 300`, so the doc comment is wrong, not the behavior. `set_capacity` also never shrinks the `VecDeque` allocation, so switching 300 → 30 keeps the old buffer.
-- Fix approach: Fix the doc comment; call `shrink_to_fit()` after bulk eviction if the allocation matters.
+**Live HP WMI `hpqBMtdx` physical fan execution timing gap:**
+- Symptoms: `set_fan_mode` writes command `0x27` subcommand `0x01`, sleeps for 150 ms, and reads back mode via `read_fan_mode_from_firmware` (command `0x27` subcommand `0x00`). On physical HP hardware (OMEN and Victus laptops), Embedded Controller (EC) fan state transitions are asynchronous and often take 500 ms to 2000 ms to settle or update the status byte. The read-back check `after != normalized` fails prematurely, raising `HardwareControlError::VerificationFailed` even though the EC accepted the write and is actively ramping the fans.
+- Files: `src/service/windows/hp_wmi.rs:722-795`, `src/service/windows/hp_wmi.rs:920-958`.
+- Trigger: Selecting "Max" or "Auto" fan mode on physical hardware with realistic EC latency.
+- Workaround: None in the current codebase; `FakeWmiAdapter` responds instantaneously with mock responses in tests, masking the real-world timing gap.
+- Fix: Implement an adaptive polling loop for post-write verification (e.g. check every 100 ms up to a 2000 ms timeout) before failing with `VerificationFailed`.
 
-**Windows diagnostics are hardcoded:**
-- Symptoms: The diagnostics report always says `Microsoft Windows 10/11` / `NT 10.0` and `Session Authenticated (Local Named Pipe)` regardless of the actual OS build or whether the service is reachable.
-- Files: `src/core/diagnostics.rs:86-87,124`
-- Trigger: Export diagnostics on any Windows machine with the service stopped.
-- Fix approach: Query `RtlGetVersion`/`GetVersionEx` and the pipe/service state; emit `Unavailable` when unknown.
+**`SetPowerProfile` verification fails for valid aliases sent by the UI:**
+- Symptoms: `set_performance_mode` accepts and normalizes `"quiet" | "eco" | "cool"` to byte `0x02` and `"default" | "balanced"` to byte `0x00`. However, the read-back function `read_performance_mode_from_firmware` only returns canonical strings `"balanced" | "performance" | "cool"`. The post-write check `after != normalized` therefore fails for `"quiet"`, `"eco"`, and `"default"`, returning `VerificationFailed { target: "quiet", actual: "cool" }` even though the firmware write succeeded.
+- Files: `src/service/windows/hp_wmi.rs:829-866`, `src/service/windows/hp_wmi.rs:980-991`, `src/ui/screens/performance.rs:18-27`.
+- Trigger: Selecting the "Quiet" preset on boards `88F8` or `8A24` (both advertise `"quiet"` in `src/service/windows/profiles.rs:122-138`).
+- Fix: Map aliases to their canonical read-back names before write and verify against canonical names, and add automated tests covering alias verification.
 
-**Fabricated identity fallbacks:**
-- Symptoms: A machine whose BIOS version cannot be read reports `F.00`; a machine whose SMBIOS strings are missing reports `HP` / `OMEN Laptop`.
-- Files: `src/hardware/windows/device.rs:58,119,163,167`
-- Trigger: WMI/registry read failure (including non-HP hardware).
-- Fix approach: Return `Option<String>` and let `UnavailableHardwareProvider`-style panels render the gap.
+**Named pipe server blocks indefinitely while idle, preventing clean SCM stop and fan restoration:**
+- Symptoms: `run_pipe_server` blocks synchronously in `ConnectNamedPipe(pipe, null)`. The `stop_signal` atomic is only checked after a client connects and disconnects. When the Windows Service Control Manager sends `SERVICE_CONTROL_STOP`, `service_ctrl_handler` sets `stop_signal = true` and reports `SERVICE_STOP_PENDING` with a 3000 ms wait hint. However, the server loop remains blocked in `ConnectNamedPipe`. SCM wait hint expires, SCM forcefully kills the process (`TerminateProcess`), and `restore_fan_mode_on_shutdown` is never executed.
+- Files: `src/service/windows/server.rs:239-255`, `src/service/windows/server.rs:371-379`, `src/service/windows/lifecycle.rs:202-210`, `src/service/windows/lifecycle.rs:246-258`.
+- Impact: Service shutdown appears hung in Windows Services (`services.msc`), and the hardware is left running in Max fan mode indefinitely. In `--console` mode, Ctrl+C cannot stop the server cleanly.
+- Fix: Use overlapped I/O with `CreateEventW` and `WaitForMultipleObjects` on both the pipe connection and a shutdown event handle, or connect a dummy local client to unblock the synchronous loop on stop.
 
-**Uninstall leaves the daemon behind:**
-- Symptoms: `uninstall_system_integration` removes the unit and polkit file but not `/usr/bin/zenomen-hw`.
-- Files: `src/desktop/system_integration.rs` (`DAEMON_BIN_TARGET` at line 18, install at `:78-118`, uninstall later in file)
-- Trigger: Uninstall, then reinstall an older package; the stale root-owned daemon binary remains executable.
-- Fix approach: Remove `DAEMON_BIN_TARGET` during uninstall (best-effort, ignore `NotFound`).
+**Mutation timeout leaves the in-flight lock permanently held:**
+- Symptoms: `execute_mutating_action_with_timeout` moves `InFlightGuard` into an inner RPC thread. If the RPC call times out on the supervisor thread (30 s timeout), the guard remains alive inside the inner thread. If the inner thread is blocked on a synchronous named pipe read or hung WMI call, `in_flight` remains `true` forever, causing every subsequent mutation to be rejected with "Another hardware change is still in progress".
+- Files: `src/core/worker.rs:401-463`, `src/core/worker.rs:542-583`, `src/main.rs:350-356`.
+- Trigger: Windows service hangs or client connection stalls while executing a mutation.
+- Impact: Complete lockout of all hardware controls until the user restarts `zenomen.exe`.
+- Fix: Maintain guard ownership on the supervisor thread, release or invalidate the guard upon timeout, and impose strict bounded I/O timeouts on the client named pipe calls.
+
+**`SetRgbEnabled` is a no-op that reports success without firmware interaction:**
+- Symptoms: `handle_request` in `src/service/windows/server.rs:153-160` immediately returns `HardwareResponse::RgbEnabledSet(enabled)` without calling any firmware adapter method. The client treats this as confirmed state, violating the project rule against fabricating hardware state.
+- Files: `src/service/windows/server.rs:153-160`, `src/service/windows/client.rs:405-419`.
+- Impact: Toggling lighting in the UI displays success even if the physical keyboard backlight state remains unchanged.
+- Fix: Implement the underlying WMI lighting toggle method or return `HardwareControlError::UnsupportedMode`.
+
+**Unprivileged tachometer and thermal telemetry limitation on Windows:**
+- Symptoms: `read_fan_rpms()` and `read_fan_readings()` in `src/hardware/windows/sensors.rs` return empty vectors (`Vec::new()`) unconditionally. `read_temperature_sensors()` returns `(None, None)` and `read_temperature_readings()` returns `Unavailable`. Even in the elevated service, `query_fan_status` in `src/service/windows/hp_wmi.rs:708-719` returns `Ok((mode, Vec::new()))` because command `FAN_SPEEDS` (`0x11`) is never called.
+- Files: `src/hardware/windows/sensors.rs:34-70`, `src/service/windows/hp_wmi.rs:708-719`.
+- Impact: Fan tachometer widgets and thermal graphs on Windows are permanently empty/unavailable, contrary to contracts in `docs/architecture/WINDOWS_FUNCTION_CONTRACTS.md` §5.1.
+- Fix: Implement command `0x11` parsing in `RealWmiAdapter` for supported boards, and document thermal limitations honestly where kernel ring-0 drivers are unavailable.
+
+**Registry helpers substitute invented values for read failures:**
+- Symptoms: In `src/hardware/windows/device.rs:48-60`, BIOS version falls back to `"F.00"`, manufacturer to `"HP"`, and model to `"OMEN Laptop"` when registry reads fail or contain non-UTF-8 data. While `"F.00"` fails safe against board validation guards, substituting manufactured values violates AGENTS rule 9.
+- Files: `src/hardware/windows/device.rs:48-60`, `src/hardware/windows/device.rs:72-116`.
+- Impact: UI and diagnostics display fabricated values instead of indicating read failure.
+- Fix: Return `Option<String>` for BIOS version and system identity, rendering "Unavailable" in the UI when reads fail.
 
 ---
 
 ## Security Considerations
 
-**Named-pipe DACL trusts the whole interactive session:**
-- Risk: `PIPE_SDDL = "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"` (`src/service/windows/security.rs:114-118`) grants read/write to `NT AUTHORITY\Interactive Users`, i.e. every locally logged-on user. Authorization then relies on comparing the client's session ID and optional impersonation (`src/service/windows/security.rs`).
-- Files: `src/service/windows/security.rs`, `src/service/windows/server.rs`, `data/polkit/com.zenomen.hardware.policy`
-- Current mitigation: Session-ID comparison and impersonation attempts; the polkit policy applies only to the D-Bus daemon (`allow_active=auth_admin_keep`, `allow_any=auth_admin`).
-- Recommendations: Add an explicit ACL for the installing user SID (as endorsed by the Windows service model) instead of `IU`; fail closed when `create_pipe_security_descriptor` fails instead of passing `sa_ptr = NULL` (`src/service/windows/pipe.rs:33-58`), which silently inherits the default DACL; log authorization decisions (currently only authorization results are logged, not denials with SIDs).
+**Board validation matrix locks out target machine while granting unbacked writes to others:**
+- Risk: The board validation policy in `src/service/windows/profiles.rs:181-259` hardcodes write permissions for `88F8` (OMEN 15/16 AMD) on BIOS `F.20/F.21` and `8A24` (OMEN 16/17 Intel) on BIOS `F.10`, despite the absence of any committed diagnostic log evidence or SSDT/DSDT dumps proving physical validation. Conversely, board `8A3D` (HP Victus 15-fb0xxx, the primary hardware available to the maintainer) is hardcoded as unvalidated for writes (`fan_write_verified: false`, `power_write_verified: false`), permanently blocking fan and power mutations on the primary development machine.
+- Files: `src/service/windows/profiles.rs:115-259`, `tests/windows_service_tests.rs:193-222`, `docs/testing/HP_BOARD_VALIDATION.md`.
+- Impact: On `8A3D`, all mutation requests fail with `HardwareControlError::UnsupportedMode`. On `88F8` and `8A24`, writes are permitted on claims that lack recorded validation evidence. Furthermore, normal BIOS updates (e.g. `88F8` updating to `F.22`) silently revoke write permissions due to strict string matching.
+- Recommendations: Complete the physical validation runbook on `8A3D` and commit evidence artifacts; replace hardcoded code arms with an evidence-backed validation record loader; provide clear user diagnostic messages when a BIOS update changes validation status.
 
-**Root install copies a binary from a user-writable directory:**
-- Risk: `install_daemon_binary` resolves `current_exe().with_file_name("zenomen-hw")` and `fs::copy`s it to `/usr/bin` as root (`src/desktop/system_integration.rs:78-118`). If an administrator runs the install from a user-writable location (AppImage extraction dir, Downloads, a user-owned checkout), a malicious `zenomen-hw` beside the GUI becomes a root-owned setuid-adjacent binary started by systemd.
-- Files: `src/desktop/system_integration.rs`
-- Current mitigation: Root check (`is_root`), atomic rename via a temp file, mode `0755`.
-- Recommendations: Verify the candidate against a trusted source (package path, signature, or a hash shipped with the GUI) and refuse to copy from paths writable by non-root (`stat` mode/ownership); prefer shipping the daemon in the package and never copying at runtime.
+**Named pipe security hardening and impersonation fail-open discrepancy:**
+- Risk: In `src/service/windows/security.rs:48-104`, `verify_client_session` attempts `ImpersonateNamedPipeClient` to perform deep token inspection. If impersonation succeeds, it checks `TokenSessionId` and ensures `RevertToSelf` fails closed (`std::process::exit(1)`). However, if `ImpersonateNamedPipeClient` fails (e.g. running in `--console` dev mode without `SeImpersonatePrivilege`), the implementation logs a debug message and returns `Ok(())` (`security.rs:98-103`). Debug note `.planning/debug/windows-security-and-runtime-validation.md:59` explicitly claimed the server "rejects the connection immediately" on impersonation failure. The actual code falls back to `GetNamedPipeClientSessionId` only.
+- Files: `src/service/windows/security.rs:48-106`, `.planning/debug/windows-security-and-runtime-validation.md:54-61`.
+- Impact: If the service runs under a degraded account or if impersonation fails under SCM, the service silently drops token inspection and relies solely on the pipe session ID.
+- Recommendations: Distinguish explicit dev/console mode from SCM production mode; fail closed (`AccessDenied`) in SCM mode if `ImpersonateNamedPipeClient` fails; reconcile debug documentation with code reality.
 
-**`systemctl` PATH fallback:**
-- Risk: `run_systemctl` uses `/usr/bin/systemctl` when present, otherwise falls back to the bare name `"systemctl"`, resolved through `PATH` (`src/desktop/system_integration.rs:194-203`). Called as root during install/uninstall, a poisoned `PATH` executes attacker code.
-- Files: `src/desktop/system_integration.rs`
-- Recommendations: Use an absolute path only; if missing, return an error naming the expected path.
+**Unprivileged interactive user can execute firmware mutations without admin elevation:**
+- Risk: The named pipe DACL grants `GRGW` to `IU` (Interactive Users, `src/service/windows/security.rs:114-118`). Any process running in the active console session—including unprivileged malware, background scripts, or low-integrity applications—can connect to `\\.\pipe\zenomen-hw` and trigger fan, power, or RGB firmware mutations. On Linux, mutations are gated by PolicyKit (`src/service/polkit.rs:28-71`), which enforces administrative credentials. On Windows, no `TokenElevation` or `BUILTIN\Administrators` check is performed.
+- Files: `src/service/windows/security.rs:114-118`, `src/service/windows/server.rs:22-31`, `src/service/windows/authorization.rs:16-201`.
+- Impact: Weak privilege boundary compared to Linux: an unprivileged desktop process can drive hardware mutations through a SYSTEM service without UAC elevation.
+- Recommendations: For mutating operations (`SetFanMode`, `SetPowerProfile`, `ApplyRgbProfile`), check client token elevation (`TokenElevation`) or require membership in the local Administrators group during impersonation; allow read-only queries for standard interactive users.
 
-**Verification gate is metadata-only:**
-- Risk: `authorize_mutation` trusts `BoardValidation` flags, which are granted from a board-ID table (`src/service/windows/profiles.rs:138-164`); `bios_version` is recorded but never compared despite the docstring at `:27`.
-- Files: `src/service/windows/profiles.rs`, `src/service/windows/server.rs`
-- Current mitigation: Unknown boards are read-only; a mismatch between `validation.board_id` and the detected board is rejected (covered by `tests/windows_service_tests.rs:211-216`).
-- Recommendations: Compare `bios_version` against the ratified record (or a supported range), and record who/what ratified it. Do not grant RGB write for boards whose RGB variant was not detected.
+**Single-threaded synchronous blocking read enables trivial denial of service:**
+- Risk: The named pipe server loop handles one connection at a time using synchronous `ReadFile` without a read timeout (`src/service/windows/server.rs:264-334`). Any local process in the interactive session can connect to the pipe, send 1 byte (or declare a 4-byte length and send nothing further), and hold the connection open. The server thread blocks permanently in `ReadFile`, blocking all other clients from connecting and preventing SCM service shutdown.
+- Files: `src/service/windows/server.rs:237-334`, `src/service/windows/pipe.rs:7-13`.
+- Impact: A hung or malicious client can wedge the entire hardware service indefinitely.
+- Recommendations: Use overlapped I/O with a strict 5-second per-message read timeout (`WaitForSingleObject`), disconnecting and resetting the pipe if the client stalls.
 
-**Service hardening gaps (Windows):**
-- Risk: No failure actions, no service description, no restricted SID type, and no least-privilege token beyond the SCM defaults (`src/service/windows/lifecycle.rs`). `OpenSCManagerW(SC_MANAGER_ALL_ACCESS)` is broader than needed for status queries (`:207,246`).
-- Files: `src/service/windows/lifecycle.rs`, `data/systemd/zenomen-hw.service`
-- Current mitigation: The Linux unit is well sandboxed (`ProtectSystem=strict`, `ReadOnlyPaths=/`, `PrivateDevices=true`, `SystemCallFilter=@system-service`, `CapabilityBoundingSet=` empty).
-- Recommendations: Add `SERVICE_CONFIG_FAILURE_ACTIONS`, `SERVICE_CONFIG_DESCRIPTION`, and `SERVICE_SID_TYPE_UNRESTRICTED` where appropriate; mirror the Linux sandbox intent in the Windows service token.
-
-**Environment-controlled transport switch:**
-- Risk: `ZENOMEN_HW_SESSION` selects the session bus instead of the system bus in the daemon (`src/bin/zenomen-hw.rs:59`, used by `src/service/contract.rs`).
-- Files: `src/bin/zenomen-hw.rs`, `src/service/contract.rs`
-- Current mitigation: Documented as a test hook; the systemd unit does not set it.
-- Recommendations: Gate the override behind `#[cfg(test)]` or a `--session-bus` flag that the packaged unit never passes, so an inherited environment cannot downgrade the daemon.
+**Unquoted service binary path during SCM registration (CWE-428):**
+- Risk: `register_service` passes `std::env::current_exe()` directly to `CreateServiceW` as `lpBinaryPathName` without enclosing quotation marks. If the executable is installed in a path containing spaces (e.g. `C:\Program Files\ZenOmen\zenomen-hw.exe`), Windows service startup will attempt to execute `C:\Program.exe` if present.
+- Files: `src/service/windows/lifecycle.rs:18-24`, `src/service/windows/lifecycle.rs:42-56`.
+- Impact: Local privilege escalation to LocalSystem if an attacker has write access to the volume root.
+- Recommendations: Enclose the binary path in escaped quotes (`"\"{path}\""`), and add a unit test verifying path formatting.
 
 ---
 
 ## Performance Bottlenecks
 
-**Mutation timeout leaks threads and handles:**
-- Problem: `execute_mutating_action_with_timeout` spawns a wrapper thread and an inner thread per action (`src/core/worker.rs:390-435`); on timeout the caller gets an error but the inner thread stays blocked in the transport forever. On Windows the transport is `ReadFile` on a message-mode pipe with no overlapped I/O or read timeout (`src/service/windows/client.rs:149`).
-- Files: `src/core/worker.rs`, `src/service/windows/client.rs`, `src/service/client.rs`
-- Cause: No cancellation mechanism; the pipe handle is owned by the abandoned thread.
-- Impact: Each hang leaks one thread + one handle; a restarted service or a wedged driver turns a single UI click into permanent resource growth. The "in-flight" guard (`IN_FLIGHT` style tracking) stays set, so subsequent mutations are serialized behind a phantom operation.
-- Improvement path: Use overlapped I/O with `CancelIoEx` + `WaitForSingleObject`, or a move-only `Arc<Mutex<Connection>>` whose owner performs a bounded `SetCommTimeouts`/`PIPE_NOWAIT` read. At minimum, track and log leaks by thread ID and make the in-flight guard clear on timeout.
+**Full WMI COM connection and query recreation on every firmware call:**
+- Problem: `RealWmiAdapter::exec_method_windows` creates a new `WbemLocator`, connects to `ROOT\WMI`, opens `hpqBIntM`, calls `GetMethod`, spawns an in-parameters instance, executes `SELECT * FROM hpqBIntM`, fetches `__PATH`, and calls `ExecMethod` for every single read or write operation. The `IWbemServices` pointer obtained during `connect()` is immediately dropped.
+- Files: `src/service/windows/hp_wmi.rs:161-277`, `src/service/windows/hp_wmi.rs:304-556`.
+- Impact: Substantial latency penalty (50–150 ms) and heap churn on every hardware poll or write; creates dozens of short-lived COM proxies.
+- Improvement path: Cache the `IWbemServices` pointer, the class object, and the instance `__PATH` BSTR in `RealWmiAdapter`, reusing them across calls with a reconnect-on-failure fallback.
 
-**Blocking accept with a 30 s hang budget:**
-- Problem: `PIPE_TIMEOUT_MS = 30000` (`src/service/windows/pipe.rs:13`) plus a blocking `ConnectNamedPipe` in a single-threaded loop (`src/service/windows/server.rs:122-292`).
-- Files: `src/service/windows/pipe.rs`, `src/service/windows/server.rs`, `src/service/windows/lifecycle.rs:207,246`
-- Cause: One client at a time; SCM stop is reported with a 3 s wait hint while the loop can take 30 s.
-- Impact: `zenomen-hw` can appear hung to the SCM and be killed, and every GUI request queues behind the current client. No per-client rate limiting exists (`server.rs` handles requests as fast as they arrive).
-- Improvement path: Lower the timeout, check a stop flag between requests, and accept/close with overlapped I/O so `SERVICE_STOP` is honored in <1 s. Add a simple per-connection request budget.
+**GPU utilization query uses wildcard counter with non-array PDH API:**
+- Problem: `GpuPerformanceCollector` queries counter `\GPU Engine(*)\Utilization Percentage` (which matches multiple GPU engines) using `PdhGetFormattedCounterValue`. This API is designed for single-instance counters. When used with wildcards, it returns only the first engine instance or fails with `PDH_CSTATUS_INVALID_DATA`, resulting in under-reported or missing aggregate GPU utilization.
+- Files: `src/hardware/windows/gpu.rs:221-229`, `src/hardware/windows/gpu.rs:272-296`.
+- Impact: GPU utilization on Windows reports inaccurate or zero percentage under multi-engine workloads.
+- Improvement path: Use `PdhGetFormattedCounterArray` to enumerate and aggregate utilization across all engine instances, or use DXGI/D3DKMT query interfaces.
 
-**Unbounded UI event channel:**
-- Problem: `mpsc::channel()` for `AppEvent` (`src/main.rs:325`) with no backpressure. Telemetry events arrive at the polling rate; UI callbacks run on the Slint event loop.
-- Files: `src/main.rs`
-- Impact: If the UI thread stalls (modal dialog, slow chart path generation), events accumulate without limit. Bounded by the 40 MB RSS budget claim and by chart caching, but no hard cap exists.
-- Improvement path: Use `sync_channel` with a small bound and coalesce telemetry events (latest-wins) instead of queueing every sample.
+**Synchronous atomic file persistence on the telemetry worker thread:**
+- Problem: Config mutation actions (`SetPollingInterval`, `SetAutostart`, `SetStartMinimized`, etc.) invoke `save_atomic`, which writes to a temporary file, calls `file.sync_all()` (`FlushFileBuffers`), renames the file, and calls `sync_all()` on the parent directory. This runs synchronously on the worker thread, blocking the 1 Hz telemetry sampling loop.
+- Files: `src/core/worker.rs:156-226`, `src/config/mod.rs:85-116`.
+- Impact: UI stutter and delayed telemetry frames during settings modifications; directory sync is a no-op or error on Windows NTFS.
+- Improvement path: Offload config persistence to a dedicated background task or debounced writer, and omit parent-directory sync on Windows targets.
 
-**Per-tick process spawn if `nvidia-smi` is missing:**
-- Problem: The NVIDIA watcher thread is spawned with `.expect(...)` (`src/hardware/linux/gpu.rs:226`); when the tool is absent, the sampling path attempts a process per tick.
-- Files: `src/hardware/linux/gpu.rs`, `src/hardware/linux/provider.rs`
-- Impact: Wasted forks/execs every poll (500 ms–5 s) on non-NVIDIA laptops, contrary to the lean-dependency goal.
-- Improvement path: Resolve the tool once, cache a tri-state (present/absent/error) and back off on absence; drop the `expect` for a logged fallback.
+**Synchronous sleeps during firmware writes hold the single-threaded server:**
+- Problem: `set_fan_mode` sleeps 150 ms before verification and 200 ms on busy retries; `set_performance_mode` sleeps 150 ms. During these sleeps, the single-threaded server loop is completely blocked from processing any other IPC request.
+- Files: `src/service/windows/hp_wmi.rs:773-792`, `src/service/windows/hp_wmi.rs:858`.
+- Impact: Concurrent client calls block or timeout during hardware mode transitions.
+- Improvement path: Acceptable for rare writes, but should be handled asynchronously or across a multi-threaded request pool.
 
 ---
 
 ## Fragile Areas
 
-**Windows service dispatch and state:**
-- Files: `src/service/windows/server.rs:11-104`, `src/service/windows/hp_wmi.rs:70-71`
-- Why fragile: A 32-line match over `HardwareRequest` (`server.rs`, 32 `=>` arms) mixes authorization, hardware calls, and response construction; the global `Mutex<Option<String>>` statics make results order-dependent and shared across connections (including tests running in one process).
-- Safe modification: Extract one handler per request variant, return `Result<HardwareResponse, HardwareControlError>`, and remove the statics in favor of an explicit `FirmwareState` passed through `handle_request`.
-- Test coverage: Mock-only (`tests/windows_service_tests.rs`); no test asserts failure paths for `set_fan_mode`/`set_rgb_profile`.
+**`VARIANT` struct layout assumes 64-bit architecture:**
+- Files: `src/service/windows/wmi_ffi.rs:68-77`.
+- Why fragile: The struct is hand-coded with an explicit 24-byte layout matching 64-bit Windows. No `#[cfg(target_pointer_width = "64")]` guard or compile-time assertion exists. On 32-bit Windows targets, `VARIANT` is 16 bytes, causing instant ABI mismatch and stack corruption.
+- Safe modification: Add `static_assertions::assert_eq_size!(VARIANT, [u8; 24])` and gate compilation with `#[cfg(target_arch = "x86_64")]`.
+- Test coverage: Zero unit tests compile or assert struct sizes.
 
-**Win32 tray pump and teardown:**
-- Files: `src/desktop/windows/tray.rs:92-226,228-311`
-- Why fragile: Raw message loop, `GWLP_USERDATA` pointer aliasing, `unsafe impl Send/Sync`, and a `PostMessageW(WM_CLOSE)` shutdown with no join. The leak documented above lives here. `RegisterClassW` return value is ignored (`:120-122`), so a second registration in the same process silently uses the existing class.
-- Safe modification: Free user data in `WM_DESTROY`, store the pump `JoinHandle` in `TrayHandle`, check `RegisterClassW`, and add `SAFETY:` comments.
-- Test coverage: None on Windows; `tests/desktop_integration_tests.rs` covers XDG paths only.
+**Hardcoded COM vtable indices in DXGI adapter enumeration:**
+- Files: `src/hardware/windows/gpu.rs:105-140` (`EnumAdapters1` at slot 12, `GetDesc1` at slot 10, `Release` at slot 2), `src/hardware/windows/gpu.rs:45-57`.
+- Why fragile: Vtable offsets are hardcoded magic numbers transmuted to function pointers. Any change in COM interface definition or SDK header ordering causes calls to jump to arbitrary memory locations.
+- Safe modification: Use the official `windows` crate `IDXGIFactory1` and `IDXGIAdapter1` types.
+- Test coverage: Unit tests only exercise fallback logic on non-Windows targets.
 
-**Migration engine reads third-party files:**
-- Files: `src/rgb/migration.rs:185-270`
-- Why fragile: `fs::read_to_string` on arbitrary `.json` entries in `~/.config/openomen/rgb` (`:214`). A symlink to a FIFO blocks startup; a symlink to a huge file allocates unbounded memory. `target_path.exists()` then `fs::write` is a TOCTOU window, and `create_dir_all` errors are discarded (`:200`).
-- Safe modification: `symlink_metadata` and refuse non-regular files, cap file size (e.g. 1 MiB), use `OpenOptions::create_new` for the target.
-- Test coverage: `tests/rgb_tests.rs` covers parsing/preservation, not symlinks or size limits.
+**Tray icon lifetime, window proc raw pointer dereference, and leaked sender:**
+- Files: `src/desktop/windows/tray.rs:64-65`, `src/desktop/windows/tray.rs:151-155`, `src/desktop/windows/tray.rs:238`.
+- Why fragile: `TrayHandle` contains `unsafe impl Send` and `unsafe impl Sync` despite encapsulating a Win32 `HWND`. A raw `Box::into_raw(Box::new(event_sender))` is stored into `GWLP_USERDATA` and dereferenced in the window procedure without thread-affinity checks. On clean shutdown, the boxed sender is never freed, leaking memory and preventing the channel from closing cleanly.
+- Safe modification: Wrap the tray window state in a dedicated RAII manager that reclaims the pointer on `WM_NCDESTROY` and joins the message loop thread on drop.
 
-**Two hardware provider trees with divergent capability logic:**
-- Files: `src/hardware/provider.rs:210-240`, `src/hardware/registry.rs`, `src/hardware/windows/provider.rs`
-- Why fragile: `EXPECTED_SENSOR_COUNT = 11` and `is_degraded = reported < expected` mean a healthy Linux laptop without a dGPU is permanently "degraded"; Windows reports 11/11 from a simulated provider, so "degraded" is inverted between platforms.
-- Safe modification: Derive expectations from detected devices (per-sensor availability) instead of a fixed count, or make `is_degraded` platform-specific and document it.
-- Test coverage: `tests/sensor_registry_tests.rs`, `tests/degradation_tests.rs` cover Linux paths only.
-
-**Frame parsing panics in tests, not production — but tests are the only protocol proof:**
-- Files: `src/service/protocol.rs:264-322`, `src/service/windows/protocol.rs`
-- Why fragile: The protocol tests `expect` on every decode, so a schema change fails as a panic rather than a typed assertion. Neither protocol has a round-trip test across both implementations.
-- Safe modification: Add property tests for length-prefix boundaries (0, 4, `MAX + 1`, truncated) and a cross-codec test.
-- Test coverage: Boundary cases exist (`protocol.rs:308-322`); no fuzzing.
+**Inconsistent WMI availability reporting between adapter and server:**
+- Files: `src/service/windows/hp_wmi.rs:260-274`, `src/service/windows/server.rs:207-235`.
+- Why fragile: When the WMI class `hpqBIntM` is missing, `RealWmiAdapter::connect` returns `Ok(Self { available: false })`. The server logs "HP WMI connection established successfully" despite the interface being unavailable, and then on query failures retries `connect_hp_wmi()` before falling back to `FakeWmiAdapter::new(false)`.
+- Safe modification: Define an explicit `WmiConnectionStatus::Unavailable` return, eliminate duplicate connection attempts, and log accurate status.
 
 ---
 
 ## Scaling Limits
 
-**Single-client service:**
-- Current capacity: One pipe instance, one connection at a time (`src/service/windows/server.rs:122-292`).
-- Limit: A second GUI client or a stuck client blocks all others; the SCM stop budget (3 s hint) is shorter than the accept timeout (30 s).
-- Scaling path: Pre-create N pipe instances and dispatch per-connection threads (or overlapped I/O in one thread).
+**Single-client serialization with short connection timeout:**
+- Current capacity: The server creates a single named pipe instance (`create_server_pipe(true)` at `src/service/windows/server.rs:237`). The `max_instances` parameter of 4 in `src/service/windows/pipe.rs:54` is ineffective because only one instance handle is created.
+- Limit: A second concurrent client immediately receives `ERROR_PIPE_BUSY`. `WindowsServiceClient` retries 5 times with `WaitNamedPipeW(500)` (~2.5 s total) before failing. A single blocked client blocks all communication.
+- Scaling path: Maintain a pool of pipe instances or use non-blocking overlapped I/O with thread-pool completion ports.
 
-**Fixed 4-zone RGB model:**
-- Current capacity: `[RgbColor; 4]` (`src/rgb/schema.rs:126`) and 4-zone payload (`src/service/windows/hp_wmi.rs:187-195`).
-- Limit: 3-zone or per-key keyboards cannot be represented without a schema migration; `parse_openomen_profile` rejects anything that does not resolve all 4 zones (`src/rgb/migration.rs:160-171`).
-- Scaling path: Version the profile schema (`zones: Vec<RgbColor>` + `zone_count`), keep a 4-zone deserializer for v1 files.
-
-**History and chart buffers:**
-- Current capacity: 120 samples default, 300 selectable; chart paths cached per size (`src/core/telemetry.rs:27,172-210`).
-- Limit: `generate_chart_paths_cached` invalidates both chart and sparkline caches on every push (`src/core/telemetry.rs:190-192`), so a 300-point window regrows path strings every second; RSS headroom for the ≤40 MB budget shrinks with the largest window.
-- Scaling path: Cache per-window paths lazily, or precompute incremental path segments.
-
-**Command queue:**
-- Current capacity: 8 commands, `try_send` with drop-and-log (`src/app.rs:30,50,392`).
-- Limit: A burst of UI toggles (history window + polling + theme + autostart) silently drops commands; the UI has already applied the optimistic state, so it can desync from the worker/config.
-- Scaling path: Merge idempotent config commands (coalesce last-writer-wins) or raise the bound and surface a "busy" state.
+**Unbounded event channel between worker and UI loop:**
+- Current capacity: `src/main.rs:325` uses `std::sync::mpsc::channel()` (unbounded). The command channel is correctly bounded at 8 (`src/app.rs:30,50`), and tray channel at 16 (`src/main.rs:108`).
+- Limit: If the UI event loop stalls, telemetry frames accumulate indefinitely, leading to memory growth.
+- Scaling path: Use `sync_channel` with a fixed bound (e.g. 16) and drop stale telemetry frames in favor of fresh updates.
 
 ---
 
 ## Dependencies at Risk
 
-**Slint 1.17 with hand-picked features:**
-- Risk: `slint` is pinned to `1.17` with `default-features = false` and `renderer-femtovg`/`backend-winit` (`Cargo.toml`). Minor upgrades regularly change renderer/backend feature names and Slint's generated Rust API.
-- Impact: A dependency bump can break `ui/*.slint` codegen or the femtovg renderer on either platform; `slint-build` must move in lockstep.
-- Migration plan: Bump `slint` and `slint-build` together, run `xvfb-run cargo test --all`, and verify the Linux/Windows screenshot paths manually.
+**Unconditional `zbus` dependency on Windows targets:**
+- Risk: `Cargo.toml:34` compiles `zbus` and its async runtime on Windows targets where it is completely unused.
+- Impact: Inflates executable binary size, increases compile times, introduces duplicate transitive dependencies (`windows-sys 0.59` and `0.61`), and conflicts with project memory targets.
+- Migration plan: Move `zbus` to `[target.'cfg(unix)'.dependencies]` and gate `src/service/mod.rs` modules.
 
-**`zbus 5` (blocking API) for D-Bus:**
-- Risk: Blocking `Connection` + synchronous handlers is a thin layer over the async core; teardown semantics (drop = deregister) are implicit and version-sensitive.
-- Impact: The `desktop_action_thread.join()` hang class of bugs depends on zbus drop behavior; upgrades can change it.
-- Migration plan: Track zbus releases, add the teardown regression test described above, and consider explicit object-server removal.
+**Untracked and hand-rolled WMI COM FFI:**
+- Risk: `src/service/windows/wmi_ffi.rs` is hand-written, untested in CI, and currently untracked in git.
+- Impact: High risk of accidental omission during packaging or build breakage across different Windows SDK versions.
+- Migration plan: Commit `src/service/windows/wmi_ffi.rs` immediately; migrate to standard `windows` crate bindings in Phase 7.
 
-**`windows-sys 0.59` with a large feature list:**
-- Risk: `windows-sys` is a raw, semver-unstable surface; 0.59 → 0.60+ renames modules and types. The crate is pinned by version, not by a lock-file-only policy (the lock file is committed, so builds are reproducible until `cargo update`).
-- Impact: A caret bump silently changes FFI signatures; the unsafe call sites in `src/hardware/windows/*`, `src/service/windows/*`, and `src/desktop/windows/*` all need review.
-- Migration plan: Bump deliberately with `cargo update -p windows-sys --precise`, compile both targets, and re-audit every `unsafe` block.
-
-**`winres 0.1` (build dependency):**
-- Risk: `winres` is effectively unmaintained; it runs at build time for the Windows resource file.
-- Impact: Build breakage on newer Rust/Windows SDKs; no security exposure at runtime.
-- Migration plan: Move to `embed-resource` or a pre-generated `.res` if it breaks.
-
-**No automated dependency updates:**
-- Risk: No `.github/dependabot.yml` or Renovate config exists; `cargo audit` runs only in the Linux CI job (`.github/workflows/ci.yml:45-58`).
-- Impact: Vulnerable transitive crates can sit unnoticed between manual audits; the Windows job never audits.
-- Migration plan: Add Dependabot for `cargo` and run `cargo audit` in both jobs (or a dedicated job).
+**Unpinned MSRV with Edition 2024:**
+- Risk: `Cargo.toml:4` specifies `edition = "2024"` without defining a `rust-version`.
+- Impact: CI or contributor builds on toolchains prior to 1.85 will fail with confusing compiler diagnostics.
+- Migration plan: Add `rust-version = "1.85"` to `Cargo.toml`.
 
 ---
 
 ## Missing Critical Features
 
-**Real Windows hardware backend:**
-- Problem: No WMI session, no `hpqBIntM` invocation, no firmware read-back (see Tech Debt #1).
-- Blocks: Any truthful Windows fan/power/RGB/battery feature; Windows release readiness; the `UnavailableHardwareProvider` promise.
+**Physical fan RPM tachometer telemetry on Windows:**
+- Problem: Both the unprivileged provider (`src/hardware/windows/sensors.rs:59-64`) and the elevated service (`src/service/windows/hp_wmi.rs:708-719`) return empty vectors for fan RPMs. Command `FAN_SPEEDS` (`0x11`) is unimplemented.
+- Architectural reality: On HP Victus laptops (`8A3D`, `8A3E`), BIOS WMI does not expose fan tachometer readings via standard ACPI methods (returning `UnknownCommand`). Reading Victus fan speeds requires direct Embedded Controller port I/O, which is prohibited without ring-0 kernel drivers (ADR-002). Victus platforms will permanently lack tachometer telemetry on Windows. On HP OMEN laptops (`88F8`, `8A24`), command `0x11` could theoretically be implemented in the elevated service.
+- Blocks: Live fan tachometer graphs and RPM displays in the Cooling screen on Windows.
 
-**End-to-end Windows validation:**
-- Problem: No hardware-in-the-loop test or documented validation matrix; `.planning/WINDOWS.md` records that CI has never executed (entry 2) and the original UI stub (entry 1).
-- Blocks: Any claim that Windows support is "validated"; `resolve_board_validation` has no evidence behind its allow-list.
+**CPU and GPU temperature telemetry on Windows:**
+- Problem: `read_temperature_sensors` returns `(None, None)` and `read_temperature_readings` returns `Unavailable` (`src/hardware/windows/sensors.rs:34-57`).
+- Blocks: Thermal monitoring, overheating warnings, and temperature charts in the UI.
 
-**Service lifecycle hardening:**
-- Problem: No failure actions, no graceful stop within the SCM budget, no restart backoff, no structured audit log for privileged mutations.
-- Blocks: Reliable unattended operation; forensic review after a malicious local client.
+**Physical hardware validation for target machine (`8A3D`):**
+- Problem: Board `8A3D` (HP Victus 15-fb0xxx, the primary hardware available) is blocked from all writes (`src/service/windows/profiles.rs:232-247`). Phase 7 validation has not been performed on live hardware.
+- Blocks: Physical fan mode and power profile control on the maintainer's machine.
 
-**Bounded/cancellable transport:**
-- Problem: No overlapped I/O, no per-request deadlines on the pipe, no cancellation token shared with the worker timeout.
-- Blocks: Reclaiming resources after a wedged firmware call; predictable UI latencies.
+---
 
-**Update mechanism:**
-- Problem: Only a browser link to GitHub Releases (`src/desktop/releases.rs:13`), explicitly no HTTP/self-update.
-- Blocks: Security patch delivery to installed users; version-skew detection between GUI and daemon.
+## Uncommitted Work & Release Readiness
+
+**Working tree contains uncommitted dependencies and extensive modifications:**
+- Evidence: `src/service/windows/wmi_ffi.rs` is an **untracked file**, yet `src/service/windows/mod.rs:12` imports it. Checking out `HEAD` fails Windows compilation. The working tree has 46 modified tracked files across 3,000+ lines of changes.
+- Impact: Git history does not represent a compilable Windows state; work is vulnerable to data loss.
+- Recommendation: Commit `wmi_ffi.rs` immediately in a dedicated commit, followed by logical commits for security hardening, profiles, and documentation.
 
 ---
 
 ## Test Coverage Gaps
 
-**Windows service behavior is tested against the simulation:**
-- What's not tested: That a mutation reaches firmware or fails when it cannot. `tests/windows_service_tests.rs:219-257` builds `HpWmiConnection { is_available: true }`, calls `handle_request(ApplyPreset, ...)`, and asserts `is_full_success()` plus `confirmed_fan_mode == Some("max")` — values produced by the in-process `Mutex` statics, not hardware.
-- Files: `tests/windows_service_tests.rs:219-257`, `src/service/windows/hp_wmi.rs`
-- Risk: The suite actively certifies the fabrication; a real implementation will initially "fail" these tests.
-- Priority: High
+**Real WMI COM FFI and `hpqBMtdx` invocation:**
+- Untested: All 36 Windows service integration tests in `tests/windows_service_tests.rs` use `FakeWmiAdapter`. Zero automated tests execute `RealWmiAdapter`, COM initialization, SAFEARRAY memory management, or method execution against live WMI infrastructure.
+- Priority: Critical.
 
-**No Windows runtime tests for tray, pipe, autostart, notifications:**
-- What's not tested: Tray teardown (the exit hang), DACL/session enforcement, `ReadFile` timeout behavior, HKCU Run round-trip, notification failure propagation.
-- Files: `src/desktop/windows/*`, `src/service/windows/*`, `tests/windows_service_tests.rs` (non-Windows branch at `:259-349` only exercises guards)
-- Risk: The highest-severity Windows bugs (exit hang, autostart no-op) have no regression test.
-- Priority: High
+**Named pipe security and impersonation edge cases:**
+- Untested: Session verification across multiple interactive sessions, simulated `ImpersonateNamedPipeClient` failures, `RevertToSelf` handling, and client disconnection during partial frame transmission.
+- Priority: High.
 
-**No cross-platform protocol compatibility test:**
-- What's not tested: Encoding with `src/service/protocol.rs` and decoding with `src/service/windows/protocol.rs` (and vice versa), version mismatch handling, request-ID correlation.
-- Files: `src/service/protocol.rs`, `src/service/windows/protocol.rs`
-- Risk: Silent desynchronization if the transports are ever unified.
-- Priority: Medium
+**SCM service lifecycle and stop-pending transitions:**
+- Untested: Service registration quoting, service start/stop transitions under SCM dispatcher, and shutdown hook fan mode restoration.
+- Priority: High.
 
-**Migration robustness:**
-- What's not tested: Symlinked/FIFO/oversized source files, concurrent target writes, permission-denied directories.
-- Files: `src/rgb/migration.rs`, `tests/rgb_tests.rs`
-- Risk: Startup hang or unbounded allocation from a hostile `~/.config/openomen/rgb`.
-- Priority: Medium
+**Firmware command payload assembly and verification:**
+- Untested: Command byte construction for `0x1A`, `0x27`, and `0x20009` against real firmware responses; alias resolution for `"quiet"` and `"cool"` power profiles.
+- Priority: High.
 
-**Mutation-timeout resource reclamation:**
-- What's not tested: That the abandoned thread/handle is reclaimed, that the in-flight guard clears, and that a second mutation can proceed after a timeout.
-- Files: `src/core/worker.rs:542-600` (tests assert the timeout event and guard behavior, not resource reclamation)
-- Risk: Leaks accumulate in production with no signal.
-- Priority: Medium
-
-**Live-hardware validation:**
-- What's not tested: Any real sysfs write/read-back on OMEN/Victus hardware, hwmon layouts with >9 temp inputs, multi-fan machines.
-- Files: `tests/*` (all mock/temp-dir based), `src/hardware/registry.rs`
-- Risk: Path-discovery regressions (e.g. `temp10` ordering, `platform` fan detection) ship undetected.
-- Priority: Medium
+**Windows desktop integration:**
+- Untested: Real notification balloon dispatch via `Shell_NotifyIconW`, tray icon message loop cleanup, and autostart registry creation.
+- Priority: Medium.
 
 ---
 
-## Prioritized Remediation Order
-
-1. Stop the Windows lie: route Windows through `UnavailableHardwareProvider` until WMI is real, or implement `connect_hp_wmi`/read-back and remove the statics and ack-only `SetRgbEnabled`. Update `tests/windows_service_tests.rs` in the same change.
-2. Fix the exit hang: free the `GWLP_USERDATA` sender on `WM_DESTROY`, join the pump thread, and add a teardown regression test.
-3. Make autostart platform-correct and surface failures to the UI.
-4. Add read cancellation (`CancelIoEx`/overlapped) and clear the in-flight guard on timeout; add a leak regression test.
-5. Harden the root install path (trusted source + ownership check) and the `systemctl` invocation.
-6. Tighten the pipe DACL/authorization and fail closed on security-descriptor creation.
-7. Unify the protocol and add cross-codec/version tests.
-8. Fix diagnostics/identity fabrication (`F.00`, hardcoded OS, static authorization string).
-9. Add dependency automation and audit both CI jobs.
-
----
-
-*Concerns audit: 2026-11-08*
+*Concerns audit refreshed: 2026-11-09*
