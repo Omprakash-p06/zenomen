@@ -1451,6 +1451,17 @@ pub fn set_victus_fan_levels(
         )));
     }
 
+    let board = conn.board_id().unwrap_or("unknown");
+    if cpu_level == victus_s::FAN_SPEED_AUTOMATIC
+        && gpu_level == victus_s::FAN_SPEED_AUTOMATIC
+        && victus_s::requires_thermal_profile_restore(board)
+    {
+        return Err(HardwareControlError::UnsupportedMode(format!(
+            "Board {board} freezes fans at 0 RPM on 0x2E automatic reset; \
+             use restore_automatic_fan_control with the active thermal profile instead"
+        )));
+    }
+
     // 1. Arm / refresh the manual fan state (0x10).
     get_fan_count(conn)?;
 
@@ -1878,6 +1889,14 @@ mod tests {
         let adapter = FakeWmiAdapter::new(true);
         let conn = HpWmiConnection::from_adapter(adapter);
         let err = set_victus_fan_levels(&conn, 10, 10).unwrap_err();
+        assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    }
+
+    #[test]
+    fn test_victus_s_level_write_refuses_0x2e_auto_sentinel_on_8a3d() {
+        let adapter = FakeWmiAdapter::new(true);
+        let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+        let err = set_victus_fan_levels(&conn, 0, 0).unwrap_err();
         assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
     }
 

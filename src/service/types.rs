@@ -76,6 +76,46 @@ impl FanMode {
     }
 }
 
+/// Lifecycle state of the fan control subsystem on HP hardware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FanControlState {
+    /// Automatic cooling controlled by dynamic firmware curve.
+    Automatic,
+    /// Actively applying a requested fan state.
+    Applying,
+    /// Manual fan level applied.
+    Manual,
+    /// Full fan speed active (Max Fan / 100%).
+    MaxFan,
+    /// Actively restoring automatic cooling control.
+    Restoring,
+    /// Restoration to automatic cooling failed (requires alert / manual intervention).
+    RestoreFailed,
+    /// Hardware or board profile does not support fan control.
+    Unsupported,
+}
+
+impl FanControlState {
+    /// User-facing normalized identifier string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::Applying => "applying",
+            Self::Manual => "manual",
+            Self::MaxFan => "maxfan",
+            Self::Restoring => "restoring",
+            Self::RestoreFailed => "restore_failed",
+            Self::Unsupported => "unsupported",
+        }
+    }
+
+    /// Whether this state represents active cooling intervention by software.
+    pub fn is_active_override(self) -> bool {
+        matches!(self, Self::Manual | Self::MaxFan | Self::Applying)
+    }
+}
+
 /// Granular result of applying a combined preset (PWR-06).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresetResult {

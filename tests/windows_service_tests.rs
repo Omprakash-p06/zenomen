@@ -1611,3 +1611,47 @@ fn test_victus_s_fan_table_parsing_zero_gpu_and_truncated() {
     assert_eq!(table.gpu_offset, Some(-4));
     assert_eq!(table.gpu_level_for_cpu(40), 36);
 }
+
+#[test]
+fn test_fan_control_state_lifecycle_and_helpers() {
+    use zenomen::service::types::FanControlState;
+
+    assert_eq!(FanControlState::Automatic.as_str(), "automatic");
+    assert_eq!(FanControlState::Applying.as_str(), "applying");
+    assert_eq!(FanControlState::Manual.as_str(), "manual");
+    assert_eq!(FanControlState::MaxFan.as_str(), "maxfan");
+    assert_eq!(FanControlState::Restoring.as_str(), "restoring");
+    assert_eq!(FanControlState::RestoreFailed.as_str(), "restore_failed");
+    assert_eq!(FanControlState::Unsupported.as_str(), "unsupported");
+
+    assert!(!FanControlState::Automatic.is_active_override());
+    assert!(FanControlState::Applying.is_active_override());
+    assert!(FanControlState::Manual.is_active_override());
+    assert!(FanControlState::MaxFan.is_active_override());
+    assert!(!FanControlState::Restoring.is_active_override());
+    assert!(!FanControlState::RestoreFailed.is_active_override());
+    assert!(!FanControlState::Unsupported.is_active_override());
+}
+
+#[test]
+fn test_guarded_8a3d_fan_control_blocks_writes_when_unvalidated() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    assert!(!validation.fan_write_verified);
+
+    let adapter = FakeWmiAdapter::new(true);
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    let resp = handle_request(
+        HardwareRequest::SetFanMode {
+            mode: "max".to_string(),
+        },
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    assert!(
+        matches!(resp, HardwareResponse::Error(_)),
+        "mutation must be rejected without fan_write_verified"
+    );
+}
