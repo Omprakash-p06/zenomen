@@ -105,6 +105,9 @@ pub struct FanTable {
     pub min_rpm: u8,
     /// Highest CPU level present in the table — the ceiling for manual levels.
     pub max_rpm: u8,
+    /// Offset between GPU fan and CPU fan (GPU RPM level - CPU RPM level) derived
+    /// from the first row with non-zero GPU RPM. None if no rows have non-zero GPU RPM.
+    pub gpu_offset: Option<i16>,
     /// Parsed rows, stopping at the first all-zero row (truncated tables).
     pub entries: Vec<FanTableEntry>,
 }
@@ -113,6 +116,23 @@ impl FanTable {
     /// Highest level that firmware accepts for a manual fan write.
     pub fn max_level(&self) -> u8 {
         self.max_rpm
+    }
+
+    /// Offset between GPU fan and CPU fan, if available from a row with nonzero GPU RPM.
+    pub fn gpu_offset(&self) -> Option<i16> {
+        self.gpu_offset
+    }
+
+    /// Derive the expected GPU level for a given CPU level using the table's GPU offset.
+    /// Clamps to 1..=255, or returns `level` if no offset is available.
+    pub fn gpu_level_for_cpu(&self, cpu_level: u8) -> u8 {
+        match self.gpu_offset {
+            Some(offset) => {
+                let target = (cpu_level as i16) + offset;
+                target.clamp(1, u8::MAX as i16) as u8
+            }
+            None => cpu_level,
+        }
     }
 }
 
@@ -239,10 +259,25 @@ pub fn parse_fan_table(bytes: &[u8]) -> Result<FanTable, HardwareControlError> {
     let min_rpm = entries.iter().map(|e| e.cpu_rpm).min().unwrap_or(0);
     let max_rpm = entries.iter().map(|e| e.cpu_rpm).max().unwrap_or(0);
 
+    if max_rpm == 0 {
+        return Err(HardwareControlError::ProtocolError(
+            "Victus S fan table contained no non-zero RPM entries".to_string(),
+        ));
+    }
+
+    // On 8A3D and similar boards, row 0 has gpu_rpm == 0.
+    // The GPU offset must be calculated from the first row with a non-zero GPU RPM value
+    // to avoid negative bogus offsets and arithmetic underflow.
+    let gpu_offset = entries
+        .iter()
+        .find(|e| e.gpu_rpm > 0)
+        .map(|e| (e.gpu_rpm as i16) - (e.cpu_rpm as i16));
+
     Ok(FanTable {
         num_fans,
         min_rpm,
         max_rpm,
+        gpu_offset,
         entries,
     })
 }
@@ -300,6 +335,7 @@ mod tests {
         assert_eq!(table.min_rpm, 0x27);
         assert_eq!(table.max_rpm, 0x35);
         assert_eq!(table.max_level(), 0x35);
+        assert_eq!(table.gpu_offset, Some(-4));
         assert_eq!(
             table.entries[0],
             FanTableEntry {
@@ -308,6 +344,33 @@ mod tests {
                 noise_db: 0x0C,
             }
         );
+    }
+
+    #[test]
+    fn fan_table_zero_gpu_first_row_derives_gpu_offset_from_nonzero_row() {
+        // Motherboard 8A3D: row 0 has gpu_rpm == 0, next row has nonzero gpu_rpm
+        let bytes = table_payload(
+            2,
+            &[
+                (0x20, 0x00, 0x0A), // row 0: CPU 32, GPU 0
+                (0x28, 0x24, 0x10), // row 1: CPU 40, GPU 36 -> offset = -4
+                (0x35, 0x31, 0x1A), // row 2: CPU 53, GPU 49
+            ],
+        );
+        let table = parse_fan_table(&bytes).expect("parse 8A3D fan table");
+        assert_eq!(table.entries.len(), 3);
+        assert_eq!(table.min_rpm, 0x20);
+        assert_eq!(table.max_rpm, 0x35);
+        assert_eq!(table.gpu_offset, Some(-4));
+        assert_eq!(table.gpu_offset(), Some(-4));
+        assert_eq!(table.gpu_level_for_cpu(40), 36);
+    }
+
+    #[test]
+    fn fan_table_rejects_all_zero_rpm_table() {
+        let bytes = table_payload(2, &[(0x00, 0x00, 0x0C)]);
+        let err = parse_fan_table(&bytes).unwrap_err();
+        assert!(matches!(err, HardwareControlError::ProtocolError(_)));
     }
 
     #[test]

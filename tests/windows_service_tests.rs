@@ -1577,3 +1577,37 @@ fn test_get_fan_rpm_generic_board() {
     let conn = HpWmiConnection::from_adapter_for_board(adapter, "88F8");
     assert_eq!(conn.get_fan_rpm(0).unwrap(), Some(2500));
 }
+
+#[test]
+fn test_victus_s_fan_table_parsing_zero_gpu_and_truncated() {
+    let mut payload = vec![0u8; 128];
+    payload[0] = 2; // num_fans = 2
+    payload[1] = 0; // unknown
+
+    // Entry 0 (row 0): CPU 32 (0x20), GPU 0 (0x00), Noise 10 (0x0A)
+    payload[2] = 0x20;
+    payload[3] = 0x00;
+    payload[4] = 0x0A;
+
+    // Entry 1 (row 1): CPU 40 (0x28), GPU 36 (0x24), Noise 16 (0x10)
+    payload[5] = 0x28;
+    payload[6] = 0x24;
+    payload[7] = 0x10;
+
+    // Entry 2 (row 2): all zero (truncation sentinel)
+    payload[8] = 0;
+    payload[9] = 0;
+    payload[10] = 0;
+
+    let adapter = FakeWmiAdapter::new(true);
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let table = zenomen::service::windows::hp_wmi::get_victus_fan_table(&conn).expect("fan table");
+    assert_eq!(table.entries.len(), 2);
+    assert_eq!(table.min_rpm, 0x20);
+    assert_eq!(table.max_rpm, 0x28);
+    // Derived from row 1 (first nonzero GPU row): 36 - 40 = -4
+    assert_eq!(table.gpu_offset, Some(-4));
+    assert_eq!(table.gpu_level_for_cpu(40), 36);
+}
