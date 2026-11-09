@@ -183,7 +183,10 @@ fn test_board_capabilities_decouples_fan_and_thermal_profile() {
     assert!(caps.max_fan_supported);
 
     // Thermal profile is EC-backed, not WMI
-    assert_eq!(caps.thermal_profile_source, ThermalProfileSource::EmbeddedController);
+    assert_eq!(
+        caps.thermal_profile_source,
+        ThermalProfileSource::EmbeddedController
+    );
 
     // Physical write verification remains strictly false without physical validation record
     assert!(!caps.fan_write_verified);
@@ -1530,4 +1533,47 @@ fn test_fake_wmi_adapter_all_paths_pass() {
     let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
     let count = zenomen::service::windows::hp_wmi::get_fan_count(&conn).expect("get fan count");
     assert_eq!(count, 2);
+}
+
+#[test]
+fn test_get_fan_rpm_victus_s_cpu_and_gpu() {
+    let adapter = FakeWmiAdapter::new(true);
+    let mut payload = vec![0u8; 128];
+    payload[0] = 25; // 2500 RPM
+    payload[1] = 31; // 3100 RPM
+    adapter.expect_call(FakeResponse::Success {
+        payload: payload.clone(),
+    });
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    assert_eq!(conn.get_fan_rpm(0).unwrap(), Some(2500));
+    assert_eq!(conn.get_fan_rpm(1).unwrap(), Some(3100));
+    assert_eq!(conn.get_fan_rpm(2).unwrap(), None);
+}
+
+#[test]
+fn test_get_fan_rpm_victus_s_zero_rpm() {
+    let adapter = FakeWmiAdapter::new(true);
+    let mut payload = vec![0u8; 128];
+    payload[0] = 0; // stopped
+    payload[1] = 0; // stopped
+    adapter.expect_call(FakeResponse::Success {
+        payload: payload.clone(),
+    });
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    assert_eq!(conn.get_fan_rpm(0).unwrap(), Some(0));
+    assert_eq!(conn.get_fan_rpm(1).unwrap(), Some(0));
+}
+
+#[test]
+fn test_get_fan_rpm_generic_board() {
+    let adapter = FakeWmiAdapter::new(true);
+    let payload = vec![0x00, 0x00, 0x09, 0xC4]; // 2500 RPM (0x09C4)
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "88F8");
+    assert_eq!(conn.get_fan_rpm(0).unwrap(), Some(2500));
 }

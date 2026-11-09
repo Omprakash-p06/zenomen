@@ -180,7 +180,7 @@ pub fn thermal_profile_payload(profile: ThermalProfile) -> [u8; 2] {
 
 /// Convert a raw `0x2D` level byte into RPM.
 pub fn rpm_for_level(level: u8) -> u32 {
-    u32::from(level) * RPM_PER_LEVEL_UNIT
+    u32::from(level).saturating_mul(RPM_PER_LEVEL_UNIT)
 }
 
 /// Map a 0..=255 PWM-style value onto the table's `1..=max_level` range.

@@ -53,6 +53,10 @@ pub struct WmiDiagnosticReport {
     pub instance_hresult: Option<i32>,
     pub readonly_probe_status: Option<String>,
     pub thermal_profile_probe_status: Option<String>,
+    pub fan_count: Option<u8>,
+    pub cpu_fan_rpm: Option<u32>,
+    pub gpu_fan_rpm: Option<u32>,
+    pub fan_table_status: Option<String>,
     pub category: WmiDiagnosticCategory,
     pub summary: String,
 }
@@ -83,6 +87,10 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_hresult: None,
                 readonly_probe_status: None,
                 thermal_profile_probe_status: None,
+                fan_count: None,
+                cpu_fan_rpm: None,
+                gpu_fan_rpm: None,
+                fan_table_status: None,
                 category: WmiDiagnosticCategory::ComFailure,
                 summary: format!("CoInitializeEx failed with HRESULT {hr:#010x}"),
             };
@@ -124,6 +132,10 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_hresult: None,
                 readonly_probe_status: None,
                 thermal_profile_probe_status: None,
+                fan_count: None,
+                cpu_fan_rpm: None,
+                gpu_fan_rpm: None,
+                fan_table_status: None,
                 category: WmiDiagnosticCategory::ComFailure,
                 summary: format!("CoCreateInstance(IWbemLocator) failed with HRESULT {hr:#010x}"),
             };
@@ -165,6 +177,10 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_hresult: None,
                 readonly_probe_status: None,
                 thermal_profile_probe_status: None,
+                fan_count: None,
+                cpu_fan_rpm: None,
+                gpu_fan_rpm: None,
+                fan_table_status: None,
                 category: cat,
                 summary: format!("ConnectServer(ROOT\\WMI) failed with HRESULT {hr:#010x}"),
             };
@@ -198,6 +214,10 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
                 instance_hresult: None,
                 readonly_probe_status: None,
                 thermal_profile_probe_status: None,
+                fan_count: None,
+                cpu_fan_rpm: None,
+                gpu_fan_rpm: None,
+                fan_table_status: None,
                 category: WmiDiagnosticCategory::ClassMissing,
                 summary: format!("Class {HP_WMI_CLASS} not found: HRESULT {hr_class:#010x}"),
             };
@@ -330,25 +350,67 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
         // 8. If an instance is found, attempt non-mutating, read-only probes
         let mut readonly_probe_status = None;
         let mut thermal_profile_probe_status = None;
+        let mut fan_count = None;
+        let mut cpu_fan_rpm = None;
+        let mut gpu_fan_rpm = None;
+        let mut fan_table_status = None;
+
         if instance_path.is_some() {
             match RealWmiAdapter::connect() {
                 Ok(adapter) => {
-                    match adapter.bios_call(HPWMI_GM, commands::FAN_COUNT, &[0u8], 4) {
-                        Ok(payload) => {
-                            readonly_probe_status =
-                                Some(format!("Success (FAN_COUNT payload: {payload:02x?})"));
+                    let board_id = crate::hardware::windows::device::read_board_id();
+                    let conn = if let Some(ref bid) = board_id {
+                        HpWmiConnection::from_adapter_for_board(adapter, bid)
+                    } else {
+                        HpWmiConnection::from_adapter(adapter)
+                    };
+
+                    match get_fan_count(&conn) {
+                        Ok(count) => {
+                            readonly_probe_status = Some(format!("Success (FAN_COUNT: {count})"));
+                            fan_count = Some(count);
                         }
                         Err(e) => {
                             readonly_probe_status = Some(format!("Failed: {e}"));
                         }
                     }
-                    match adapter.bios_call(HPWMI_GM, commands::THERMAL_PROFILE_QUERY, &[], 4) {
+
+                    match get_fan_rpm(&conn, 0) {
+                        Ok(Some(rpm)) => cpu_fan_rpm = Some(rpm),
+                        Ok(None) => tracing::debug!("CPU fan index out of range"),
+                        Err(e) => tracing::debug!(error = %e, "Failed to read CPU fan RPM"),
+                    }
+
+                    match get_fan_rpm(&conn, 1) {
+                        Ok(Some(rpm)) => gpu_fan_rpm = Some(rpm),
+                        Ok(None) => tracing::debug!("GPU fan index out of range"),
+                        Err(e) => tracing::debug!(error = %e, "Failed to read GPU fan RPM"),
+                    }
+
+                    if conn.is_victus_s() {
+                        match get_victus_fan_table(&conn) {
+                            Ok(table) => {
+                                fan_table_status = Some(format!(
+                                    "Success ({} rows, max_level={})",
+                                    table.entries.len(),
+                                    table.max_level()
+                                ));
+                            }
+                            Err(e) => {
+                                fan_table_status = Some(format!("Failed to parse: {e}"));
+                            }
+                        }
+                    }
+
+                    match probe_thermal_profile_query(&conn) {
                         Ok(payload) => {
                             thermal_profile_probe_status =
                                 Some(format!("Success (Opcode 0x4C payload: {payload:02x?})"));
                         }
                         Err(e) => {
-                            thermal_profile_probe_status = Some(format!("Unsupported/Failed: {e}"));
+                            thermal_profile_probe_status = Some(format!(
+                                "Unsupported/Rejected ({e}) - on board 8A3D thermal profile is EC-backed (register 0x95)"
+                            ));
                         }
                     }
                 }
@@ -375,11 +437,14 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
         };
 
         let summary = format!(
-            "HP WMI Diagnostic: Category={}, Methods=[{}], Instance={}, Probe={}, Opcode0x4C={}",
+            "HP WMI Diagnostic: Category={}, Methods=[{}], Instance={}, Probe={}, FanCount={}, CPU_RPM={}, GPU_RPM={}, Opcode0x4C={}",
             category,
             methods_found.join(", "),
             instance_status,
             readonly_probe_status.as_deref().unwrap_or("Skipped"),
+            fan_count.map_or("N/A".to_string(), |c| c.to_string()),
+            cpu_fan_rpm.map_or("N/A".to_string(), |r| format!("{r} RPM")),
+            gpu_fan_rpm.map_or("N/A".to_string(), |r| format!("{r} RPM")),
             thermal_profile_probe_status.as_deref().unwrap_or("Skipped")
         );
 
@@ -397,6 +462,10 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
             instance_hresult,
             readonly_probe_status,
             thermal_profile_probe_status,
+            fan_count,
+            cpu_fan_rpm,
+            gpu_fan_rpm,
+            fan_table_status,
             category,
             summary,
         }
@@ -419,6 +488,10 @@ pub fn run_wmi_diagnostic() -> WmiDiagnosticReport {
         instance_hresult: None,
         readonly_probe_status: None,
         thermal_profile_probe_status: None,
+        fan_count: None,
+        cpu_fan_rpm: None,
+        gpu_fan_rpm: None,
+        fan_table_status: None,
         category: WmiDiagnosticCategory::NamespaceMissing,
         summary: "HP WMI is only supported on Windows".to_string(),
     }
@@ -742,6 +815,18 @@ pub fn print_wmi_diagnostic() {
     }
     if let Some(ref probe) = report.readonly_probe_status {
         println!(" Read-only Probe Status  : {probe}");
+    }
+    if let Some(count) = report.fan_count {
+        println!(" Firmware Fan Count      : {count}");
+    }
+    if let Some(rpm) = report.cpu_fan_rpm {
+        println!(" CPU Fan RPM (index 0)   : {rpm} RPM");
+    }
+    if let Some(rpm) = report.gpu_fan_rpm {
+        println!(" GPU Fan RPM (index 1)   : {rpm} RPM");
+    }
+    if let Some(ref table_stat) = report.fan_table_status {
+        println!(" Victus Fan Table (0x2F) : {table_stat}");
     }
     if let Some(ref probe) = report.thermal_profile_probe_status {
         println!(" Opcode 0x4C Probe Status: {probe}");

@@ -1056,6 +1056,11 @@ impl HpWmiConnection {
             .is_some_and(victus_s::is_victus_s_board)
     }
 
+    /// Read one fan's RPM speed. Returns `Ok(Some(rpm))` on success, `Ok(None)` if out of range.
+    pub fn get_fan_rpm(&self, fan_index: u8) -> Result<Option<u32>, HardwareControlError> {
+        get_fan_rpm(self, fan_index)
+    }
+
     fn ensure_available(&self, operation: &str) -> Result<(), HardwareControlError> {
         if self.is_available() {
             Ok(())
@@ -1144,7 +1149,8 @@ pub fn query_fan_status(
     let mut rpms = Vec::new();
     for index in 0..fan_count {
         match get_fan_rpm(conn, index) {
-            Ok(rpm) => rpms.push(rpm),
+            Ok(Some(rpm)) => rpms.push(rpm),
+            Ok(None) => tracing::debug!(fan = index, "fan RPM unavailable for index"),
             Err(e) => tracing::warn!(fan = index, error = %e, "fan RPM read failed"),
         }
     }
@@ -1248,21 +1254,37 @@ pub fn probe_thermal_profile_query(
 
 /// Read one fan's RPM.
 ///
+/// Returns:
+/// - `Ok(Some(rpm))` when the firmware returns a valid reading (including `0` when stopped).
+/// - `Ok(None)` when the requested fan index is out of range for the hardware.
+/// - `Err(...)` on transport failure, protocol error, or firmware rejection.
+///
 /// Victus S boards (`8A3D`) answer `0x2D` with one level byte per fan in 100 RPM
-/// units. Other boards use the generic `0x11` response, where RPM is the
-/// big-endian word at bytes 2..4.
-pub fn get_fan_rpm(conn: &HpWmiConnection, fan_index: u8) -> Result<u32, HardwareControlError> {
+/// units (index 0 = CPU fan, index 1 = GPU fan). Other boards use the generic `0x11`
+/// response, where RPM is the big-endian word at bytes 2..4.
+pub fn get_fan_rpm(
+    conn: &HpWmiConnection,
+    fan_index: u8,
+) -> Result<Option<u32>, HardwareControlError> {
     conn.ensure_available("read fan RPM")?;
+
+    let max_fans = conn
+        .fan_count
+        .get()
+        .copied()
+        .unwrap_or_else(|| if conn.is_victus_s() { 2 } else { MAX_FAN_COUNT });
+
+    if fan_index >= max_fans {
+        return Ok(None);
+    }
 
     if conn.is_victus_s() {
         let levels = get_victus_fan_levels(conn)?;
-        let level = levels.get(fan_index as usize).copied().ok_or_else(|| {
-            HardwareControlError::ProtocolError(format!(
-                "Victus S fan response covered {} fans; index {fan_index} is out of range",
-                levels.len()
-            ))
-        })?;
-        return Ok(victus_s::rpm_for_level(level));
+        if let Some(&level) = levels.get(fan_index as usize) {
+            return Ok(Some(victus_s::rpm_for_level(level)));
+        } else {
+            return Ok(None);
+        }
     }
 
     let payload = conn
@@ -1274,7 +1296,8 @@ pub fn get_fan_rpm(conn: &HpWmiConnection, fan_index: u8) -> Result<u32, Hardwar
             payload.len()
         )));
     }
-    Ok(u32::from(payload[2]) << 8 | u32::from(payload[3]))
+    let raw_rpm = u32::from(payload[2]) << 8 | u32::from(payload[3]);
+    Ok(Some(raw_rpm))
 }
 
 /// Read the raw Victus S per-fan level table (command `0x2D`).
@@ -1760,7 +1783,7 @@ mod tests {
             payload: vec![0x36, 0x3C, 0x0F, 0xA7],
         });
         let conn = HpWmiConnection::from_adapter(adapter);
-        assert_eq!(get_fan_rpm(&conn, 0).expect("rpm"), 4007);
+        assert_eq!(get_fan_rpm(&conn, 0).expect("rpm"), Some(4007));
     }
 
     #[test]
@@ -1772,7 +1795,7 @@ mod tests {
         adapter.expect_call(FakeResponse::Success { payload: levels });
 
         let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
-        assert_eq!(get_fan_rpm(&conn, 0).expect("fan 0"), 3900);
+        assert_eq!(get_fan_rpm(&conn, 0).expect("fan 0"), Some(3900));
         let call = &adapter.recorded_calls()[0];
         assert_eq!(call.command_type, victus_s::FAN_LEVEL_GET_QUERY);
         assert_eq!(call.out_size, 128);
