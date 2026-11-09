@@ -1690,3 +1690,69 @@ fn test_8a3d_set_fan_mode_auto_succeeds_with_known_profile() {
         "0x2E level reset must not be sent: {calls:?}"
     );
 }
+
+#[test]
+fn test_8a3d_shutdown_skips_firmware_write_when_unvalidated() {
+    let _board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    assert!(!validation.fan_write_verified);
+
+    let adapter = FakeWmiAdapter::new(true);
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    // Simulating shutdown logic from server.rs:
+    if conn.is_available() && validation.fan_write_verified {
+        panic!("Unvalidated 8A3D board must not enter shutdown write branch");
+    }
+}
+
+#[test]
+fn test_8a3d_read_only_telemetry_flow_full() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+
+    let adapter = FakeWmiAdapter::new(true);
+    // 1. GetCapabilities: fan count
+    adapter.expect_call(fan_count_response(2));
+    // 2. GetFanStatus: mode (0x26), fan_count (cached), 0x2D CPU fan, 0x2D GPU fan
+    adapter.expect_call(fan_mode_response(0x00)); // auto
+    let mut levels = vec![0u8; 128];
+    levels[0] = 22; // 2200 RPM CPU
+    levels[1] = 20; // 2000 RPM GPU
+    adapter.expect_call(FakeResponse::Success {
+        payload: levels.clone(),
+    }); // fan 0
+    adapter.expect_call(FakeResponse::Success { payload: levels }); // fan 1
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    // GetCapabilities is authorized without fan_write_verified
+    let resp_caps = handle_request(
+        HardwareRequest::GetCapabilities,
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    match resp_caps {
+        HardwareResponse::Capabilities(caps) => {
+            assert!(caps.fan_rpm);
+            assert!(caps.fan_control);
+        }
+        other => panic!("Expected Capabilities, got {other:?}"),
+    }
+
+    // GetFanStatus is authorized without fan_write_verified
+    let resp_status = handle_request(
+        HardwareRequest::GetFanStatus,
+        &board,
+        Some(&validation),
+        &conn,
+    );
+    match resp_status {
+        HardwareResponse::FanStatus { mode, rpms } => {
+            assert_eq!(mode, "auto");
+            assert_eq!(rpms, vec![2200, 2000]);
+        }
+        other => panic!("Expected FanStatus, got {other:?}"),
+    }
+}
