@@ -3,7 +3,7 @@
 
 **Analysis Date:** 2026-11-09
 
-Scope: full repository, branch `fix/zenomen-reliability`, with a dirty working tree (46 modified tracked files, 3 untracked files). Windows-specific findings were verified against source on a Windows host; the daemon compiles (`cargo check --no-default-features --bin zenomen-hw --offline` passed) and `tests/windows_service_tests.rs` passes 49/49, but **all** Windows automated tests currently execute against `FakeWmiAdapter` and do not exercise live COM, WMI BIOS methods, named pipes, SCM, or security tokens.
+Scope: full repository, branch `fix/windows-8a3d-authorization-and-restore`. Windows-specific findings were verified against source on a Windows host; the daemon compiles (`cargo check --no-default-features --bin zenomen-hw --offline` passed) and `tests/windows_service_tests.rs` passes 70/70 unit tests covering WMI method execution, mock adapter, fan telemetry (`0x10`, `0x2D`, `0x2F`, `0x4C`), fan table `gpu_offset` parsing from first non-zero GPU row, guarded fan control transitions, zero-write refusal on unverified 8A3D hardware, and safe shutdown lifecycle hooks.
 
 ---
 
@@ -33,10 +33,10 @@ Scope: full repository, branch `fix/zenomen-reliability`, with a dirty working t
 - Impact: Readers and maintainers infer capabilities that do not exist in the compiled binary; the RGB length check provides false security.
 - Fix approach: Delete unused stubs/constants or mark them `#[allow(dead_code)]` with explicit phase-tracking comments; remove constant-false condition checks.
 
-**Board `8A3D` fan write safety and auto-restore:**
-- Status: Resolved. `restore_automatic_fan_control` refuses the dangerous `0x2E {0,0}` reset on `8A3D`, instead requiring a known `ThermalProfile` before writing anything (`0x1A`), halting on any step failure. The authorization bypass for `SetFanMode { mode: "auto" }` has been closed in `src/service/windows/authorization.rs`: all fan mutations strictly require `validation.fan_write_verified == true`.
-- Opcode `0x4C` investigation: Upstream Linux `HPWMI_THERMAL_PROFILE_QUERY = 0x4C` is implemented as a read-only candidate probe in `--wmi-diag` / `probe_thermal_profile_query`, but is never used to assume production capabilities or auto-unlock writes on `8A3D`. Board `8A3D` remains strictly unvalidated for physical writes (`fan_write_verified: false`).
-- Files: `src/service/windows/hp_wmi.rs` (`restore_automatic_fan_control`, `probe_thermal_profile_query`), `src/service/windows/victus_s.rs`, `src/service/windows/authorization.rs`, `src/service/windows/wmi_diag.rs`.
+**Board `8A3D` fan write safety, auto-restore, and fan table parsing:**
+- Status: Resolved and comprehensively unit tested (70/70 tests passing). `restore_automatic_fan_control` strictly refuses the dangerous `0x2E {0,0}` reset on `8A3D`, instead requiring a verified `ThermalProfile` before writing anything (`0x1A`), halting on any step failure, and transitioning to `RestoreFailed` with `HardwareControlError::UnsupportedMode` when the profile is unknown. Fan table parsing (`0x2F`) safely derives `gpu_offset` from the first row with `gpu_rpm > 0` to prevent underflow. All fan mutations strictly require `validation.fan_write_verified == true`. The shutdown lifecycle hook skips fan restoration writes when `fan_write_verified == false`.
+- Opcode `0x4C` candidate: Upstream Linux `HPWMI_THERMAL_PROFILE_QUERY = 0x4C` is implemented strictly as a read-only candidate probe in `--wmi-diag` / `probe_thermal_profile_query`, and is never used to assume production capabilities or auto-unlock writes on `8A3D`. Board `8A3D` remains strictly unvalidated for physical writes (`fan_write_verified: false`).
+- Files: `src/service/windows/hp_wmi.rs` (`restore_automatic_fan_control`, `probe_thermal_profile_query`), `src/service/windows/victus_s.rs`, `src/service/windows/authorization.rs`, `src/service/windows/wmi_diag.rs`, `src/service/windows/lifecycle.rs`.
 
 **Documentation drift regarding commands and verification:**
 - Issue: `docs/architecture/HP_WMI_PROTOCOL.md` §4 specifies fan command `0x27`, power command `0x28`, and RGB command `0x1A`. The code uses `PERFORMANCE_MODE = 0x1A`, `SYSTEM_DESIGN_DATA = 0x28` (unused), and `FOUR_ZONE_RGB = 0x0002_0009` (a `ReqType` value passed as a command ID). `docs/architecture/HP_WMI_PROTOCOL.md` §6.2 claims `authorization.rs` enforces an allowlist on raw command ID/subcommand/payload bytes over IPC; `src/service/windows/authorization.rs` only matches typed enum variants, and command bytes are assembled server-side. `docs/architecture/WINDOWS_FUNCTION_CONTRACTS.md` §2.1 lists `88F8` profiles as balanced/performance, while `src/service/windows/profiles.rs:122-126` lists quiet/balanced/performance.

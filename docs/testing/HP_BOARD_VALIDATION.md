@@ -84,7 +84,7 @@ Never grant write authorization based solely on a recognized board ID without ph
 
 ### Current Status:
 - **Implemented:** Yes (`RealWmiAdapter`, `hpqBIntM`, `hpqBIOSInt128`).
-- **Unit Tested:** Yes (36 tests in `tests/windows_service_tests.rs`).
+- **Unit Tested:** Yes (70 tests in `tests/windows_service_tests.rs`).
 - **Physical Validation:** **PENDING EXECUTION BY OPERATOR ON TARGET HARDWARE**.
 - **Mutations Allowed:** **NONE** (Safely blocked by `resolve_board_validation("8A3D", "F.22")`).
 
@@ -106,7 +106,18 @@ if ($wmiClass) {
 }
 ```
 
-#### Step 2: Run ZenOmen Hardware Daemon in Console Mode
+#### Step 2: Run Built-In Non-Destructive WMI Diagnostic Probe
+From the build directory, run the read-only hardware diagnostic:
+```powershell
+.\target\debug\zenomen-hw.exe --wmi-diag
+```
+Observe the diagnostic report:
+- `FAN_COUNT` (`0x10`): Confirms detected fans (e.g. 2 fans).
+- `FAN_SPEEDS` (`0x2D`): Reads CPU Fan RPM and GPU Fan RPM.
+- `FAN_TABLE` (`0x2F`): Dumps fan table rows and verifies `gpu_offset` derived from the first non-zero GPU row.
+- `THERMAL_PROFILE_QUERY` (`0x4C`): Confirms read-only candidate probe status (returns status 3 on `8A3D`, proving EC register `0x95` is used instead).
+
+#### Step 3: Run ZenOmen Hardware Daemon in Console Mode
 From the build directory:
 ```powershell
 .\target\debug\zenomen-hw.exe --console
@@ -115,14 +126,6 @@ Observe standard output:
 - It should log the detected board `8A3D`, BIOS `F.22`.
 - It will log that `fan_write_verified = false`, `power_write_verified = false`.
 - It will verify the real WMI connection and start the named pipe server on `\\.\pipe\ZenOmen.Hardware.v1`.
-
-#### Step 3: Run Safe Hardware Query Tests
-From a separate PowerShell prompt:
-```powershell
-# Using the client test or pipe query:
-# Fan status reads firmware via CommandType 0x26 (Max Fan state).
-# Victus S telemetry reads CommandType 0x2D (100 RPM units) and 0x2F (fan table).
-```
 
 #### Step 4: Physical Fan Mutation Verification (When Approved)
 If the operator authorizes physical testing:

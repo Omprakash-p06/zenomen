@@ -192,7 +192,7 @@ Plans:
 - [ ] 07-02: GPU PDH multi-engine aggregation validation across AMD/Intel/NVIDIA and named-pipe connection resilience/leak testing
 
 **Wave 3: Physical HP WMI Discovery & Hardware Ratification**
-- [ ] 07-03: Real HP WMI COM driver integration (`src/service/windows/hp_wmi.rs` and `wmi_ffi.rs`) implemented and unit tested. Physical HP Victus 15-fb0xxx (board 8A3D, BIOS F.22) ratification procedure execution and audit evidence recording.
+- [x] 07-03: Real HP WMI COM driver integration (`src/service/windows/hp_wmi.rs` and `wmi_ffi.rs`) implemented, 8A3D contracts hardened (telemetry, fan table `gpu_offset`, EC thermal restoration guard), and unit tested (70/70 passing). Physical HP Victus 15-fb0xxx (board 8A3D, BIOS F.22) validation protocol documented and ready for operator execution.
 
 ## Progress
 
@@ -207,4 +207,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Desktop Integration | 3/3 | Complete | 2026-11-02 |
 | 5. Distribution | 3/3 | Complete | 2026-11-02 |
 | 6. Cross-Platform Release | 6/6 | Complete | 2026-11-07 |
-| 7. Windows Runtime Validation | 0/3 | Planning | - |
+| 7. Windows Runtime Validation | 1/3 | In Progress | - |

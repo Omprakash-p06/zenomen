@@ -1,20 +1,20 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 06
-status: complete
-last_updated: "2026-11-08T11:20:00.000Z"
-state_head: 6d109aa
+current_phase: 07
+status: in_progress
+last_updated: "2026-11-10T01:45:00.000Z"
+state_head: a7a455f
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 6
-  total_plans: 21
+  total_plans: 24
   completed_plans: 21
-  percent: 100
-last_activity: 2026-11-08
-current_phase_name: Unified Cross-Platform Release (Windows 10/11 + Linux Hardening)
-current_plan: 6
-stopped_at: Windows 10/11 Implementation Contracts Verified & Enforced
-last_activity_desc: Completed SCM service dispatcher, named pipe server listener, board mutation validation, PDH GPU collector, and tray notification window handle binding
+  percent: 88
+last_activity: 2026-11-10
+current_phase_name: Windows Native Runtime Validation and Security Hardening
+current_plan: 3
+stopped_at: Step 7 Documentation Synchronization and Physical Validation Readiness
+last_activity_desc: Hardened 8A3D fan control contracts, fan table parsing (gpu_offset), thermal profile restore refusal, and shutdown lifecycle across 6 commits
 ---
 
 # Project State
@@ -24,11 +24,12 @@ last_activity_desc: Completed SCM service dispatcher, named pipe server listener
 See: `.planning/PROJECT.md`
 
 **Core value:** Hardware control you can trust — every write verified by read-back, and a missing sensor reads "Unavailable" rather than a fabricated number.  
-**Current focus:** Phase 06 — Unified Cross-Platform Release (Windows 10/11 + Linux Hardening) (COMPLETED)
+**Current focus:** Phase 07 — Windows Native Runtime Validation and Security Hardening (IN PROGRESS)
 
 ## Current Position
 
-Current Phase: 06 (Unified Cross-Platform Release)
+Current Phase: 07 (Windows Native Runtime Validation and Security Hardening)
+Phase 07 Status: IN PROGRESS (8A3D contracts hardened, unit tests 70/70 passing, documentation sync in progress)
 Phase 06 Status: COMPLETE (All 6/6 Waves Complete, 14 Acceptance Criteria Verified)
 Phase 05 Status: COMPLETE
 Phase 04 Status: COMPLETE
@@ -78,3 +79,6 @@ Progress: [██████████] 100%
 - **Visibility-Gated Sampling:** Worker thread pauses sampling when UI is minimized to tray, yielding 0.0000% CPU when idle in tray (PERF-01, PERF-02).
 - **Retirement of Legacy Python CLI:** Retired `openomen`, `openomen.spec`, and `how-to-release.txt` after comprehensive 53-requirement parity verification (`docs/PARITY.md`) while preserving non-destructive migration for `~/.config/openomen/rgb/` (REL-08).
 - **Real HP WMI Firmware Driver Replaced Simulation:** Replaced simulated Windows fan control with genuine COM WMI (`ROOT\WMI`, `hpqBIntM`, `hpqBMtdx`). Removed process-local fan statics. Gated mutations behind mandatory pre-write and post-write firmware read-back (`VerificationFailed` on disagreement). Board `8A3D` (Victus 15-fb0xxx) is strictly blocked from writes until physical validation is executed on target hardware. Added automatic fan mode restoration to `Auto` on daemon shutdown.
+- **Board 8A3D Capability Separation & Safe Telemetry:** Board `8A3D` classified as `ThermalProfileSource::EmbeddedController` (register `0x95`). Fan telemetry bounds query by fan count (`0x10`) and samples per-fan speed (`0x2D`, 100 RPM units). Opcode `0x4C` is strictly diagnostic.
+- **Fan Table GPU Offset from Non-Zero Row:** Board `8A3D` fan table (`0x2F`) row 0 has `gpu_rpm == 0`. Deriving GPU offset from row 0 causes bogus negative deltas; `FanTable::gpu_offset` scans for the first row with `gpu_rpm > 0` and derives `gpu_offset = row.gpu_level - row.cpu_level`.
+- **Hardened Thermal Profile Restoration for 8A3D:** Never issues `0x2E {0,0}` on `8A3D` (which freezes fans at 0 RPM under load). Restoring automatic control requires a known active profile (`Option<ThermalProfile>`); if `None`, restoration is refused before sending any firmware write (`UnsupportedMode`, `RestoreFailed`). Shutdown hook safely skips writes on unverified hardware.

@@ -121,7 +121,7 @@ per-opcode payload contract exists for the supported boards, so `set_rgb_profile
 `UnsupportedMode` rather than sending an unvalidated command. Board `8A3D` advertises
 `rgb_zone_count = 0` and is gated by `BoardValidation` regardless.
 
-### 4.4 Victus S fan levels (board `8A3D` and siblings)
+### 4.4 Victus S fan levels & Fan Table parsing (board `8A3D` and siblings)
 
 The upstream driver maps board `8A3D` to `victus_s_board_params`, so this board must **not** be
 driven through generic OMEN fan logic.
@@ -133,6 +133,29 @@ driven through generic OMEN fan logic.
 | Victus S fan levels (write) | `0x2E` | 2 bytes `{cpu, gpu}` | none |
 | Fan table | `0x2F` | 4 bytes | 128 bytes: header `{num_fans, ?}` then `{cpu, gpu, noise}×3` rows |
 
+#### Fan Table & GPU Offset Derivation
+
+Victus S fan tables on boards such as `8A3D` expose entries where row 0 contains `gpu_rpm == 0`.
+Deriving a GPU level delta directly from row 0 would yield an invalid negative offset.
+In ZenOmen (`FanTable::gpu_offset`), the GPU level offset relative to CPU level is derived from the
+**first row with a non-zero GPU RPM**:
+$$\text{gpu\_offset} = \text{row.gpu\_level as } i16 - \text{row.cpu\_level as } i16$$
+For coupled manual level setting, `gpu_level_for_cpu` computes:
+$$\text{gpu\_level} = \text{cpu\_level.saturating\_add\_signed}(\text{gpu\_offset}).\text{clamp}(0, 255)$$
+If all rows report 0 GPU RPM or table is absent, `gpu_offset` is `None` and CPU and GPU levels are
+treated independently without synthetic offsets.
+
+#### Fan Control State Lifecycle
+
+Fan control transitions are tracked via `FanControlState`:
+- `Automatic`: Running default firmware/EC automatic curve.
+- `Applying`: Firmware write currently in flight.
+- `Manual`: Custom fan levels active.
+- `MaxFan`: Full-speed 100% cooling override active (`0x27 = 1`).
+- `Restoring`: Restoration sequence currently executing.
+- `RestoreFailed`: Restoration refused or failed; hardware remains in last safe state without corrupting firmware.
+- `Unsupported`: Board or firmware does not support fan control.
+
 Manual-level write ordering (upstream `hp_wmi_fan_speed_set`):
 
 1. `0x10` — refresh/arm the firmware's user-defined fan state.
@@ -140,10 +163,8 @@ Manual-level write ordering (upstream `hp_wmi_fan_speed_set`):
 3. `0x2E {cpu, gpu}` — both levels in one request, in fan-table RPM units (`0x00` = automatic).
 
 Firmware reverts to its automatic curve after ~120 s; the driver refreshes every 90 s.
-On Victus S boards other than `8A3D`, restoring Auto needs `0x27 = 0` **and** `0x2E {0, 0}`.
-Board `8A3D` must not use that second step — see §4.5.
-
-> Upstream applies no “GPU offset” from the fan table: CPU and GPU levels are independent.
+On Victus S boards other than `8A3D`, restoring Auto uses `0x27 = 0` **and** `0x2E {0, 0}`.
+Board `8A3D` must **never** use that second step — see §4.5.
 
 ### 4.5 Automatic cooling restoration on `8A3D` (EC thermal profile)
 
@@ -166,13 +187,13 @@ Upstream's replacement sequence for `PWM_MODE_AUTO` on this board:
 4. (upstream only) `0x22` — re-write GPU CTGP/PPAB bytes. ZenOmen never changes those, so it
    does not rewrite them.
 
-**ZenOmen policy** (`restore_automatic_fan_control`): the active profile is readable only
-through the EC, which a userland Windows process cannot access, so the call takes
-`Option<ThermalProfile>`:
+**ZenOmen policy** (`restore_automatic_fan_control`):
+The active profile on `8A3D` lives in EC register `0x95`, which a userland Windows process cannot
+access directly. Therefore, restoration takes `Option<ThermalProfile>`:
 
-- `Some(profile)` → the three-step sequence above; never `0x2E`.
-- `None` → `UnsupportedMode` with **no firmware write at all**. Refusing is safe (Max Fan stays
-  on); sending `0x2E {0,0}` is not.
+- `Some(profile)` → Executes the verified sequence: clear Max Fan (`0x27 = 0`), arm state (`0x10`), and re-apply active profile (`0x1A {0xFF, profile.value()}`). Never writes `0x2E`. If any step fails, the function halts immediately without writing subsequent opcodes.
+- `None` → Immediately transitions state to `RestoreFailed` and returns `HardwareControlError::UnsupportedMode` with **zero firmware writes**. Refusing is safe (Max Fan remains active); sending `0x2E {0,0}` or guessing a profile is unsafe.
+- **Shutdown Invariant:** On service shutdown, `restore_fan_mode_on_shutdown` checks `validation.fan_write_verified`. Since `fan_write_verified` is strictly `false` for unratified boards (`8A3D`), shutdown writes are safely skipped.
 
 ### 4.6 Opcode 0x4C Thermal Profile Query Candidate
 

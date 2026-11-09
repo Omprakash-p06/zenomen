@@ -79,12 +79,8 @@ goal: find_and_fix
     known profile it returns `UnsupportedMode` **before** any write. Other Victus S boards
     keep `0x2E {0,0}`; other boards keep `0x27 = 0`.
   - `read_performance_mode_from_firmware` no longer claims EC `0x59` for Victus S.
-- **Tests:** 3 unit tests in `victus_s.rs`; 7 in `tests/windows_service_tests.rs`
-  (refusal, profile re-apply, failed Max Fan clear, unknown profile writes nothing, other
-  Victus S boards, generic board, request-path reachability).
-- **Verification:** `cargo fmt --all -- --check` clean; `cargo clippy --all-targets
-  --all-features -- -D warnings` clean; `cargo test --all` 212 passed / 0 failed
-  (`windows_service_tests` 49/49).
+- **Tests:** unit tests in `victus_s.rs` covering fan table parsing and `gpu_offset` from first non-zero GPU row; 70 tests in `tests/windows_service_tests.rs` (refusal, profile re-apply, failed Max Fan clear, unknown profile writes nothing, other Victus S boards, generic board, request-path reachability, fan telemetry, fan table parsing, guarded fan control transitions, unverified write refusal, lifecycle shutdown skipping unverified writes).
+- **Verification:** `cargo fmt --all -- --check` clean; `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo test --all` 233 passed / 0 failed (`windows_service_tests` 70/70).
 - **Closure:**
   - `authorize_mutation` now strictly enforces `val.fan_write_verified` for ALL `SetFanMode` requests, including `"auto"`. Unvalidated boards (`8A3D`) return `HardwareControlError::UnsupportedMode` before making any adapter or firmware calls.
   - Opcode `0x4C` (`HPWMI_THERMAL_PROFILE_QUERY`) candidate probe added to `hp_wmi::probe_thermal_profile_query` and `--wmi-diag`. It remains diagnostic-only and never authorizes writes.
