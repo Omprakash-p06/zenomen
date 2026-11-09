@@ -158,6 +158,37 @@ fn test_board_profile_resolves_known_omen_boards() {
     assert_eq!(victus_amd.rgb_zone_count, 0);
     // has_max_fan is a spec claim — does NOT imply write validation.
     assert!(victus_amd.has_max_fan);
+    assert_eq!(
+        victus_amd.thermal_profile_source,
+        zenomen::service::windows::profiles::ThermalProfileSource::EmbeddedController
+    );
+    assert_eq!(
+        omen_amd.thermal_profile_source,
+        zenomen::service::windows::profiles::ThermalProfileSource::Wmi
+    );
+}
+
+#[test]
+fn test_board_capabilities_decouples_fan_and_thermal_profile() {
+    use zenomen::service::windows::profiles::ThermalProfileSource;
+
+    let victus_amd = resolve_board_profile("8A3D").expect("resolve 8A3D");
+    let caps = victus_amd.capabilities(None);
+
+    // 8A3D supports fan discovery, fan table, manual fan levels, and max fan
+    assert!(caps.fan_count_supported);
+    assert!(caps.fan_rpm_supported);
+    assert!(caps.fan_table_supported);
+    assert!(caps.manual_fan_control_supported);
+    assert!(caps.max_fan_supported);
+
+    // Thermal profile is EC-backed, not WMI
+    assert_eq!(caps.thermal_profile_source, ThermalProfileSource::EmbeddedController);
+
+    // Physical write verification remains strictly false without physical validation record
+    assert!(!caps.fan_write_verified);
+    assert!(!caps.power_write_verified);
+    assert!(!caps.rgb_write_verified);
 }
 
 #[test]

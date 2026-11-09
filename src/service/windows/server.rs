@@ -192,6 +192,7 @@ pub fn run_pipe_server(
                 fan_count: 2,
                 has_max_fan: false,
                 has_custom_curves: false,
+                thermal_profile_source: crate::service::windows::profiles::ThermalProfileSource::None,
                 supported_power_profiles: vec!["balanced".to_string()],
                 rgb_zone_count: 0,
             });

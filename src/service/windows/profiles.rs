@@ -18,6 +18,31 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Origin and access method for platform thermal/power profiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThermalProfileSource {
+    /// WMI-managed platform profile (`0x4C` / generic WMI `0x1A`).
+    Wmi,
+    /// EC register-backed profile (e.g. EC `0x95` on `8A3D`, EC `0x59` on OMEN v1).
+    EmbeddedController,
+    /// No thermal profile control supported.
+    None,
+}
+
+/// Comprehensive hardware capability model separating fan control from thermal profiles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoardCapabilities {
+    pub fan_count_supported: bool,
+    pub fan_rpm_supported: bool,
+    pub fan_table_supported: bool,
+    pub manual_fan_control_supported: bool,
+    pub max_fan_supported: bool,
+    pub thermal_profile_source: ThermalProfileSource,
+    pub fan_write_verified: bool,
+    pub power_write_verified: bool,
+    pub rgb_write_verified: bool,
+}
+
 /// Motherboard profile containing validated firmware capabilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoardProfile {
@@ -33,10 +58,37 @@ pub struct BoardProfile {
     pub has_max_fan: bool,
     /// Whether Victus S custom fan curve tables are supported.
     pub has_custom_curves: bool,
+    /// Platform thermal profile access method (independent from fan control).
+    pub thermal_profile_source: ThermalProfileSource,
     /// Supported ACPI platform power profiles (from spec; not runtime-verified).
     pub supported_power_profiles: Vec<String>,
     /// Number of addressable RGB lighting zones.
     pub rgb_zone_count: u8,
+}
+
+impl BoardProfile {
+    /// Derive granular capabilities combining board specs and physical verification state.
+    pub fn capabilities(&self, validation: Option<&BoardValidation>) -> BoardCapabilities {
+        let (fan_write, power_write, rgb_write) = match validation {
+            Some(v) => (
+                v.fan_write_verified,
+                v.power_write_verified,
+                v.rgb_write_verified,
+            ),
+            None => (false, false, false),
+        };
+        BoardCapabilities {
+            fan_count_supported: self.fan_count > 0,
+            fan_rpm_supported: self.fan_count > 0,
+            fan_table_supported: self.has_custom_curves,
+            manual_fan_control_supported: self.has_custom_curves,
+            max_fan_supported: self.has_max_fan,
+            thermal_profile_source: self.thermal_profile_source,
+            fan_write_verified: fan_write,
+            power_write_verified: power_write,
+            rgb_write_verified: rgb_write,
+        }
+    }
 }
 
 /// Hardware verification evidence record for HP OMEN / Victus motherboards (WIN-07).
@@ -119,6 +171,7 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             fan_count: 2,
             has_max_fan: true,
             has_custom_curves: false,
+            thermal_profile_source: ThermalProfileSource::Wmi,
             supported_power_profiles: vec![
                 "quiet".to_string(),
                 "balanced".to_string(),
@@ -132,6 +185,7 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             fan_count: 2,
             has_max_fan: true,
             has_custom_curves: false,
+            thermal_profile_source: ThermalProfileSource::Wmi,
             supported_power_profiles: vec![
                 "quiet".to_string(),
                 "balanced".to_string(),
@@ -152,6 +206,8 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             // with `fan_table = true` (0x2D/0x2E/0x2F fan-level protocol).
             // This is a protocol capability, not a write authorization.
             has_custom_curves: true,
+            // 8A3D active thermal profile lives in EC offset 0x95; WMI 0x4C is unsupported on this BIOS.
+            thermal_profile_source: ThermalProfileSource::EmbeddedController,
             supported_power_profiles: vec!["quiet".to_string(), "balanced".to_string()],
             rgb_zone_count: 0,
         }),
@@ -161,6 +217,7 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             fan_count: 2,
             has_max_fan: true,
             has_custom_curves: false,
+            thermal_profile_source: ThermalProfileSource::EmbeddedController,
             supported_power_profiles: vec!["quiet".to_string(), "balanced".to_string()],
             rgb_zone_count: 0,
         }),
@@ -170,6 +227,7 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             fan_count: 2,
             has_max_fan: true,
             has_custom_curves: false,
+            thermal_profile_source: ThermalProfileSource::Wmi,
             supported_power_profiles: vec![
                 "default".to_string(),
                 "performance".to_string(),

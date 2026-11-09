@@ -15,5 +15,5 @@ pub mod wmi_diag;
 pub mod wmi_ffi;
 
 pub use client::WindowsServiceClient;
-pub use profiles::{BoardProfile, resolve_board_profile};
+pub use profiles::{BoardCapabilities, BoardProfile, ThermalProfileSource, resolve_board_profile};
 pub use protocol::{HardwareRequest, HardwareResponse};
