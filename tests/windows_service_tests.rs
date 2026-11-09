@@ -1655,3 +1655,38 @@ fn test_guarded_8a3d_fan_control_blocks_writes_when_unvalidated() {
         "mutation must be rejected without fan_write_verified"
     );
 }
+
+#[test]
+fn test_8a3d_set_fan_mode_auto_succeeds_with_known_profile() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_mode_response(0x01)); // pre-read: max
+    adapter.expect_call(write_ack()); // 0x27 = 0 (clear max fan)
+    adapter.expect_call(fan_count_response(2)); // 0x10 arm
+    adapter.expect_call(write_ack()); // 0x1A {0xFF, balanced}
+    adapter.expect_call(fan_mode_response(0x00)); // post-read: auto
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let result = zenomen::service::windows::hp_wmi::set_fan_mode_with_profile(
+        &conn,
+        "auto",
+        Some(victus_s::ThermalProfile::Balanced),
+    )
+    .expect("set_fan_mode_with_profile");
+
+    assert_eq!(result, "auto");
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 5);
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_STATUS);
+    assert_eq!(calls[1].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[1].payload, vec![0, 0, 0, 0]);
+    assert_eq!(calls[2].command_type, commands::FAN_COUNT);
+    assert_eq!(calls[3].command_type, commands::PERFORMANCE_MODE);
+    assert_eq!(calls[3].payload, vec![0xFF, 0x00]);
+    assert_eq!(calls[4].command_type, commands::MAX_FAN_STATUS);
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.command_type != victus_s::FAN_LEVEL_SET_QUERY),
+        "0x2E level reset must not be sent: {calls:?}"
+    );
+}

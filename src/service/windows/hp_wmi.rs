@@ -1160,6 +1160,15 @@ pub fn query_fan_status(
 
 /// Set fan mode ("auto" or "max") with firmware read-back verification (WIN-04).
 pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, HardwareControlError> {
+    set_fan_mode_with_profile(conn, mode, None)
+}
+
+/// Set fan mode with optional explicit thermal profile for boards requiring EC profile restore.
+pub fn set_fan_mode_with_profile(
+    conn: &HpWmiConnection,
+    mode: &str,
+    active_profile: Option<victus_s::ThermalProfile>,
+) -> Result<String, HardwareControlError> {
     conn.ensure_available("set fan mode")?;
 
     let normalized = mode.trim().to_lowercase();
@@ -1180,7 +1189,7 @@ pub fn set_fan_mode(conn: &HpWmiConnection, mode: &str) -> Result<String, Hardwa
     if normalized == "max" {
         set_max_fan_state(conn, true)?;
     } else {
-        restore_automatic_fan_control(conn, None)?;
+        restore_automatic_fan_control(conn, active_profile)?;
     }
 
     std::thread::sleep(std::time::Duration::from_millis(150));
