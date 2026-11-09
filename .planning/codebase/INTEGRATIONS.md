@@ -106,31 +106,31 @@ Mutations to `pwm1_enable` and `platform_profile` are exclusively performed by t
 Direct hardware control on HP OMEN and Victus laptops under Windows interacts with the HP BIOS ACPI WMI provider (`src/service/windows/hp_wmi.rs`).
 
 - **Namespace:** `ROOT\WMI`
-- **Class:** `hpqBIntM`
-- **Method:** `hpqBMtdx`
+- **Classes:** `hpqBIntM` (method container), `hpqBDataIn` (input object), `hpqBDataOut4` / `hpqBDataOut128` / `hpqBDataOut1024` / `hpqBDataOut4096`
+- **Method:** `hpqBIOSInt0` / `hpqBIOSInt4` / `hpqBIOSInt128` / `hpqBIOSInt1024` / `hpqBIOSInt4096`, selected by output size
 - **BIOS GUID:** `5FB7F034-2C63-45E9-BE91-3D44E2C707E4`
 - **COM FFI Implementation:** Direct custom COM FFI (`src/service/windows/wmi_ffi.rs`) using `IWbemLocator`, `IWbemServices`, `IWbemClassObject`, and `IEnumWbemClassObject`. Avoids heavy third-party WMI crates.
-- **Protocol & Buffer Layout (HP BIOS Mailbox):**
-  - `Sign` parameter: `0x55434553` (ASCII `"SECU"` little-endian).
-  - `ReqType` parameter: `0x20008` (Read) / `0x20009` (Write).
-  - `InBuf` (140 bytes total):
-    `[cmd: u32 LE (0..4), subcmd: u32 LE (4..8), data_len: u32 LE (8..12), payload: [u8; 128] (12..140)]`
-  - `OutBuf` (≥136 bytes):
-    `[status: u32 LE (0..4), out_len: u32 LE (4..8), payload: [u8; 128] (8..136)]`
-  - **Firmware Status Codes (`FirmwareStatus`):**
-    - `0x00`: Success
-    - `0x01`: Unknown Command (unsupported on this motherboard)
-    - `0x02`: Invalid Input
-    - `0x04`: Access Denied (BIOS password lock)
-    - `0x05`: Busy (Embedded Controller transient busy state; triggered retry with 200 ms sleep)
-- **Supported Command IDs (`src/service/windows/hp_wmi.rs:58-66`):**
-  - `0x10`: Fan Count probe
-  - `0x11`: Fan Speeds query
-  - `0x1A`: ACPI Performance Profile get/set (`0x00` = Balanced, `0x01` = Performance, `0x02` = Cool)
-  - `0x26`: Max Fan Status query
-  - `0x27`: Max Fan Set (`0x00` = Auto, `0x01` = Max, `0x02` = Quiet)
-  - `0x28`: System Design Data
-  - `0x00020009`: Four-Zone Keyboard RGB color write (16-byte payload representing 4 x RGBA/RGB0 tuples)
+- **Protocol & Buffer Layout (`hpqBDataIn` envelope):**
+  - `Sign`: 4-byte `uint8[]` = `53 45 43 55` (ASCII `"SECU"`).
+  - `Command`: `uint32` = `0x20008` (`HPWMI_GM`) for **both** reads and writes. `0x20009` is the keyboard-lighting family and is never used as a fan command.
+  - `CommandType`: `uint32` opcode (`0x10`, `0x11`, `0x1A`, `0x26`, `0x27`, `0x2D`, `0x2E`, `0x2F`, …).
+  - `Size`: `uint32` meaningful payload length; `hpqBData` (variable-length `uint8[]`) is **omitted** when the length is 0.
+  - Output: `hpqBDataOut4/128/1024/4096` carrying `rwReturnCode` + `Data`.
+  - **Firmware Return Codes (`rwReturnCode`, upstream `hp_return_value`):**
+    - `0`: success (the only success value)
+    - `2`: wrong signature
+    - `3`: unknown command
+    - `4`: unknown command type
+    - `5`: invalid parameters
+- **Command IDs (`src/service/windows/hp_wmi.rs`):**
+  - `0x10`: Fan count (also arms the 120 s manual-fan window)
+  - `0x11`: Fan RPM (generic; `[2]<<8 | [3]`) — not used on Victus S
+  - `0x1A`: Thermal profile write, 2-byte payload `{0xFF, value}`; `0x00`/`0x01`/`0x03` = balanced/performance/quiet on `8A3D`
+  - `0x26`: Max Fan state read
+  - `0x27`: Max Fan set, 4-byte little-endian integer `0`/`1`
+  - `0x28`: System design data (unused)
+  - `0x2D` / `0x2E` / `0x2F`: Victus S fan speed (100 RPM units) / fan levels `{cpu, gpu}` / fan table
+  - `0x20009`: keyboard-lighting family — **not implemented**; `set_rgb_profile` returns `UnsupportedMode`
 - **Read-Back Verification:**
   - Mutations to fan mode (`set_fan_mode`) and performance mode (`set_performance_mode`) verify state by issuing a read query 150 ms after writing. If firmware returns discordant values, `HardwareControlError::VerificationFailed` is raised. No process-local statics are used.
 
@@ -151,6 +151,7 @@ Firmware mutation safety is enforced in `src/service/windows/profiles.rs` and `s
   - `88F8` is validated on BIOS `F.20` and `F.21`.
   - `8A24` is validated on BIOS `F.10`.
   - **Board `8A3D` (Victus 15-fb0xxx, BIOS F.22) is currently unvalidated:** Fan and power write operations are strictly blocked by authorization until physical validation is completed per `docs/testing/HP_BOARD_VALIDATION.md`. Safe read-only WMI probing is permitted.
+  - **`8A3D` thermal-profile interface:** the active profile is stored in EC register `0x95` (upstream patch 2026-10-24) and is not readable from userland Windows. Automatic cooling is restored by clearing Max Fan and re-applying the profile through `0x1A`; the generic `0x2E {0,0}` reset can leave the fans at 0 RPM under load and is refused by `restore_automatic_fan_control`.
 
 ---
 
@@ -270,9 +271,9 @@ Firmware mutation safety is enforced in `src/service/windows/profiles.rs` and `s
 | **GPU Dedicated VRAM** | AMD sysfs (`mem_info_vram_*`) / `nvidia-smi` | DXGI adapter description (`dedicated_video_memory`) |
 | **Thermal Telemetry** | hwmon sysfs (`/sys/class/hwmon/hwmon*`) | Unavailable (`(None, None)` returned; no ring-0 driver) |
 | **Fan Tachometer (RPM)** | hwmon sysfs (`fan*_input`) | Unavailable (empty vector returned; no ring-0 driver) |
-| **Fan Mode Control** | sysfs `pwm1_enable` via D-Bus daemon | HP WMI (`hpqBMtdx`, cmd `0x27`) via LocalSystem service |
-| **Power Profiles** | ACPI `platform_profile` via D-Bus daemon | HP WMI (`hpqBMtdx`, cmd `0x1A`) via LocalSystem service |
-| **Keyboard RGB Lighting** | hp-wmi sysfs driver variants | HP WMI (`hpqBMtdx`, cmd `0x00020009`) |
+| **Fan Mode Control** | sysfs `pwm1_enable` via D-Bus daemon | HP WMI (`hpqBIOSInt*`, cmd `0x26`/`0x27`; Victus S `0x2D`/`0x2E`/`0x2F`) via LocalSystem service |
+| **Power Profiles** | ACPI `platform_profile` via D-Bus daemon | HP WMI (`hpqBIOSInt*`, cmd `0x1A`) via LocalSystem service; `UnsupportedMode` on Victus S (profile is EC-only) |
+| **Keyboard RGB Lighting** | hp-wmi sysfs driver variants | Not implemented (`UnsupportedMode`; `0x20009` is a command family) |
 | **IPC Transport** | D-Bus system bus (`com.zenomen.Hardware1`) | Message-mode Named Pipe (`\\.\pipe\ZenOmen.Hardware.v1`) |
 | **Access Authorization** | Polkit (`com.zenomen.hardware.control`) | Named Pipe DACL + Active Console Session ID check |
 | **Desktop System Tray** | `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu` | Win32 `Shell_NotifyIconW` |

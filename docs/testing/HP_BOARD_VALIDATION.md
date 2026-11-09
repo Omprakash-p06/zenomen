@@ -40,8 +40,11 @@ Verify that `hpqBIntM` exists in the system ACPI namespace:
 
 ### Phase 3: Non-Destructive Query Verification
 Use the ZenOmen diagnostics tool or `zenomen-hw --query-board` to probe capabilities:
-1. Query Fan Mode: Confirm return status is `0x00` and returned byte is `0x00` (Auto) or `0x01` (Max).
-2. Query Thermal Profile: Confirm status `0x00` and returned profile is `0x00`, `0x01`, or `0x02`.
+1. Query Fan Mode (`CommandType 0x26`): Confirm firmware status `0` and returned byte `0x00` (Auto) or `0x01` (Max).
+   For board `8A3D`, also read the Victus S fan table (`0x2F`) and fan speed (`0x2D`) before any write.
+2. Query Thermal Profile: Confirm status `0` and a profile byte. Victus S values are `0x00`
+   (balanced), `0x01` (performance) and `0x03` (quiet); the active value lives in EC `0x95`
+   (`8A3D`) and is not readable from userland, so ZenOmen reports `UnsupportedMode`.
 3. Query 4-Zone Lighting: Check whether 16-byte color buffer is returned or if command returns `0x01` (Unsupported, indicative of single-zone or non-RGB chassis).
 
 ### Phase 4: Controlled Mutation Validation
@@ -51,6 +54,11 @@ Once query probing succeeds:
    - Expected Result: Audibly confirm fans spool up to 100% RPM. Telemetry should show increased RPM within 3 seconds.
    - Command: Set Fan Mode to `0x00` (Auto).
    - Expected Result: Fans spool down and return to silent curve.
+   - **`8A3D` warning:** do **not** validate Auto by observing `0x2E {0,0}` alone. Upstream
+     (2026-10-24) reports that this reset leaves the fans at 0 RPM under load on this board.
+     Confirm the restore re-applies the EC thermal profile (`0x1A`), then run idle-to-load
+     transitions for at least two minutes to prove the fans ramp. Until that is observed,
+     keep `fan_write_verified: false`.
 2. **Thermal Profile Test:**
    - Command: Set Profile to `Performance` (`0x01`).
    - Expected Result: Verify PL1 limit increase via HWINFO or CPU telemetry.
@@ -75,7 +83,7 @@ Never grant write authorization based solely on a recognized board ID without ph
 - **OS:** Windows 10/11 64-bit
 
 ### Current Status:
-- **Implemented:** Yes (`RealWmiAdapter`, `hpqBIntM`, `hpqBMtdx`).
+- **Implemented:** Yes (`RealWmiAdapter`, `hpqBIntM`, `hpqBIOSInt128`).
 - **Unit Tested:** Yes (36 tests in `tests/windows_service_tests.rs`).
 - **Physical Validation:** **PENDING EXECUTION BY OPERATOR ON TARGET HARDWARE**.
 - **Mutations Allowed:** **NONE** (Safely blocked by `resolve_board_validation("8A3D", "F.22")`).
@@ -112,7 +120,8 @@ Observe standard output:
 From a separate PowerShell prompt:
 ```powershell
 # Using the client test or pipe query:
-# Fan status query will read actual firmware via WMI command 0x27 subcmd 0x00.
+# Fan status reads firmware via CommandType 0x26 (Max Fan state).
+# Victus S telemetry reads CommandType 0x2D (100 RPM units) and 0x2F (fan table).
 ```
 
 #### Step 4: Physical Fan Mutation Verification (When Approved)
@@ -120,9 +129,11 @@ If the operator authorizes physical testing:
 1. Verify initial fan state is `auto`.
 2. Issue `SetFanMode("max")`.
 3. Check daemon log:
-   - Does `hpqBMtdx` return `0x00` (Success) or `0x01` (Unsupported)?
+   - Does the firmware return status `0` (success), `3` (unknown command), `4` (unknown command type), or `5` (invalid parameters)?
    - If `0x00`, does the post-write read-back confirm `max`?
    - Do the fans audibly spool up to 100% RPM within 3 seconds?
 4. Immediately issue `SetFanMode("auto")` or stop the daemon (daemon automatically restores `auto` on shutdown).
+   On `8A3D` the restore is refused unless the active EC thermal profile is known — check the
+   daemon log instead of assuming Auto was applied.
 5. Record whether the BIOS accepted or restricted manual fan control.
 6. If confirmed working, update `resolve_board_validation` in `src/service/windows/profiles.rs` to mark `fan_write_verified: true` for `8A3D` with BIOS `F.22`.

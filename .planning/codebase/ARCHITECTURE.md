@@ -107,7 +107,7 @@ ZenOmen operates strictly across two processes with divergent privilege levels a
 │ - Authorized hardware mutations only (Auto/Max fan, ACPI profiles, RGB)│
 │ - Verified writes: read-back verification after every hardware mutation│
 │ - Board profile authorization: rejects unvalidated motherboard models  │
-│ - Failsafe teardown: restores fan to Auto on graceful shutdown         │
+│ - Failsafe teardown: Auto restore only on write-validated boards       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -125,6 +125,7 @@ ZenOmen operates strictly across two processes with divergent privilege levels a
   - **Session Verification:** On every client connection, `verify_client_security` impersonates the client, retrieves their process token, and asserts that the client's token session ID matches `WTSGetActiveConsoleSessionId`. Network and secondary logon sessions are immediately rejected (`src/service/windows/security.rs`).
   - **Board Authorization:** All hardware mutations are validated against `BoardProfile` and `BoardValidation` catalogs (`src/service/windows/profiles.rs`, `src/service/windows/authorization.rs`). If a board ID (e.g., HP Victus 15 `8A3D`) has not been physically validated for a specific mutation, the service rejects the request with `HardwareControlError::BoardNotSupported`.
   - **Verified Mutations:** Hardware mutations are applied via HP BIOS WMI (`hpqBIntM`, GUID `5FB7F034-2C63-45e9-BE91-3D44E2C707E4`) and verified with read-back queries before returning success (`src/service/windows/hp_wmi.rs`).
+  - **Automatic cooling restoration:** `hp_wmi::restore_automatic_fan_control` clears Max Fan (`0x27 = 0`) and, on Victus S boards other than `8A3D`, sends the `0x2E {0,0}` sentinel. Board `8A3D` stores its active profile in EC `0x95`, and that sentinel can freeze its fans at 0 RPM under load (upstream patch 2026-10-24); the restore there re-applies the profile through `0x1A` instead and refuses with `UnsupportedMode` when the profile is unknown.
 
 ---
 
@@ -285,6 +286,7 @@ The GUI binary (`zenomen`) uses standard synchronous Rust threads (`std::thread`
                      - zenomen-hw verifies client console session ID
                      - authorize_mutation checks BoardProfile & BoardValidation
                      - hp_wmi::set_fan_mode writes BIOS WMI (hpqBIntM)
+                     - Auto restore: 0x27 = 0, then EC profile re-apply on 8A3D (never 0x2E)
                      - Performs read-back verification of fan state
         ▼
 [IPC Response Returned]

@@ -53,10 +53,16 @@ Boolean hpqBIOSInt128(
 
 - **Input Object Class (`hpqBDataIn`):**
   - `Sign`: `UInt8Array[4]` = `[0x53, 0x45, 0x43, 0x55]` (ASCII `"SECU"`)
-  - `Command`: `UInt32` = `0x20008` (Read/System Query) or `0x20009` (Write/Mutation)
-  - `CommandType`: `UInt32` = Opcode (`0x10` Fan Count, `0x11` Fan Speeds, `0x1A` Thermal Profile, `0x26` Max Fan Read, `0x27` Max Fan Set, `0x28` System Design Data)
-  - `Size`: `UInt32` = Byte length of data in `hpqBData`
-  - `hpqBData`: `UInt8Array` = Effective command payload bytes
+  - `Command`: `UInt32` = `0x20008` (`HPWMI_GM`) for **every** gaming/thermal/fan operation, read and write.
+    `0x20009` is the **keyboard-lighting** command family and is never a write flag.
+  - `CommandType`: `UInt32` = Opcode (`0x10` Fan Count, `0x11` Fan Speeds, `0x1A` Thermal Profile, `0x26` Max Fan Read, `0x27` Max Fan Set, `0x28` System Design Data, `0x2D`/`0x2E`/`0x2F` Victus S fan levels/table)
+  - `Size`: `UInt32` = Number of *meaningful* payload bytes in `hpqBData` (not the buffer size)
+  - `hpqBData`: `UInt8Array` = Effective command payload bytes. Omit the property entirely when `Size == 0`;
+    a zero-element SAFEARRAY is not equivalent and is rejected by the provider.
+
+- **Method selection:** by requested **output** size, mirroring `encode_outsize_for_pvsz()` in the Linux driver:
+  `0 → hpqBIOSInt0` (no `Data` property), `≤4 → hpqBIOSInt4`, `≤128 → hpqBIOSInt128`,
+  `≤1024 → hpqBIOSInt1024`, `≤4096 → hpqBIOSInt4096`.
 
 - **Output Object Class (`hpqBDataOut128`):**
   - `Sign`: `UInt8Array[4]` = Magic signature verification
@@ -69,49 +75,112 @@ Boolean hpqBIOSInt128(
 
 The firmware status is returned in the `rwReturnCode` property of `OutData`:
 
+These values are `enum hp_return_value` in the upstream Linux driver and are corroborated by
+independent reverse engineering. `0` is the only success value.
+
 | Return Code | Name | Description | ZenOmen Handling |
 |:---|:---|:---|:---|
 | `0` | Success | Operation accepted and confirmed. | Extract `Data` payload and proceed. |
-| `1` | Error | General firmware internal failure. | Map to `HardwareControlError::ProtocolError`. |
-| `2` | Invalid Parameters | Input payload size or values invalid. | Map to `HardwareControlError::InvalidParameter`. |
-| `3` | Unsupported Command | Feature code unsupported on this motherboard. | Map to `HardwareControlError::UnsupportedMode`. |
-| `4` | Access Denied | BIOS password locked or permission denied. | Map to `HardwareControlError::AuthorizationFailed`. |
-| `5` | Busy / Timeout | Embedded Controller (EC) busy or communication timeout. | Map to `HardwareControlError::ConnectionFailed`. |
+| `2` | Wrong Signature | The `Sign` field was not accepted as `SECU`; the envelope is malformed. | `HardwareControlError::ProtocolError`. |
+| `3` | Unknown Command | Command family not recognised (e.g. using `0x20009` for a fan write). | `HardwareControlError::UnsupportedMode`. |
+| `4` | Unknown Command Type | Opcode not supported on this board. | `HardwareControlError::UnsupportedMode`. |
+| `5` | Invalid Parameters | Payload size or values invalid for this opcode. | `HardwareControlError::InvalidParameter`. |
+| other | Undocumented | Not in the published enum. | `HardwareControlError::ProtocolError`. |
+
+> Do not map these onto generic COM errors. The failing layer (COM HRESULT vs. firmware status)
+> and the command type must both appear in the error message.
 
 ---
 
 ## 4. Hardware Feature Commands
 
 ### 4.1 Fan Mode Query & Mutation
-- **Command ID:** `0x27` (Thermal / Fan Management)
-- **Subcommands:**
-  - Read Current Fan Mode: `0x00`
-  - Set Fan Mode: `0x01`
-- **Payload Data Values:**
-  - `0x00`: Auto (Firmware managed fan curve)
-  - `0x01`: Max (Force 100% maximum fan RPM on all fans)
-  - `0x02`: Quiet (Silent thermal acoustic profile)
+- **Read current mode:** `CommandType = 0x26` (`HPWMI_FAN_SPEED_MAX_GET_QUERY`), 4-byte output, state in byte 0.
+- **Write mode:** `CommandType = 0x27` (`HPWMI_FAN_SPEED_MAX_SET_QUERY`), **4-byte little-endian integer**
+  (`[0,0,0,0]` = Auto, `[1,0,0,0]` = Max), zero-length output.
+- **Payload Data Values:** `0x00` = Auto (firmware-managed curve), `0x01` = Max (100% fan RPM).
+
+`0x27` is write-only. Reading with `0x27` returns no payload — a former defect in this codebase.
+There is no `0x02 = Quiet` fan mode in this protocol.
 
 ### 4.2 Power & Thermal Profiles
-- **Command ID:** `0x28` (Platform Power Delivery & TDP Governor)
-- **Subcommands:**
-  - Read Thermal Profile: `0x00`
-  - Write Thermal Profile: `0x01`
-- **Payload Profiles:**
-  - `0x00`: Balanced (Default OEM TDP & Fan table)
-  - `0x01`: Performance (Max PL1/PL2 power limits, aggressive fan ramp)
-  - `0x02`: Cool / Eco (Restricted PL1 limits, low skin temperatures)
+- **Command ID:** `0x1A` (`HPWMI_SET_PERFORMANCE_MODE`).
+- **Write payload:** two bytes `{0xFF, profile}` — the leading `0xFF` mirrors OMEN Gaming Hub and is
+  required by the upstream driver. Zero-length output.
+- **Profile values (Victus S):** `0x00` = Default/Balanced, `0x01` = Performance,
+  `0x03` = Quiet (board `8A3D` EC layout, 2026-10-24 patch). Legacy OMEN V0 boards use
+  `0x00`/`0x01`/`0x02` (Default/Performance/Cool).
+- **Read path:** Victus S boards expose the active profile through the EC, not WMI — `0x95`
+  for board `8A3D` (`victus_s_ec_thermal_params`), `0x59` where `omen_v1_thermal_params`
+  applies. ZenOmen therefore reports `UnsupportedMode` instead of guessing a value.
 
-### 4.3 4-Zone RGB Keyboard Lighting
-- **Command ID:** `0x1A` (OMEN Zone Lighting)
-- **Subcommands:**
-  - Read Zone Colors: `0x00`
-  - Write Zone Colors: `0x01`
-- **Write Payload (16 Bytes):**
-  - Bytes 0x00..0x03: Zone 1 (WASD) — `[Red, Green, Blue, 0x00]`
-  - Bytes 0x04..0x07: Zone 2 (Left) — `[Red, Green, Blue, 0x00]`
-  - Bytes 0x08..0x0B: Zone 3 (Center) — `[Red, Green, Blue, 0x00]`
-  - Bytes 0x0C..0x0F: Zone 4 (Right) — `[Red, Green, Blue, 0x00]`
+### 4.3 4-Zone RGB Keyboard Lighting — **not implemented**
+
+Lighting lives in the `CommandType` family `0x20009` (a *family*, not an opcode). No verified
+per-opcode payload contract exists for the supported boards, so `set_rgb_profile` returns
+`UnsupportedMode` rather than sending an unvalidated command. Board `8A3D` advertises
+`rgb_zone_count = 0` and is gated by `BoardValidation` regardless.
+
+### 4.4 Victus S fan levels (board `8A3D` and siblings)
+
+The upstream driver maps board `8A3D` to `victus_s_board_params`, so this board must **not** be
+driven through generic OMEN fan logic.
+
+| Operation | CommandType | Input | Output |
+|:---|:---|:---|:---|
+| Fan count (also arms manual state) | `0x10` | 1 byte (0) | 4 bytes, count = byte 0 |
+| Victus S fan speed | `0x2D` | 1 byte (0) | 128 bytes, RPM = `byte[fan] * 100` |
+| Victus S fan levels (write) | `0x2E` | 2 bytes `{cpu, gpu}` | none |
+| Fan table | `0x2F` | 4 bytes | 128 bytes: header `{num_fans, ?}` then `{cpu, gpu, noise}×3` rows |
+
+Manual-level write ordering (upstream `hp_wmi_fan_speed_set`):
+
+1. `0x10` — refresh/arm the firmware's user-defined fan state.
+2. `0x27 = 0` — Max Fan must be explicitly disabled.
+3. `0x2E {cpu, gpu}` — both levels in one request, in fan-table RPM units (`0x00` = automatic).
+
+Firmware reverts to its automatic curve after ~120 s; the driver refreshes every 90 s.
+On Victus S boards other than `8A3D`, restoring Auto needs `0x27 = 0` **and** `0x2E {0, 0}`.
+Board `8A3D` must not use that second step — see §4.5.
+
+> Upstream applies no “GPU offset” from the fan table: CPU and GPU levels are independent.
+
+### 4.5 Automatic cooling restoration on `8A3D` (EC thermal profile)
+
+Upstream patch 2026-10-24 (`lists.openwall.net/linux-kernel/2026/10/24/810`; posted, not
+merged in the vendored snapshot) routes board `8A3D` to `victus_s_ec_board_params` instead of
+`victus_s_board_params`:
+
+| Fact | Value |
+|:---|:---|
+| Active profile storage | EC register `0x95` (`HP_OMEN_EC_THERMAL_PROFILE_OFFSET`) |
+| Balanced / performance / quiet | `0x00` / `0x01` / `0x03` |
+| Profile write | `0x1A`, 2-byte payload `{0xFF, value}` (WMI, not an EC write) |
+| Hazard | `hp_wmi_fan_speed_max_reset()` (`0x27 = 0` + `0x2E {0,0}`) freezes the fans at 0 RPM under load |
+
+Upstream's replacement sequence for `PWM_MODE_AUTO` on this board:
+
+1. `0x27 = 0` — clear Max Fan.
+2. `0x10` — fan-count trigger (as `platform_profile_victus_s_set_ec` does).
+3. `0x1A {0xFF, active_profile}` — re-apply the active profile so the EC curves regain control.
+4. (upstream only) `0x22` — re-write GPU CTGP/PPAB bytes. ZenOmen never changes those, so it
+   does not rewrite them.
+
+**ZenOmen policy** (`restore_automatic_fan_control`): the active profile is readable only
+through the EC, which a userland Windows process cannot access, so the call takes
+`Option<ThermalProfile>`:
+
+- `Some(profile)` → the three-step sequence above; never `0x2E`.
+- `None` → `UnsupportedMode` with **no firmware write at all**. Refusing is safe (Max Fan stays
+  on); sending `0x2E {0,0}` is not.
+
+### 4.6 Opcode 0x4C Thermal Profile Query Candidate
+
+- **Opcode:** `0x4C` (`HPWMI_THERMAL_PROFILE_QUERY`).
+- **Command Family:** `HPWMI_GM` (`0x20008`) / `REQ_READ` (`0x01`).
+- **Upstream semantics:** Used in Linux `hp-wmi` (`thermal_profile_get()`) to read active thermal profile integers on platforms with ACPI-managed thermal modes.
+- **Diagnostics vs. Production:** Opcode `0x4C` is implemented strictly as a read-only probe in `zenomen-hw --wmi-diag` / `probe_thermal_profile_query`. It is **never** used to infer write authorization, and does not unlock mutations for board `8A3D`.
+- **Validation Constraint:** Motherboard `8A3D` remains strictly blocked from fan and power writes (`fan_write_verified: false`) until physical verification per `docs/testing/HP_BOARD_VALIDATION.md` is approved and completed.
 
 ---
 
@@ -140,8 +209,8 @@ ZenOmen matches the motherboard board ID (`BaseBoardProduct` via WMI `Win32_Base
 ## 6. Security & Invariant Enforcements
 
 1. **Restricted Execution Context:**
-   WMI BIOS method evaluation (`hpqBMtdx`) is restricted strictly to `zenomen-hw.exe` running as `NT AUTHORITY\LocalSystem`. The desktop UI executable (`zenomen.exe`) possesses no direct WMI invocation or elevated privileges.
-2. **Payload Fuzzing Defense:**
-   The hardware service enforces an allowlist check on command ID, subcommand, and payload bounds (`src/service/windows/authorization.rs`). Arbitrary byte streams passed over the named pipe IPC are rejected immediately.
+   WMI BIOS method evaluation (`hpqBIOSInt0/4/128/1024/4096` via `IWbemServices::ExecMethod`) is restricted strictly to `zenomen-hw.exe` running as `NT AUTHORITY\LocalSystem`. The desktop UI executable (`zenomen.exe`) possesses no direct WMI invocation or elevated privileges.
+2. **Payload Fuzzing & Mutation Gating Defense:**
+   The hardware service enforces board-specific validation flags (`BoardValidation`) in `src/service/windows/authorization.rs`. All mutation requests (`SetFanMode` for all modes including `"auto"`, `SetPowerProfile`, `ApplyPreset`, `ApplyRgbProfile`) are blocked unless the corresponding validation flag (`fan_write_verified`, `power_write_verified`, etc.) is explicitly true.
 3. **Firmware Recovery Invariant:**
-   On service shutdown (`SERVICE_CONTROL_SHUTDOWN` or service stop), fan modes are reset to `Auto` (`0x00`) to guarantee that cooling remains autonomous and safe when the service is stopped.
+   On clean service shutdown, `zenomen-hw.exe` attempts to restore fan control to `Auto` only if `fan_write_verified` is true, avoiding unvalidated mutations during shutdown. On `8A3D`, unverified writes are safely skipped.

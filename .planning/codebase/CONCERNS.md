@@ -3,7 +3,7 @@
 
 **Analysis Date:** 2026-11-09
 
-Scope: full repository, branch `fix/zenomen-reliability`, with a dirty working tree (46 modified tracked files, 3 untracked files). Windows-specific findings were verified against source on a Windows host; the daemon compiles (`cargo check --no-default-features --bin zenomen-hw --offline` passed) and `tests/windows_service_tests.rs` passes 36/36, but **all** Windows automated tests currently execute against `FakeWmiAdapter` and do not exercise live COM, WMI BIOS methods, named pipes, SCM, or security tokens.
+Scope: full repository, branch `fix/zenomen-reliability`, with a dirty working tree (46 modified tracked files, 3 untracked files). Windows-specific findings were verified against source on a Windows host; the daemon compiles (`cargo check --no-default-features --bin zenomen-hw --offline` passed) and `tests/windows_service_tests.rs` passes 49/49, but **all** Windows automated tests currently execute against `FakeWmiAdapter` and do not exercise live COM, WMI BIOS methods, named pipes, SCM, or security tokens.
 
 ---
 
@@ -28,10 +28,15 @@ Scope: full repository, branch `fix/zenomen-reliability`, with a dirty working t
 - Fix approach: Transition to the `windows` or `windows-sys` crate WMI/COM bindings already available; if the custom FFI layer is retained, commit `wmi_ffi.rs` and add compile-time layout assertions (`size_of::<VARIANT>() == 24`) and Windows-gated mock COM vtable tests.
 
 **Dead or unreachable command constants and sensor stubs:**
-- Issue: `commands::FAN_SPEEDS` (`0x11`), `commands::MAX_FAN_STATUS` (`0x26`), and `commands::SYSTEM_DESIGN_DATA` (`0x28`) are defined in `src/service/windows/hp_wmi.rs:58-66` but never used. Sensor queries `read_fan_rpms`, `read_fan_readings`, `read_temperature_readings`, `enumerate_pnp_devices`, `read_gpu_temperature`, and `sample_gpu_utilization` have no callers or return static empty data. `has_custom_curves` is always `false` and unread. `profile.zones.len() < 4` in `set_rgb_profile` is a constant-false check because `zones` is a fixed-size array `[RgbColor; 4]`.
+- Issue: `commands::SYSTEM_DESIGN_DATA` (`0x28`) is defined in `src/service/windows/hp_wmi.rs` but never used (`FAN_SPEEDS` and `MAX_FAN_STATUS` are now used by the telemetry path). Sensor queries `read_fan_rpms`, `read_fan_readings`, `read_temperature_readings`, `enumerate_pnp_devices`, `read_gpu_temperature`, and `sample_gpu_utilization` have no callers or return static empty data. `has_custom_curves` is now `true` for board `8A3D` (upstream `fan_table` capability) but is still never read.
 - Files: `src/service/windows/hp_wmi.rs:58-66`, `src/service/windows/hp_wmi.rs:882-887`, `src/hardware/windows/sensors.rs:43-69`, `src/hardware/windows/device.rs:171-174`, `src/hardware/windows/gpu.rs:324-333`, `src/service/windows/profiles.rs:35`.
 - Impact: Readers and maintainers infer capabilities that do not exist in the compiled binary; the RGB length check provides false security.
 - Fix approach: Delete unused stubs/constants or mark them `#[allow(dead_code)]` with explicit phase-tracking comments; remove constant-false condition checks.
+
+**Board `8A3D` fan write safety and auto-restore:**
+- Status: Resolved. `restore_automatic_fan_control` refuses the dangerous `0x2E {0,0}` reset on `8A3D`, instead requiring a known `ThermalProfile` before writing anything (`0x1A`), halting on any step failure. The authorization bypass for `SetFanMode { mode: "auto" }` has been closed in `src/service/windows/authorization.rs`: all fan mutations strictly require `validation.fan_write_verified == true`.
+- Opcode `0x4C` investigation: Upstream Linux `HPWMI_THERMAL_PROFILE_QUERY = 0x4C` is implemented as a read-only candidate probe in `--wmi-diag` / `probe_thermal_profile_query`, but is never used to assume production capabilities or auto-unlock writes on `8A3D`. Board `8A3D` remains strictly unvalidated for physical writes (`fan_write_verified: false`).
+- Files: `src/service/windows/hp_wmi.rs` (`restore_automatic_fan_control`, `probe_thermal_profile_query`), `src/service/windows/victus_s.rs`, `src/service/windows/authorization.rs`, `src/service/windows/wmi_diag.rs`.
 
 **Documentation drift regarding commands and verification:**
 - Issue: `docs/architecture/HP_WMI_PROTOCOL.md` §4 specifies fan command `0x27`, power command `0x28`, and RGB command `0x1A`. The code uses `PERFORMANCE_MODE = 0x1A`, `SYSTEM_DESIGN_DATA = 0x28` (unused), and `FOUR_ZONE_RGB = 0x0002_0009` (a `ReqType` value passed as a command ID). `docs/architecture/HP_WMI_PROTOCOL.md` §6.2 claims `authorization.rs` enforces an allowlist on raw command ID/subcommand/payload bytes over IPC; `src/service/windows/authorization.rs` only matches typed enum variants, and command bytes are assembled server-side. `docs/architecture/WINDOWS_FUNCTION_CONTRACTS.md` §2.1 lists `88F8` profiles as balanced/performance, while `src/service/windows/profiles.rs:122-126` lists quiet/balanced/performance.
