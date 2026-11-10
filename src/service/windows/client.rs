@@ -95,10 +95,8 @@ impl WindowsServiceClient {
                     }
 
                     let err = GetLastError();
-                    if err == ERROR_PIPE_BUSY
-                        || err == windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND
-                    {
-                        WaitNamedPipeW(pipe_name_wide.as_ptr(), 500);
+                    if err == ERROR_PIPE_BUSY {
+                        WaitNamedPipeW(pipe_name_wide.as_ptr(), 50);
                         continue;
                     }
                     break;
@@ -302,6 +300,11 @@ impl WindowsServiceClient {
 
     /// Query process memory telemetry from the privileged hardware service.
     pub fn get_service_memory(&self) -> Result<ProcessMemoryInfo, HardwareControlError> {
+        if !self.is_service_available() {
+            return Err(HardwareControlError::InterfaceMissing(
+                "Hardware service named pipe is offline".to_string(),
+            ));
+        }
         match self.send_request(HardwareRequest::GetServiceMemory) {
             Ok(HardwareResponse::ServiceMemory(info)) => Ok(info),
             Ok(HardwareResponse::Error(e)) => Err(HardwareControlError::IoError(e)),
