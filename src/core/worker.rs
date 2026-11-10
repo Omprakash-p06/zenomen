@@ -88,6 +88,24 @@ pub fn spawn_monitoring_worker(
                 ));
             }
 
+            // Initial dual-process memory sample (WIN-08 / MON-12)
+            let init_gui_mem = crate::hardware::process_memory::sample_current_process_memory(
+                crate::hardware::process_memory::ProcessRole::Gui,
+            );
+            let init_svc_mem = client.get_service_memory().unwrap_or_else(|_| {
+                crate::hardware::process_memory::ProcessMemoryInfo {
+                    role: Some(crate::hardware::process_memory::ProcessRole::HardwareService),
+                    available: false,
+                    ..Default::default()
+                }
+            });
+            let _ = event_sender.send(AppEvent::MemoryTelemetryUpdated(
+                crate::hardware::process_memory::ZenomenMemoryTelemetry::new(
+                    init_gui_mem,
+                    init_svc_mem,
+                ),
+            ));
+
             // 4. Deadline loop with channel timeout scheduling
             let (mut current_config, _) = crate::config::default_config_path()
                 .as_deref()
@@ -101,6 +119,7 @@ pub fn spawn_monitoring_worker(
             );
             let mut deadline = Instant::now() + sampling_interval;
             let mut status_check_tick: u32 = 0;
+            let mut memory_sample_tick: u32 = 0;
             let mut ui_visible = true;
 
             loop {
@@ -328,6 +347,30 @@ pub fn spawn_monitoring_worker(
                                 "Service disconnected".to_string(),
                             ));
                         }
+                    }
+
+                    // Sample dual-process memory every 2 ticks (~2s) (WIN-08 / MON-12)
+                    memory_sample_tick = memory_sample_tick.wrapping_add(1);
+                    if memory_sample_tick.is_multiple_of(2) {
+                        let gui_mem =
+                            crate::hardware::process_memory::sample_current_process_memory(
+                                crate::hardware::process_memory::ProcessRole::Gui,
+                            );
+                        let service_mem = client.get_service_memory().unwrap_or_else(|_| {
+                            crate::hardware::process_memory::ProcessMemoryInfo {
+                                role: Some(
+                                    crate::hardware::process_memory::ProcessRole::HardwareService,
+                                ),
+                                available: false,
+                                ..Default::default()
+                            }
+                        });
+                        let _ = event_sender.send(AppEvent::MemoryTelemetryUpdated(
+                            crate::hardware::process_memory::ZenomenMemoryTelemetry::new(
+                                gui_mem,
+                                service_mem,
+                            ),
+                        ));
                     }
 
                     deadline += sampling_interval;

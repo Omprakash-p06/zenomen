@@ -227,7 +227,11 @@ pub fn resolve_board_profile(board_id: &str) -> Option<BoardProfile> {
             has_custom_curves: true,
             // 8A3D active thermal profile lives in EC offset 0x95; WMI 0x4C is unsupported on this BIOS.
             thermal_profile_source: ThermalProfileSource::EmbeddedController,
-            supported_power_profiles: vec!["quiet".to_string(), "balanced".to_string()],
+            supported_power_profiles: vec![
+                "quiet".to_string(),
+                "balanced".to_string(),
+                "performance".to_string(),
+            ],
             rgb_zone_count: 0,
         }),
         "8A3E" => Some(BoardProfile {

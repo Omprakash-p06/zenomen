@@ -86,6 +86,7 @@ fn worker_thread_samples_and_dispatches_headlessly() {
             | AppEvent::PolkitStatusChanged(_)
             | AppEvent::FanModeChanged(_)
             | AppEvent::PowerProfileChanged(_)
+            | AppEvent::MemoryTelemetryUpdated(_)
     ) {
         event3 = event_receiver
             .recv_timeout(Duration::from_millis(500))

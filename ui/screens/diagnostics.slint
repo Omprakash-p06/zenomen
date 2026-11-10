@@ -30,6 +30,17 @@ export component Diagnostics inherits Rectangle {
     in property <[bool]> capability-flags: [];
     in property <[string]> capability-reasons: [];
 
+    in property <string> mem-gui-ws: "Unavailable";
+    in property <string> mem-gui-private: "Unavailable";
+    in property <string> mem-gui-peak: "Unavailable";
+    in property <string> mem-gui-pid: "";
+    in property <string> mem-service-ws: "Unavailable";
+    in property <string> mem-service-private: "Unavailable";
+    in property <string> mem-service-peak: "Unavailable";
+    in property <string> mem-service-pid: "";
+    in property <string> mem-zenomen-total: "Unavailable";
+    in property <bool> mem-service-online: false;
+
     callback export-diagnostics-clicked();
 
     background: transparent;
@@ -286,6 +297,223 @@ export component Diagnostics inherits Rectangle {
                         vertical-alignment: center;
                         overflow: elide;
                         horizontal-stretch: 4;
+                    }
+                }
+            }
+        }
+
+        SectionCard {
+            title: "Process Memory Telemetry (Working Set & Footprint)";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.sm;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Component";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        horizontal-stretch: 3;
+                    }
+                    Text {
+                        text: "PID";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 70px;
+                    }
+                    Text {
+                        text: "Working Set (Primary)";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 140px;
+                    }
+                    Text {
+                        text: "Private Bytes";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 120px;
+                    }
+                    Text {
+                        text: "Peak Working Set";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        width: 130px;
+                    }
+                }
+
+                // Row 1: GUI
+                Rectangle {
+                    height: 36px;
+                    background: ThemeColors.slate;
+
+                    HorizontalLayout {
+                        padding-left: ThemeMetrics.sm;
+                        padding-right: ThemeMetrics.sm;
+                        spacing: ThemeMetrics.md;
+                        alignment: center;
+
+                        Text {
+                            text: "ZenOmen GUI Application";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            horizontal-stretch: 3;
+                        }
+                        Text {
+                            text: root.mem-gui-pid != "" ? root.mem-gui-pid : "-";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 70px;
+                        }
+                        Text {
+                            text: root.mem-gui-ws;
+                            color: ThemeColors.gold;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        Text {
+                            text: root.mem-gui-private;
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 120px;
+                        }
+                        Text {
+                            text: root.mem-gui-peak;
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 130px;
+                        }
+                    }
+                }
+
+                // Row 2: Service
+                Rectangle {
+                    height: 36px;
+                    background: transparent;
+
+                    HorizontalLayout {
+                        padding-left: ThemeMetrics.sm;
+                        padding-right: ThemeMetrics.sm;
+                        spacing: ThemeMetrics.md;
+                        alignment: center;
+
+                        Text {
+                            text: "Hardware Control Service (zenomen-hw)";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            horizontal-stretch: 3;
+                        }
+                        Text {
+                            text: root.mem-service-pid != "" ? root.mem-service-pid : "-";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 70px;
+                        }
+                        Text {
+                            text: root.mem-service-ws;
+                            color: root.mem-service-online ? ThemeColors.gold : ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        Text {
+                            text: root.mem-service-private;
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 120px;
+                        }
+                        Text {
+                            text: root.mem-service-peak;
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 130px;
+                        }
+                    }
+                }
+
+                // Row 3: Combined
+                Rectangle {
+                    height: 36px;
+                    background: ThemeColors.slate;
+
+                    HorizontalLayout {
+                        padding-left: ThemeMetrics.sm;
+                        padding-right: ThemeMetrics.sm;
+                        spacing: ThemeMetrics.md;
+                        alignment: center;
+
+                        Text {
+                            text: "Combined ZenOmen Footprint";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            horizontal-stretch: 3;
+                        }
+                        Text {
+                            text: "-";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 70px;
+                        }
+                        Text {
+                            text: root.mem-zenomen-total;
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        Text {
+                            text: "-";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 120px;
+                        }
+                        Text {
+                            text: "-";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-mono;
+                            font-size: ThemeTypography.body;
+                            vertical-alignment: center;
+                            width: 130px;
+                        }
                     }
                 }
             }

@@ -61,13 +61,7 @@ pub fn handle_request(
         },
 
         HardwareRequest::GetPowerProfiles => {
-            if board.thermal_profile_source
-                == crate::service::windows::profiles::ThermalProfileSource::EmbeddedController
-            {
-                HardwareResponse::PowerProfiles(Vec::new())
-            } else {
-                HardwareResponse::PowerProfiles(board.supported_power_profiles.clone())
-            }
+            HardwareResponse::PowerProfiles(board.supported_power_profiles.clone())
         }
 
         HardwareRequest::GetPowerProfile => {
@@ -97,8 +91,8 @@ pub fn handle_request(
         }
 
         HardwareRequest::SetPowerProfile { profile } => {
-            match hp_wmi::set_performance_mode(conn, &profile) {
-                Ok(confirmed) => HardwareResponse::PowerProfileSet(confirmed),
+            match hp_wmi::set_power_profile(conn, &profile) {
+                Ok(res) => HardwareResponse::PowerProfileSet(res),
                 Err(HardwareControlError::VerificationFailed {
                     target,
                     actual,
@@ -114,7 +108,7 @@ pub fn handle_request(
         HardwareRequest::ApplyPreset { preset } => {
             let normalized = preset.trim().to_lowercase();
             let (target_power, target_fan) = match normalized.as_str() {
-                "quiet" => ("cool", "auto"),
+                "quiet" => ("quiet", "auto"),
                 "balanced" => ("balanced", "auto"),
                 "gaming" => ("performance", "max"),
                 other => {
@@ -122,7 +116,7 @@ pub fn handle_request(
                 }
             };
 
-            let p_res = hp_wmi::set_performance_mode(conn, target_power);
+            let p_res = hp_wmi::set_power_profile(conn, target_power);
             let f_res = hp_wmi::set_fan_mode(conn, target_fan);
 
             let power_applied = p_res.is_ok();
@@ -130,7 +124,16 @@ pub fn handle_request(
             let partial_success = power_applied ^ fan_applied;
 
             let message = if power_applied && fan_applied {
-                format!("Applied combined preset '{normalized}' — confirmed by firmware read-back")
+                let p = p_res.as_ref().unwrap();
+                if p.status == crate::service::types::PowerProfileStatus::ProfileUnverified {
+                    format!(
+                        "Applied combined preset '{normalized}' (power accepted unverified, fan confirmed by firmware read-back)"
+                    )
+                } else {
+                    format!(
+                        "Applied combined preset '{normalized}' — confirmed by firmware read-back"
+                    )
+                }
             } else if power_applied {
                 format!(
                     "Power profile applied but fan write failed: {}",
@@ -153,12 +156,19 @@ pub fn handle_request(
             HardwareResponse::PresetApplied(PresetResult {
                 preset_name: normalized,
                 power_applied,
-                confirmed_power_profile: p_res.ok(),
+                confirmed_power_profile: p_res.ok().map(|p| p.profile),
                 fan_applied,
                 confirmed_fan_mode: f_res.ok(),
                 partial_success,
                 message,
             })
+        }
+
+        HardwareRequest::GetServiceMemory => {
+            let info = crate::hardware::process_memory::sample_current_process_memory(
+                crate::hardware::process_memory::ProcessRole::HardwareService,
+            );
+            HardwareResponse::ServiceMemory(info)
         }
 
         HardwareRequest::ApplyRgbProfile { profile_json } => {

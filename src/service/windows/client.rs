@@ -1,8 +1,9 @@
 //! Named pipe client for the unprivileged desktop GUI (WIN-03).
 
+use crate::hardware::ProcessMemoryInfo;
 use crate::rgb::schema::RgbProfile;
 use crate::service::client::ServiceConnectionStatus;
-use crate::service::types::{HardwareControlError, PresetResult};
+use crate::service::types::{HardwareControlError, PowerProfileResult, PresetResult};
 #[cfg(windows)]
 use crate::service::windows::pipe::PIPE_NAME;
 use crate::service::windows::protocol::{HardwareRequest, HardwareResponse};
@@ -246,7 +247,10 @@ impl WindowsServiceClient {
     }
 
     /// Set ACPI platform performance profile.
-    pub fn set_power_profile(&self, profile: &str) -> Result<String, HardwareControlError> {
+    pub fn set_power_profile(
+        &self,
+        profile: &str,
+    ) -> Result<PowerProfileResult, HardwareControlError> {
         tracing::info!(
             function = "WindowsServiceClient::set_power_profile",
             profile,
@@ -258,7 +262,8 @@ impl WindowsServiceClient {
             Ok(HardwareResponse::PowerProfileSet(p)) => {
                 tracing::info!(
                     function = "WindowsServiceClient::set_power_profile",
-                    profile = %p,
+                    profile = %p.profile,
+                    status = ?p.status,
                     "power profile updated successfully"
                 );
                 Ok(p)
@@ -292,6 +297,18 @@ impl WindowsServiceClient {
                 );
                 Err(e)
             }
+        }
+    }
+
+    /// Query process memory telemetry from the privileged hardware service.
+    pub fn get_service_memory(&self) -> Result<ProcessMemoryInfo, HardwareControlError> {
+        match self.send_request(HardwareRequest::GetServiceMemory) {
+            Ok(HardwareResponse::ServiceMemory(info)) => Ok(info),
+            Ok(HardwareResponse::Error(e)) => Err(HardwareControlError::IoError(e)),
+            Ok(other) => Err(HardwareControlError::ProtocolError(format!(
+                "Unexpected response for GetServiceMemory: {other:?}"
+            ))),
+            Err(e) => Err(e),
         }
     }
 

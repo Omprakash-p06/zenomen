@@ -1884,7 +1884,7 @@ fn test_8a3d_thermal_profile_separation_in_server() {
     let adapter = FakeWmiAdapter::new(true);
     let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
 
-    // GetPowerProfiles on 8A3D must return empty vec (no fake profiles)
+    // GetPowerProfiles on 8A3D returns documented supported profiles
     let resp = handle_request(
         HardwareRequest::GetPowerProfiles,
         &board,
@@ -1893,9 +1893,9 @@ fn test_8a3d_thermal_profile_separation_in_server() {
     );
     match resp {
         HardwareResponse::PowerProfiles(profiles) => {
-            assert!(
-                profiles.is_empty(),
-                "EC-managed boards must not expose fake power profiles"
+            assert_eq!(
+                profiles, board.supported_power_profiles,
+                "8A3D must expose supported power profiles"
             );
         }
         other => panic!("Expected PowerProfiles, got {other:?}"),
@@ -2843,4 +2843,140 @@ fn test_daemon_and_gui_report_consistent_capabilities() {
         decoded_caps.thermal_profile_source,
         caps.thermal_profile_source
     );
+}
+
+#[test]
+fn test_8a3d_power_profile_write_returns_profile_unverified() {
+    use zenomen::service::types::PowerProfileStatus;
+
+    let adapter = FakeWmiAdapter::new(true);
+    // Expect 0x1A write for balanced [0xFF, 0x00]
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    let res = zenomen::service::windows::hp_wmi::set_power_profile(&conn, "balanced")
+        .expect("set_power_profile on 8A3D");
+
+    assert_eq!(res.profile, "balanced");
+    assert_eq!(res.status, PowerProfileStatus::ProfileUnverified);
+    assert!(res.readback_profile.is_none());
+    assert!(res.message.contains("readback unavailable"));
+}
+
+#[test]
+fn test_generic_omen_power_profile_write_returns_profile_verified() {
+    use zenomen::service::types::PowerProfileStatus;
+
+    let adapter = FakeWmiAdapter::new(true);
+    // 1. Initial read: currently balanced (0x00)
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x00],
+    });
+    // 2. Write performance [0xFF, 0x01]
+    adapter.expect_call(write_ack());
+    // 3. Post-write read: returns performance (0x01)
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x01],
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "88F8");
+
+    let res = zenomen::service::windows::hp_wmi::set_power_profile(&conn, "performance")
+        .expect("set_power_profile on OMEN");
+
+    assert_eq!(res.profile, "performance");
+    assert_eq!(res.status, PowerProfileStatus::ProfileVerified);
+    assert_eq!(res.readback_profile.as_deref(), Some("performance"));
+    assert!(res.message.contains("verified via firmware read-back"));
+}
+
+#[test]
+fn test_get_service_memory_protocol_and_server_handler() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    let adapter = FakeWmiAdapter::new(true);
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    let resp = handle_request(
+        HardwareRequest::GetServiceMemory,
+        &board,
+        Some(&validation),
+        &conn,
+    );
+
+    match resp {
+        HardwareResponse::ServiceMemory(info) => {
+            assert_eq!(
+                info.role,
+                Some(zenomen::hardware::ProcessRole::HardwareService)
+            );
+            assert_eq!(info.pid, std::process::id());
+        }
+        other => panic!("Expected ServiceMemory response, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_zenomen_memory_telemetry_freshness_and_offline() {
+    use zenomen::hardware::{ProcessMemoryInfo, ProcessRole, ZenomenMemoryTelemetry};
+
+    let now = 1000u64;
+
+    let gui_ok = ProcessMemoryInfo {
+        role: Some(ProcessRole::Gui),
+        pid: 1234,
+        working_set_bytes: 30 * 1024 * 1024,
+        private_bytes: 25 * 1024 * 1024,
+        peak_working_set_bytes: 35 * 1024 * 1024,
+        timestamp_secs: now,
+        available: true,
+    };
+
+    let svc_ok = ProcessMemoryInfo {
+        role: Some(ProcessRole::HardwareService),
+        pid: 5678,
+        working_set_bytes: 8 * 1024 * 1024,
+        private_bytes: 6 * 1024 * 1024,
+        peak_working_set_bytes: 10 * 1024 * 1024,
+        timestamp_secs: now + 2, // within 10s window
+        available: true,
+    };
+
+    let telemetry = ZenomenMemoryTelemetry::new(gui_ok.clone(), svc_ok);
+    assert!(telemetry.is_service_available);
+    assert_eq!(telemetry.combined_working_set_bytes, Some(38 * 1024 * 1024));
+    assert_eq!(telemetry.combined_private_bytes, Some(31 * 1024 * 1024));
+    assert_eq!(
+        telemetry.combined_peak_working_set_bytes,
+        Some(45 * 1024 * 1024)
+    );
+    assert_eq!(telemetry.total_working_set_str(), "38.0 MB");
+
+    // Service offline case (available: false)
+    let svc_offline = ProcessMemoryInfo {
+        role: Some(ProcessRole::HardwareService),
+        available: false,
+        ..Default::default()
+    };
+    let telemetry_offline = ZenomenMemoryTelemetry::new(gui_ok.clone(), svc_offline);
+    assert!(!telemetry_offline.is_service_available);
+    assert_eq!(telemetry_offline.combined_working_set_bytes, None);
+    assert_eq!(
+        telemetry_offline.total_working_set_str(),
+        "30.0 MB (App only)"
+    );
+
+    // Stale service case (time diff > 10s)
+    let svc_stale = ProcessMemoryInfo {
+        role: Some(ProcessRole::HardwareService),
+        pid: 5678,
+        working_set_bytes: 8 * 1024 * 1024,
+        private_bytes: 6 * 1024 * 1024,
+        peak_working_set_bytes: 10 * 1024 * 1024,
+        timestamp_secs: now + 30, // 30s diff
+        available: true,
+    };
+    let telemetry_stale = ZenomenMemoryTelemetry::new(gui_ok, svc_stale);
+    assert_eq!(telemetry_stale.combined_working_set_bytes, None);
 }

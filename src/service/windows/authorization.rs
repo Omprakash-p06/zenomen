@@ -22,7 +22,8 @@ pub fn authorize_mutation(
         HardwareRequest::GetCapabilities
         | HardwareRequest::GetFanStatus
         | HardwareRequest::GetPowerProfiles
-        | HardwareRequest::GetPowerProfile => {
+        | HardwareRequest::GetPowerProfile
+        | HardwareRequest::GetServiceMemory => {
             // Read-only queries are always permitted
             Ok(())
         }

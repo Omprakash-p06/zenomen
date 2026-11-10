@@ -42,7 +42,7 @@ use std::sync::OnceLock;
 
 use crate::hardware::HardwareCapabilities;
 use crate::rgb::schema::RgbProfile;
-use crate::service::types::HardwareControlError;
+use crate::service::types::{HardwareControlError, PowerProfileResult, PowerProfileStatus};
 use crate::service::windows::victus_s::{self, FanTable};
 
 // ─────────────────────────── Public constants ──────────────────────────────
@@ -1013,7 +1013,7 @@ impl WmiAdapter for std::sync::Arc<FakeWmiAdapter> {
 
 /// An active handle to the HP BIOS WMI firmware interface.
 pub struct HpWmiConnection {
-    adapter: Box<dyn WmiAdapter>,
+    pub(crate) adapter: Box<dyn WmiAdapter>,
     board_id: Option<String>,
     /// Cached fan count. Command `0x10` re-arms the firmware's 120 s manual-fan
     /// window, so telemetry must not send it on every poll.
@@ -1566,50 +1566,93 @@ pub fn query_power_profile(conn: &HpWmiConnection) -> Result<String, HardwareCon
     read_performance_mode_from_firmware(conn)
 }
 
-/// Set ACPI performance profile with firmware read-back verification.
+/// Set ACPI platform performance profile with firmware read-back verification when supported.
+///
+/// On boards with WMI readback (e.g. OMEN), verifies active mode after 150ms.
+/// On boards where the thermal profile is EC-managed (e.g. 8A3D), returns `PowerProfileStatus::ProfileUnverified`
+/// because EC register 0x95 is inaccessible from userland and WMI read opcode 0x4C is unsupported.
+pub fn set_power_profile(
+    conn: &HpWmiConnection,
+    profile: &str,
+) -> Result<PowerProfileResult, HardwareControlError> {
+    conn.ensure_available("set power profile")?;
+
+    let normalized = profile.trim().to_lowercase();
+
+    if conn.is_victus_s() {
+        let thermal_profile = victus_s::ThermalProfile::from_name(&normalized).ok_or_else(|| {
+            HardwareControlError::InvalidParameter(format!(
+                "Unsupported Victus S thermal profile '{normalized}'. Supported: balanced, performance, quiet"
+            ))
+        })?;
+
+        let payload = victus_s::thermal_profile_payload(thermal_profile);
+        conn.adapter
+            .bios_call(HPWMI_GM, commands::PERFORMANCE_MODE, &payload, 0)?;
+
+        Ok(PowerProfileResult {
+            profile: thermal_profile.as_str().to_string(),
+            status: PowerProfileStatus::ProfileUnverified,
+            readback_profile: None,
+            message: "Command accepted — readback unavailable (EC register 0x95)".to_string(),
+        })
+    } else {
+        let target_byte: u8 = match normalized.as_str() {
+            "default" | "balanced" => 0x00,
+            "performance" => 0x01,
+            "cool" | "quiet" | "eco" => 0x02,
+            other => {
+                return Err(HardwareControlError::InvalidParameter(format!(
+                    "Unsupported performance profile '{other}'"
+                )));
+            }
+        };
+
+        let before = read_performance_mode_from_firmware(conn)?;
+        if before == normalized {
+            return Ok(PowerProfileResult {
+                profile: normalized.clone(),
+                status: PowerProfileStatus::ProfileVerified,
+                readback_profile: Some(before),
+                message: format!("Profile '{normalized}' already active"),
+            });
+        }
+
+        // Upstream `omen_thermal_profile_set()` sends two bytes: a leading 0xFF
+        // (matching OMEN Gaming Hub) followed by the profile value.
+        conn.adapter.bios_call(
+            HPWMI_GM,
+            commands::PERFORMANCE_MODE,
+            &[0xFF, target_byte],
+            0,
+        )?;
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let after = read_performance_mode_from_firmware(conn)?;
+        if after != normalized {
+            return Err(HardwareControlError::VerificationFailed {
+                target: normalized.clone(),
+                actual: after,
+                retries: 1,
+            });
+        }
+
+        Ok(PowerProfileResult {
+            profile: normalized.clone(),
+            status: PowerProfileStatus::ProfileVerified,
+            readback_profile: Some(after),
+            message: format!("Profile '{normalized}' applied and verified via firmware read-back"),
+        })
+    }
+}
+
+/// Backwards-compatible wrapper around `set_power_profile`.
 pub fn set_performance_mode(
     conn: &HpWmiConnection,
     profile: &str,
 ) -> Result<String, HardwareControlError> {
-    conn.ensure_available("set performance mode")?;
-
-    let normalized = profile.trim().to_lowercase();
-    let target_byte: u8 = match normalized.as_str() {
-        "default" | "balanced" => 0x00,
-        "performance" => 0x01,
-        "cool" | "quiet" | "eco" => 0x02,
-        other => {
-            return Err(HardwareControlError::InvalidParameter(format!(
-                "Unsupported performance profile '{other}'"
-            )));
-        }
-    };
-
-    let before = read_performance_mode_from_firmware(conn)?;
-    if before == normalized {
-        return Ok(normalized);
-    }
-
-    // Upstream `omen_thermal_profile_set()` sends two bytes: a leading 0xFF
-    // (matching OMEN Gaming Hub) followed by the profile value.
-    conn.adapter.bios_call(
-        HPWMI_GM,
-        commands::PERFORMANCE_MODE,
-        &[0xFF, target_byte],
-        0,
-    )?;
-
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    let after = read_performance_mode_from_firmware(conn)?;
-    if after != normalized {
-        return Err(HardwareControlError::VerificationFailed {
-            target: normalized.clone(),
-            actual: after,
-            retries: 1,
-        });
-    }
-
-    Ok(normalized)
+    let result = set_power_profile(conn, profile)?;
+    Ok(result.profile)
 }
 
 /// Report that 4-zone keyboard lighting is not implemented.

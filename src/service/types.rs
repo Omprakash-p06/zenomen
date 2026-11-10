@@ -142,6 +142,83 @@ impl PresetResult {
     }
 }
 
+/// Typed status of a power/thermal profile change operation (PWR-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerProfileStatus {
+    /// Firmware or WMI transport rejected the command.
+    CommandRejected,
+    /// Command accepted by firmware via WMI transport.
+    CommandAccepted,
+    /// Profile transition verified through independent hardware read-back.
+    ProfileVerified,
+    /// Command accepted by firmware, but independent read-back is unavailable on this board (e.g. 8A3D EC-backed).
+    ProfileUnverified,
+}
+
+impl PowerProfileStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CommandRejected => "command_rejected",
+            Self::CommandAccepted => "command_accepted",
+            Self::ProfileVerified => "profile_verified",
+            Self::ProfileUnverified => "profile_unverified",
+        }
+    }
+
+    pub fn is_accepted(self) -> bool {
+        matches!(
+            self,
+            Self::CommandAccepted | Self::ProfileVerified | Self::ProfileUnverified
+        )
+    }
+
+    pub fn is_readback_verified(self) -> bool {
+        matches!(self, Self::ProfileVerified)
+    }
+}
+
+/// Detailed result of setting a power profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PowerProfileResult {
+    /// Name of the profile targeted (e.g., "balanced", "performance", "quiet").
+    pub profile: String,
+    /// Verification and firmware status.
+    pub status: PowerProfileStatus,
+    /// Independent read-back confirmation from hardware, if available.
+    pub readback_profile: Option<String>,
+    /// Human-readable explanation of operation outcome.
+    pub message: String,
+}
+
+impl PowerProfileResult {
+    pub fn verified(profile: impl Into<String>, readback: impl Into<String>) -> Self {
+        let profile = profile.into();
+        let readback = readback.into();
+        Self {
+            message: format!("Profile '{profile}' applied and verified via firmware read-back"),
+            profile,
+            status: PowerProfileStatus::ProfileVerified,
+            readback_profile: Some(readback),
+        }
+    }
+
+    pub fn unverified(profile: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            profile: profile.into(),
+            status: PowerProfileStatus::ProfileUnverified,
+            readback_profile: None,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for PowerProfileResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.profile, self.message)
+    }
+}
+
 /// Typed errors for hardware control and service operations.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum HardwareControlError {

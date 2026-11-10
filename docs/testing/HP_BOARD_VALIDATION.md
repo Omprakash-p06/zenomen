@@ -157,3 +157,31 @@ The runbook executes the 10-state safety validation protocol:
 8. **EC Cooling Restoration:** Executes safe restore `0x27=0` -> `0x10` -> `0x1A {0xFF, profile}` (strictly forbidding `0x2E {0,0}`).
 9. **Sustained 30-Second Observation:** 30 consecutive 1-second samples recording timestamps, WMI transport integrity, independent CPU/GPU RPMs, verifying `0x26` stays 0, and watching physical deceleration to autonomous curves (recognizing legitimate GPU fan stops under cold temperatures).
 10. **Final Evaluation:** Evaluates terminal state (`RestorationVerified`, `RestorationUnverified`, or `RestorationFailed`) and leaves `fan_write_verified: false` unchanged pending formal sign-off.
+
+#### Step 5: Physical Power Profile Mutation Verification via Dedicated Validation Runbook
+When the operator authorizes physical testing of EC thermal profile control on motherboard `8A3D` with BIOS `F.22`:
+```powershell
+.\target\debug\zenomen-hw.exe --validate-8a3d-power
+```
+The runbook executes the strict 5-stage validation protocol:
+1. **Interactive Confirmation:** Requires typing `'VALIDATE'` before any mutation.
+2. **Baseline Telemetry:** Queries baseline CPU frequency, ACPI temperature, and dual fan tachometers.
+3. **Controlled Profile Cycling via 0x1A:**
+   - Balanced: payload `[0xFF, 0x00]`
+   - Performance: payload `[0xFF, 0x01]`
+   - Quiet: payload `[0xFF, 0x03]`
+   - For each profile, commands WMI `0x1A` and records live telemetry for 5 seconds.
+4. **Safe Restoration:** Explicitly commands Balanced profile `[0xFF, 0x00]` at conclusion.
+5. **Invariant Auditing & Honesty:**
+   - `0x4C` Invariant: Zero calls to forbidden opcode `0x4C` (which returns status 3 on `8A3D`).
+   - Decoupling Invariant: Zero calls to `0x27` (Max Fan), preventing fan lockups.
+   - Readback Honesty: Reports `PowerProfileStatus::ProfileUnverified` ("Command accepted — readback unavailable") because userland Windows cannot read EC register `0x95`.
+   - Gate Check: `power_write_verified` remains `false` in `src/service/windows/profiles.rs` until operator sign-off.
+
+#### Step 6: Dual-Process Memory Telemetry Monitoring
+ZenOmen monitors both GUI and Hardware Service footprints:
+- Working Set (primary physical memory metric)
+- Private Bytes (committed non-shareable memory)
+- Peak Working Set (lifetime high-water mark)
+- Metrics are queried every 2–3s and exposed in Slint UI (`Overview` and `Diagnostics` screens).
+- When the service is offline or unreachable, the UI reports "App only (Service Offline)" rather than misleading 0 MB values.

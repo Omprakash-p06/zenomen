@@ -119,6 +119,19 @@ export component AppWindow inherits Window {
     in-out property <string> diag-sandboxing-text: "ProtectSystem=strict, ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi";
     in-out property <string> control-error-message: "";
 
+    // ---- ZenOmen Process Memory Telemetry (WIN-08 / MON-12) ----------------
+    in-out property <string> mem-zenomen-total: "Unavailable";
+    in-out property <string> mem-zenomen-breakdown: "";
+    in-out property <string> mem-gui-ws: "Unavailable";
+    in-out property <string> mem-gui-private: "Unavailable";
+    in-out property <string> mem-gui-peak: "Unavailable";
+    in-out property <string> mem-gui-pid: "";
+    in-out property <string> mem-service-ws: "Unavailable";
+    in-out property <string> mem-service-private: "Unavailable";
+    in-out property <string> mem-service-peak: "Unavailable";
+    in-out property <string> mem-service-pid: "";
+    in-out property <bool> mem-service-online: false;
+
     in-out property <int> polling-interval-ms: 1000;
     in-out property <bool> start-minimized: false;
     in-out property <bool> close-to-tray: true;
@@ -297,6 +310,8 @@ export component AppWindow inherits Window {
                                 cpu-path: root.cpu-path;
                                 gpu-path: root.gpu-path;
                                 ram-path: root.ram-path;
+                                zenomen-memory: root.mem-zenomen-total;
+                                zenomen-memory-breakdown: root.mem-zenomen-breakdown;
                                 open-diagnostics => {
                                     root.active-screen = 5;
                                     root.navigate(5);
@@ -427,6 +442,16 @@ export component AppWindow inherits Window {
                                 capability-names: root.capability-names;
                                 capability-flags: root.capability-flags;
                                 capability-reasons: root.capability-reasons;
+                                mem-gui-ws: root.mem-gui-ws;
+                                mem-gui-private: root.mem-gui-private;
+                                mem-gui-peak: root.mem-gui-peak;
+                                mem-gui-pid: root.mem-gui-pid;
+                                mem-service-ws: root.mem-service-ws;
+                                mem-service-private: root.mem-service-private;
+                                mem-service-peak: root.mem-service-peak;
+                                mem-service-pid: root.mem-service-pid;
+                                mem-zenomen-total: root.mem-zenomen-total;
+                                mem-service-online: root.mem-service-online;
                                 export-diagnostics-clicked => {
                                     root.export-diagnostics();
                                 }

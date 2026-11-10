@@ -550,6 +550,43 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
         )));
     }
     ui.set_rgb_power_enabled(state.rgb_power_enabled);
+
+    // Dual-process memory telemetry (WIN-08 / MON-12)
+    let mem = &state.memory_telemetry;
+    ui.set_mem_zenomen_total(mem.total_working_set_str().into());
+    let breakdown = if mem.is_service_available {
+        format!(
+            "App: {} · Service: {}",
+            mem.gui.format_working_set(),
+            mem.service.format_working_set()
+        )
+    } else {
+        format!("App: {} (Service Offline)", mem.gui.format_working_set())
+    };
+    ui.set_mem_zenomen_breakdown(breakdown.into());
+
+    ui.set_mem_gui_ws(mem.gui.format_working_set().into());
+    ui.set_mem_gui_private(mem.gui.format_private().into());
+    ui.set_mem_gui_peak(mem.gui.format_peak().into());
+    ui.set_mem_gui_pid(if mem.gui.available {
+        mem.gui.pid.to_string().into()
+    } else {
+        "".into()
+    });
+
+    if mem.is_service_available {
+        ui.set_mem_service_ws(mem.service.format_working_set().into());
+        ui.set_mem_service_private(mem.service.format_private().into());
+        ui.set_mem_service_peak(mem.service.format_peak().into());
+        ui.set_mem_service_pid(mem.service.pid.to_string().into());
+        ui.set_mem_service_online(true);
+    } else {
+        ui.set_mem_service_ws("Offline / Unavailable".into());
+        ui.set_mem_service_private("Offline / Unavailable".into());
+        ui.set_mem_service_peak("Offline / Unavailable".into());
+        ui.set_mem_service_pid("-".into());
+        ui.set_mem_service_online(false);
+    }
 }
 
 /// A percentage without its sign — the screens append `%` themselves.

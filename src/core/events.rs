@@ -150,4 +150,6 @@ pub enum AppEvent {
     PolkitStatusChanged(String),
     /// Control error banner dismissed.
     ControlErrorDismissed,
+    /// Dual-process memory telemetry update (GUI + Hardware Service) (WIN-08 / MON-12).
+    MemoryTelemetryUpdated(crate::hardware::ZenomenMemoryTelemetry),
 }

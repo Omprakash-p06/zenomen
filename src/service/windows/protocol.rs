@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::hardware::HardwareCapabilities;
-use crate::service::types::{HardwareControlError, PresetResult};
+use crate::hardware::{HardwareCapabilities, ProcessMemoryInfo};
+use crate::service::types::{HardwareControlError, PowerProfileResult, PresetResult};
 
 /// Maximum allowable payload size for named pipe frames (64 KB).
 pub const MAX_PAYLOAD_SIZE: usize = 65536;
@@ -20,6 +20,7 @@ pub enum HardwareRequest {
     ApplyPreset { preset: String },
     ApplyRgbProfile { profile_json: String },
     SetRgbEnabled { enabled: bool },
+    GetServiceMemory,
 }
 
 /// Typed responses sent by the privileged hardware service.
@@ -30,10 +31,11 @@ pub enum HardwareResponse {
     FanModeSet(String),
     PowerProfiles(Vec<String>),
     PowerProfile(String),
-    PowerProfileSet(String),
+    PowerProfileSet(PowerProfileResult),
     PresetApplied(PresetResult),
     RgbProfileApplied(String),
     RgbEnabledSet(bool),
+    ServiceMemory(ProcessMemoryInfo),
     Error(String),
 }
 

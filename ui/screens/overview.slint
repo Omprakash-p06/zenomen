@@ -41,6 +41,9 @@ export component Overview inherits Rectangle {
     in property <string> gpu-path: "";
     in property <string> ram-path: "";
 
+    in property <string> zenomen-memory: "";
+    in property <string> zenomen-memory-breakdown: "";
+
     callback open-diagnostics();
 
     background: transparent;
@@ -157,6 +160,54 @@ export component Overview inherits Rectangle {
                 cpu-path: root.cpu-path;
                 gpu-path: root.gpu-path;
                 ram-path: root.ram-path;
+            }
+        }
+
+        SectionCard {
+            title: "ZenOmen Memory Footprint";
+
+            HorizontalLayout {
+                spacing: ThemeMetrics.lg;
+                alignment: start;
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.xs;
+                    alignment: center;
+                    Text {
+                        text: "Combined Working Set:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                    }
+                    Text {
+                        text: root.zenomen-memory != "" ? root.zenomen-memory : "Unavailable";
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-mono;
+                        font-size: ThemeTypography.heading;
+                    }
+                }
+
+                Rectangle {
+                    width: 1px;
+                    background: ThemeColors.slate;
+                }
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.xs;
+                    alignment: center;
+                    Text {
+                        text: "Process Breakdown:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                    }
+                    Text {
+                        text: root.zenomen-memory-breakdown != "" ? root.zenomen-memory-breakdown : "Sampling...";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                    }
+                }
             }
         }
     }

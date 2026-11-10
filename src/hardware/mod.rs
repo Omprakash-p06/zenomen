@@ -7,6 +7,7 @@
 
 pub mod linux;
 pub mod mock;
+pub mod process_memory;
 pub mod provider;
 pub mod registry;
 pub mod rgb;
@@ -17,6 +18,7 @@ pub mod windows;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxHardwareProvider;
 pub use mock::{MockHardware, MockScenario};
+pub use process_memory::{ProcessMemoryInfo, ProcessRole, ZenomenMemoryTelemetry};
 pub use provider::{BatteryTelemetry, HardwareCapabilities, HardwareProvider, TelemetrySnapshot};
 pub use registry::SensorRegistry;
 pub use rgb::RgbInterfaceVariant;

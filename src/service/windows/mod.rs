@@ -5,6 +5,7 @@ pub mod client;
 pub mod hp_wmi;
 pub mod lifecycle;
 pub mod pipe;
+pub mod power_validation_runbook;
 pub mod profiles;
 pub mod protocol;
 pub mod security;

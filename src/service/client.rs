@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "windows"))]
 use zbus::blocking::Connection;
 
-use crate::service::types::PresetResult;
+use crate::hardware::ProcessMemoryInfo;
+use crate::service::types::{PowerProfileResult, PresetResult};
 #[cfg(target_os = "windows")]
 use crate::service::windows::client::WindowsServiceClient;
 #[cfg(target_os = "windows")]
@@ -281,15 +282,18 @@ impl HardwareServiceClient {
     pub fn set_power_profile(&self, profile: &str) -> Result<String, String> {
         #[cfg(target_os = "windows")]
         {
-            self.windows_client.set_power_profile(profile).map_err(|e| {
-                tracing::error!(
-                    function = "HardwareServiceClient::set_power_profile",
-                    profile,
-                    error = %e,
-                    "SetPowerProfile failed"
-                );
-                e.to_string()
-            })
+            self.windows_client
+                .set_power_profile(profile)
+                .map(|res| res.profile)
+                .map_err(|e| {
+                    tracing::error!(
+                        function = "HardwareServiceClient::set_power_profile",
+                        profile,
+                        error = %e,
+                        "SetPowerProfile failed"
+                    );
+                    e.to_string()
+                })
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -310,6 +314,39 @@ impl HardwareServiceClient {
                 .map_err(|e| format!("Failed to parse SetPowerProfile response: {e}"))?;
 
             Ok(confirmed)
+        }
+    }
+
+    /// Set ACPI platform profile returning detailed typed result (PWR-04).
+    pub fn set_power_profile_detailed(&self, profile: &str) -> Result<PowerProfileResult, String> {
+        #[cfg(target_os = "windows")]
+        {
+            self.windows_client
+                .set_power_profile(profile)
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let confirmed = self.set_power_profile(profile)?;
+            Ok(PowerProfileResult::verified(confirmed.clone(), confirmed))
+        }
+    }
+
+    /// Read process memory telemetry for the privileged hardware service daemon.
+    pub fn get_service_memory(&self) -> Result<ProcessMemoryInfo, String> {
+        #[cfg(target_os = "windows")]
+        {
+            self.windows_client
+                .get_service_memory()
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(ProcessMemoryInfo {
+                role: Some(crate::hardware::ProcessRole::HardwareService),
+                available: false,
+                ..Default::default()
+            })
         }
     }
 

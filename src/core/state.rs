@@ -74,6 +74,8 @@ pub struct AppState {
     pub rgb_variant: Option<crate::hardware::rgb::RgbInterfaceVariant>,
     /// Provider label displayed in status strip ("Linux provider", "Mock provider") (WR-02).
     pub provider_label: String,
+    /// Dual-process memory telemetry (GUI + Service) (WIN-08 / MON-12).
+    pub memory_telemetry: crate::hardware::ZenomenMemoryTelemetry,
 }
 
 impl Default for AppState {
@@ -100,6 +102,7 @@ impl Default for AppState {
             rgb_power_enabled: true,
             rgb_variant: None,
             provider_label: "Mock provider".to_string(),
+            memory_telemetry: crate::hardware::ZenomenMemoryTelemetry::default(),
         }
     }
 }
@@ -275,6 +278,9 @@ impl AppState {
             }
             AppEvent::ConfigCorrupted(notice) => {
                 self.config_corrupt_notice = Some(notice.clone());
+            }
+            AppEvent::MemoryTelemetryUpdated(telemetry) => {
+                self.memory_telemetry = telemetry.clone();
             }
         }
     }

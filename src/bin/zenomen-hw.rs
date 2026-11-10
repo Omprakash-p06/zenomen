@@ -45,6 +45,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    if args.iter().any(|a| a == "--validate-8a3d-power") {
+        info!("Launching HP Victus 8A3D physical power profile validation runbook...");
+        zenomen::service::windows::power_validation_runbook::run_8a3d_power_validation_runbook()?;
+        return Ok(());
+    }
+
     info!(
         "Starting zenomen-hw privileged hardware control service v{}",
         env!("CARGO_PKG_VERSION")
