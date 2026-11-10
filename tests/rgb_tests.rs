@@ -368,6 +368,7 @@ fn backend_hardware_writes_and_verification_kernel_patch() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_rgb_enable_restores_previous_profile_instead_of_hardcoded_white() {
     use zenomen::rgb::schema::RgbProfile;
     use zenomen::service::contract::HardwareService;

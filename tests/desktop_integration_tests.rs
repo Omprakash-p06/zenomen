@@ -3,12 +3,18 @@
 
 use std::fs;
 use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::sync::mpsc;
+#[cfg(target_os = "linux")]
 use zbus::zvariant::Value;
+#[cfg(target_os = "linux")]
+use zenomen::desktop::DesktopAction;
 use zenomen::desktop::autostart::{
     AUTOSTART_DESKTOP_ENTRY, is_autostart_enabled_at, set_autostart_enabled_at,
 };
-use zenomen::desktop::single_instance::{ApplicationService, DesktopAction};
+#[cfg(target_os = "linux")]
+use zenomen::desktop::single_instance::ApplicationService;
+#[cfg(target_os = "linux")]
 use zenomen::desktop::tray::{StatusNotifierItem, TrayDbusMenu};
 
 #[test]
@@ -93,6 +99,7 @@ fn test_autostart_disabled_when_hidden_flag_present() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_single_instance_application_service_dispatch() {
     let (action_tx, action_rx) = mpsc::sync_channel(5);
     let service = ApplicationService::new(action_tx);
@@ -111,6 +118,7 @@ fn test_single_instance_application_service_dispatch() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_status_notifier_item_properties_and_events() {
     let (action_tx, action_rx) = mpsc::sync_channel(5);
     let sni = StatusNotifierItem::new(action_tx.clone());
@@ -137,6 +145,7 @@ fn test_status_notifier_item_properties_and_events() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_tray_dbusmenu_layout_and_events() {
     let (action_tx, action_rx) = mpsc::sync_channel(5);
     let menu = TrayDbusMenu::new(action_tx);

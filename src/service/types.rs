@@ -261,6 +261,7 @@ pub enum HardwareControlError {
     AuthorizationFailed(String),
 }
 
+#[cfg(target_os = "linux")]
 impl From<HardwareControlError> for zbus::fdo::Error {
     fn from(err: HardwareControlError) -> Self {
         match err {

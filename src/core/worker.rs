@@ -200,9 +200,8 @@ pub fn spawn_monitoring_worker(
                             {
                                 tracing::error!(error = %e, "failed to persist config");
                             }
-                            let _ = crate::desktop::autostart::set_autostart_enabled(
-                                new_config.general.autostart,
-                            );
+                            let _ =
+                                crate::desktop::set_autostart_enabled(new_config.general.autostart);
                             let ms = new_config.telemetry.polling_interval_ms;
                             sampling_interval = Duration::from_millis(ms);
                             deadline = Instant::now() + sampling_interval;
@@ -223,7 +222,7 @@ pub fn spawn_monitoring_worker(
                         }
                         AppCommand::SetAutostart(enabled) => {
                             current_config.general.autostart = enabled;
-                            let _ = crate::desktop::autostart::set_autostart_enabled(enabled);
+                            let _ = crate::desktop::set_autostart_enabled(enabled);
                             if let Some(path) = crate::config::default_config_path() {
                                 let _ = crate::config::save_atomic(&path, &current_config);
                             }

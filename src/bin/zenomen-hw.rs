@@ -5,7 +5,7 @@
 
 use std::error::Error;
 use tracing::info;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use zenomen::service::{HardwareBackend, HardwareService};
 
 #[cfg(target_os = "windows")]
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn Error>> {
     // First statement: a failure to bind D-Bus or load the backend is exactly
     // what the log file needs to record. Journald still captures stderr.

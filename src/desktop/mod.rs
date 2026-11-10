@@ -1,22 +1,27 @@
 //! Desktop integration module covering single-instance enforcement,
 //! StatusNotifierItem / Win32 system tray, close-to-tray lifecycle, and autostart.
 
+pub mod actions;
 pub mod autostart;
 pub mod releases;
+#[cfg(target_os = "linux")]
 pub mod single_instance;
 pub mod system_integration;
+#[cfg(target_os = "linux")]
 pub mod tray;
+#[cfg(target_os = "windows")]
 pub mod windows;
 
-pub use autostart::{is_autostart_enabled, set_autostart_enabled};
+pub use actions::DesktopAction;
 pub use releases::{RELEASES_URL, ReleasesError, open_releases_page};
-pub use single_instance::{
-    ApplicationService, DesktopAction, SingleInstanceResult, ensure_single_instance,
-};
 pub use system_integration::{
     SystemIntegrationError, install as install_system_integration,
     uninstall as uninstall_system_integration,
 };
+
+#[cfg(target_os = "linux")]
+pub use single_instance::{ApplicationService, SingleInstanceResult, ensure_single_instance};
+#[cfg(target_os = "linux")]
 pub use tray::{StatusNotifierItem, TrayDbusMenu, register_tray};
 
 #[cfg(target_os = "windows")]
@@ -27,6 +32,30 @@ pub use windows::{
     remove_tray_icon, resolve_app_data_paths, resolve_app_data_paths_from,
     set_autostart_enabled as set_windows_autostart_enabled, show_notification,
 };
+
+/// Check if login autostart is enabled on the current operating system.
+pub fn is_autostart_enabled() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows::is_autostart_enabled()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        autostart::is_autostart_enabled()
+    }
+}
+
+/// Enable or disable login autostart on the current operating system.
+pub fn set_autostart_enabled(enabled: bool) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::set_autostart_enabled(enabled).map_err(|e| std::io::Error::other(e.to_string()))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        autostart::set_autostart_enabled(enabled)
+    }
+}
 
 /// Errors encountered in desktop integration operations.
 #[derive(Debug, thiserror::Error)]

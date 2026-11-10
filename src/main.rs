@@ -12,7 +12,7 @@ use zenomen::AppWindow;
 use zenomen::app::ZenOmenApp;
 use zenomen::core::{log_benchmark, spawn_monitoring_worker};
 use zenomen::desktop::DesktopAction;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use zenomen::desktop::{SingleInstanceResult, ensure_single_instance, register_tray};
 use zenomen::hardware::{HardwareProvider, MockHardware};
 
@@ -107,9 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Single-instance enforcement (SYS-05)
     let (action_sender, action_receiver) = mpsc::sync_channel::<DesktopAction>(16);
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     let single_instance = ensure_single_instance(action_sender.clone());
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     let _session_conn = match single_instance {
         SingleInstanceResult::Primary(conn) => {
             let _ = register_tray(&conn, action_sender.clone());

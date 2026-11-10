@@ -11,14 +11,7 @@ pub const APP_BUS_NAME: &str = "com.zenomen.App";
 pub const APP_OBJECT_PATH: &str = "/com/zenomen/App";
 pub const APP_INTERFACE: &str = "com.zenomen.App";
 
-/// Actions requested by remote instances or desktop events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DesktopAction {
-    PresentWindow,
-    Quit,
-    SetFanModeAuto,
-    SetFanModeMax,
-}
+pub use crate::desktop::actions::DesktopAction;
 
 /// D-Bus interface exposed by the primary application instance.
 pub struct ApplicationService {

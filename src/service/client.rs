@@ -1,11 +1,11 @@
 //! Client layer connecting to `com.zenomen.Hardware1` on system D-Bus (Linux)
 //! or `ZenOmenHardwareService` via local named pipe (Windows).
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use zbus::blocking::Connection;
 
 use crate::hardware::ProcessMemoryInfo;
@@ -43,13 +43,13 @@ impl ServiceConnectionStatus {
 /// On Windows: communicates with `ZenOmenHardwareService` via named pipe `\\.\pipe\ZenOmen.Hardware.v1`.
 #[derive(Clone)]
 pub struct HardwareServiceClient {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     destination: String,
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     path: String,
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     interface: String,
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     cached_conn: Arc<Mutex<Option<Connection>>>,
     #[cfg(target_os = "windows")]
     windows_client: WindowsServiceClient,
@@ -64,7 +64,7 @@ impl Default for HardwareServiceClient {
 impl HardwareServiceClient {
     /// Construct a client targeting default hardware service endpoint.
     pub fn new() -> Self {
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             Self {
                 destination: "com.zenomen.Hardware1".to_string(),
@@ -82,7 +82,7 @@ impl HardwareServiceClient {
     }
 
     /// Connect to system D-Bus, caching the active connection across calls.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     fn connect(&self) -> Result<Connection, String> {
         let mut guard = self.cached_conn.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(conn) = &*guard {
@@ -95,7 +95,7 @@ impl HardwareServiceClient {
     }
 
     /// Reset cached connection on communication failures.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     fn reset_connection(&self) {
         if let Ok(mut guard) = self.cached_conn.lock() {
             *guard = None;
@@ -108,7 +108,7 @@ impl HardwareServiceClient {
         {
             self.windows_client.get_service_status()
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = match self.connect() {
                 Ok(c) => c,
@@ -146,7 +146,7 @@ impl HardwareServiceClient {
                 Err(e) => Err(e.to_string()),
             }
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect()?;
             let reply = conn
@@ -183,7 +183,7 @@ impl HardwareServiceClient {
                 e.to_string()
             })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect_service()?;
             let reply = conn
@@ -219,7 +219,7 @@ impl HardwareServiceClient {
                 Err(e) => Err(e.to_string()),
             }
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect()?;
             let reply = conn
@@ -255,7 +255,7 @@ impl HardwareServiceClient {
                 Err(e) => Err(e.to_string()),
             }
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect()?;
             let reply = conn
@@ -295,7 +295,7 @@ impl HardwareServiceClient {
                     e.to_string()
                 })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect_service()?;
             let reply = conn
@@ -325,7 +325,7 @@ impl HardwareServiceClient {
                 .set_power_profile(profile)
                 .map_err(|e| e.to_string())
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let confirmed = self.set_power_profile(profile)?;
             Ok(PowerProfileResult::verified(confirmed.clone(), confirmed))
@@ -340,7 +340,7 @@ impl HardwareServiceClient {
                 .get_service_memory()
                 .map_err(|e| e.to_string())
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             Ok(ProcessMemoryInfo {
                 role: Some(crate::hardware::ProcessRole::HardwareService),
@@ -366,7 +366,7 @@ impl HardwareServiceClient {
                     e.to_string()
                 })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect_service()?;
             let reply = conn
@@ -392,7 +392,7 @@ impl HardwareServiceClient {
     }
 
     /// Helper to ensure service connection or produce actionable offline guidance.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     fn connect_service(&self) -> Result<Connection, String> {
         if !self.status().is_connected() {
             return Err("Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with 'sudo systemctl start zenomen-hw' or install with 'sudo zenomen --install-system-integration'.".to_string());
@@ -401,7 +401,7 @@ impl HardwareServiceClient {
     }
 
     /// Format D-Bus errors with user-actionable explanations when service is missing.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     fn format_service_error(&self, op: &str, e: &zbus::Error) -> String {
         let err_str = e.to_string();
         if err_str.contains("ServiceUnknown")
@@ -423,7 +423,7 @@ impl HardwareServiceClient {
                 Ok("Service offline (ZenOmenHardwareService)".to_string())
             }
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect()?;
             let unique_name = conn
@@ -488,7 +488,7 @@ impl HardwareServiceClient {
                 e.to_string()
             })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect_service()?;
             let json_str = serde_json::to_string(profile)
@@ -535,7 +535,7 @@ impl HardwareServiceClient {
                     e.to_string()
                 })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let conn = self.connect_service()?;
             let reply = conn

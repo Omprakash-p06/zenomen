@@ -3,8 +3,8 @@
 //! Hosts a hidden Win32 message window to handle tray callback events, context
 //! menu interaction, and window presentation actions.
 
+use crate::desktop::DesktopAction;
 use crate::desktop::DesktopError;
-use crate::desktop::single_instance::DesktopAction;
 use std::sync::mpsc;
 
 #[cfg(target_os = "windows")]
