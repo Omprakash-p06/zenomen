@@ -1,4 +1,5 @@
 //! Unit tests for Windows native telemetry calculation math and conversion contracts (WIN-01).
+#![cfg(target_os = "windows")]
 
 use zenomen::hardware::windows::battery::parse_battery_status;
 use zenomen::hardware::windows::cpu::{WindowsCpuTimes, calculate_cpu_utilization};

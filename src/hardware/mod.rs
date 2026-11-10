@@ -12,6 +12,7 @@ pub mod provider;
 pub mod registry;
 pub mod rgb;
 pub mod unavailable;
+#[cfg(target_os = "windows")]
 pub mod windows;
 
 // Re-exported so `crate::core` and `src/app.rs` name the boundary in one hop.
