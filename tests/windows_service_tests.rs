@@ -213,6 +213,7 @@ fn test_8a3d_f22_ratified_and_other_bios_remain_locked() {
     assert!(v_f22.max_fan_write_verified);
     assert!(v_f22.auto_fan_restore_verified);
     assert!(!v_f22.manual_fan_write_verified);
+    assert!(v_f22.power_write_authorized);
     assert!(!v_f22.power_write_verified);
     assert!(!v_f22.rgb_write_verified);
 
@@ -226,6 +227,7 @@ fn test_8a3d_f22_ratified_and_other_bios_remain_locked() {
         assert!(!v.max_fan_write_verified);
         assert!(!v.auto_fan_restore_verified);
         assert!(!v.manual_fan_write_verified);
+        assert!(!v.power_write_authorized);
         assert!(!v.power_write_verified);
         assert!(!v.rgb_write_verified);
     }
@@ -420,6 +422,7 @@ fn test_authorization_power_rgb_flags_cannot_authorize_fan_write() {
         auto_fan_restore_verified: false,
         manual_fan_write_verified: false,
         power_read_verified: true,
+        power_write_authorized: true,
         power_write_verified: true,
         rgb_read_verified: true,
         rgb_write_verified: true,
@@ -2827,6 +2830,7 @@ fn test_daemon_and_gui_report_consistent_capabilities() {
     assert!(caps.auto_fan_restore_verified);
     assert!(caps.manual_fan_control_supported);
     assert!(!caps.manual_fan_write_verified);
+    assert!(caps.power_write_authorized);
     assert!(!caps.power_write_verified);
     assert!(!caps.rgb_write_verified);
 
@@ -2840,6 +2844,7 @@ fn test_daemon_and_gui_report_consistent_capabilities() {
     assert!(decoded_caps.auto_fan_restore_verified);
     assert!(decoded_caps.manual_fan_control_supported);
     assert!(!decoded_caps.manual_fan_write_verified);
+    assert!(decoded_caps.power_write_authorized);
     assert!(!decoded_caps.power_write_verified);
     assert!(!decoded_caps.rgb_write_verified);
     assert_eq!(
@@ -2982,4 +2987,94 @@ fn test_zenomen_memory_telemetry_freshness_and_offline() {
     };
     let telemetry_stale = ZenomenMemoryTelemetry::new(gui_ok, svc_stale);
     assert_eq!(telemetry_stale.combined_working_set_bytes, None);
+}
+
+#[test]
+fn test_query_hp_capabilities_on_8a3d_reports_power_profiles_true() {
+    let adapter = FakeWmiAdapter::new(true);
+    // Fan count query: opcode 0x10 returns 2 fans
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![0x02],
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let caps = zenomen::service::windows::hp_wmi::query_hp_capabilities(&conn)
+        .expect("query_hp_capabilities on 8A3D");
+
+    assert!(caps.power_profiles, "8A3D must report power_profiles: true");
+    assert!(caps.fan_control, "8A3D must report fan_control: true");
+    assert!(caps.fan_rpm, "8A3D must report fan_rpm: true");
+    assert!(!caps.rgb_lighting, "8A3D has no RGB zones");
+}
+
+#[test]
+fn test_query_hp_capabilities_unavailable_wmi() {
+    let adapter = FakeWmiAdapter::new(false);
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let caps = zenomen::service::windows::hp_wmi::query_hp_capabilities(&conn)
+        .expect("query_hp_capabilities when unavailable");
+
+    assert!(!caps.power_profiles);
+    assert!(!caps.fan_control);
+    assert!(!caps.fan_rpm);
+}
+
+#[test]
+fn test_8a3d_power_write_authorized_independently_from_fan() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    // Record where power_write_authorized is true but fan_write_verified is false
+    let power_only = BoardValidation {
+        board_id: "8A3D".to_string(),
+        bios_version: "F.22".to_string(),
+        fan_read_verified: true,
+        fan_write_verified: false,
+        max_fan_write_verified: false,
+        auto_fan_restore_verified: false,
+        manual_fan_write_verified: false,
+        power_read_verified: false,
+        power_write_authorized: true,
+        power_write_verified: false,
+        rgb_read_verified: false,
+        rgb_write_verified: false,
+        validation_record_version: 1,
+    };
+
+    // Power profile mutation is authorized independently
+    let req_power = HardwareRequest::SetPowerProfile {
+        profile: "quiet".to_string(),
+    };
+    assert!(
+        authorize_mutation(&req_power, &board, Some(&power_only)).is_ok(),
+        "Power write must be authorized independently from fan write"
+    );
+
+    // Quiet and Balanced presets (auto fan) are authorized
+    let req_quiet = HardwareRequest::ApplyPreset {
+        preset: "quiet".to_string(),
+    };
+    assert!(authorize_mutation(&req_quiet, &board, Some(&power_only)).is_ok());
+
+    let req_balanced = HardwareRequest::ApplyPreset {
+        preset: "balanced".to_string(),
+    };
+    assert!(authorize_mutation(&req_balanced, &board, Some(&power_only)).is_ok());
+
+    // Performance preset (which requires max fan) is rejected because fan writes are unverified
+    let req_perf = HardwareRequest::ApplyPreset {
+        preset: "performance".to_string(),
+    };
+    let err_perf = authorize_mutation(&req_perf, &board, Some(&power_only))
+        .expect_err("Performance preset must fail when fan writes are unverified");
+    assert!(matches!(err_perf, HardwareControlError::UnsupportedMode(_)));
+
+    // Standalone fan write is rejected
+    let req_fan = HardwareRequest::SetFanMode {
+        mode: "max".to_string(),
+    };
+    let err_fan = authorize_mutation(&req_fan, &board, Some(&power_only))
+        .expect_err("Fan write must fail when fan_write_verified is false");
+    assert!(matches!(
+        err_fan,
+        HardwareControlError::AuthorizationFailed(_)
+    ));
 }

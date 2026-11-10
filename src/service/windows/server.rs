@@ -240,13 +240,15 @@ pub fn run_pipe_server(
         // Establish WMI connection. Failure makes capabilities = unavailable; it does not
         // stop the server — the server still accepts connections and reports the error.
         let conn = match hp_wmi::connect_hp_wmi() {
-            Ok(c) => {
+            Ok(mut c) => {
+                c.ensure_board_id(&board.board_id);
                 tracing::info!(
                     board = %board.board_id,
                     model = %board.model_family,
                     bios = %bios_version,
                     fan_write = validation.fan_write_verified,
-                    power_write = validation.power_write_verified,
+                    power_write = validation.power_write_authorized,
+                    power_verified = validation.power_write_verified,
                     wmi_available = c.is_available(),
                     "HP WMI connection established; named pipe server starting"
                 );

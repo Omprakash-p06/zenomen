@@ -1049,6 +1049,13 @@ impl HpWmiConnection {
         self.board_id.as_deref()
     }
 
+    /// Tag connection with board ID if not already set.
+    pub fn ensure_board_id(&mut self, board_id: &str) {
+        if self.board_id.is_none() {
+            self.board_id = Some(board_id.trim().to_uppercase());
+        }
+    }
+
     /// `true` when the board uses the dedicated Victus S fan protocol (`0x2D`/`0x2E`/`0x2F`).
     pub fn is_victus_s(&self) -> bool {
         self.board_id
@@ -1726,6 +1733,11 @@ fn read_performance_mode_from_firmware(
 
 /// Probe performance mode command `0x1A` to check availability.
 fn probe_performance_mode(conn: &HpWmiConnection) -> Result<bool, HardwareControlError> {
+    if conn.is_victus_s() {
+        // Victus S firmware accepts 0x1A thermal profile writes (Quiet 0x03, Balanced 0x00, Performance 0x01),
+        // even though thermal profile read-back is EC-managed (register 0x95) and has no WMI read path.
+        return Ok(true);
+    }
     match read_performance_mode_from_firmware(conn) {
         Ok(_) => Ok(true),
         Err(HardwareControlError::UnsupportedMode(_)) => Ok(false),

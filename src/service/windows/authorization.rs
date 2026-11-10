@@ -106,10 +106,7 @@ pub fn authorize_mutation(
                     val.board_id, board.board_id
                 )));
             }
-            let is_8a3d_f22 = board.board_id.eq_ignore_ascii_case("8A3D")
-                && val.bios_version == "F.22"
-                && val.fan_write_verified;
-            if !val.power_write_verified && !is_8a3d_f22 {
+            if !val.power_write_authorized {
                 return Err(HardwareControlError::UnsupportedMode(format!(
                     "Motherboard {} power profile write is not verified on physical hardware",
                     board.board_id
@@ -144,10 +141,7 @@ pub fn authorize_mutation(
                 )));
             }
 
-            let is_8a3d_f22 = board.board_id.eq_ignore_ascii_case("8A3D")
-                && val.bios_version == "F.22"
-                && val.fan_write_verified;
-            let power_permitted = val.power_write_verified || is_8a3d_f22;
+            let power_permitted = val.power_write_authorized;
 
             let normalized = preset.trim().to_lowercase();
             match normalized.as_str() {

@@ -42,6 +42,7 @@ pub struct BoardCapabilities {
     pub manual_fan_write_verified: bool,
     pub thermal_profile_source: ThermalProfileSource,
     pub fan_write_verified: bool,
+    pub power_write_authorized: bool,
     pub power_write_verified: bool,
     pub rgb_write_verified: bool,
 }
@@ -72,18 +73,26 @@ pub struct BoardProfile {
 impl BoardProfile {
     /// Derive granular capabilities combining board specs and physical verification state.
     pub fn capabilities(&self, validation: Option<&BoardValidation>) -> BoardCapabilities {
-        let (fan_write, max_fan_write, auto_restore, manual_write, power_write, rgb_write) =
-            match validation {
-                Some(v) => (
-                    v.fan_write_verified,
-                    v.max_fan_write_verified,
-                    v.auto_fan_restore_verified,
-                    v.manual_fan_write_verified,
-                    v.power_write_verified,
-                    v.rgb_write_verified,
-                ),
-                None => (false, false, false, false, false, false),
-            };
+        let (
+            fan_write,
+            max_fan_write,
+            auto_restore,
+            manual_write,
+            power_auth,
+            power_write,
+            rgb_write,
+        ) = match validation {
+            Some(v) => (
+                v.fan_write_verified,
+                v.max_fan_write_verified,
+                v.auto_fan_restore_verified,
+                v.manual_fan_write_verified,
+                v.power_write_authorized,
+                v.power_write_verified,
+                v.rgb_write_verified,
+            ),
+            None => (false, false, false, false, false, false, false),
+        };
         BoardCapabilities {
             fan_count_supported: self.fan_count > 0,
             fan_rpm_supported: self.fan_count > 0,
@@ -95,6 +104,7 @@ impl BoardProfile {
             manual_fan_write_verified: manual_write,
             thermal_profile_source: self.thermal_profile_source,
             fan_write_verified: fan_write,
+            power_write_authorized: power_auth,
             power_write_verified: power_write,
             rgb_write_verified: rgb_write,
         }
@@ -123,6 +133,7 @@ pub struct BoardValidation {
     pub auto_fan_restore_verified: bool,
     pub manual_fan_write_verified: bool,
     pub power_read_verified: bool,
+    pub power_write_authorized: bool,
     pub power_write_verified: bool,
     pub rgb_read_verified: bool,
     pub rgb_write_verified: bool,
@@ -146,6 +157,7 @@ impl BoardValidation {
             auto_fan_restore_verified: false,
             manual_fan_write_verified: false,
             power_read_verified: true,
+            power_write_authorized: false,
             power_write_verified: false,
             rgb_read_verified: false,
             rgb_write_verified: false,
@@ -169,6 +181,7 @@ impl BoardValidation {
             auto_fan_restore_verified: true,
             manual_fan_write_verified: true,
             power_read_verified: true,
+            power_write_authorized: true,
             power_write_verified: true,
             rgb_read_verified: true,
             rgb_write_verified: true,
@@ -296,6 +309,7 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
             auto_fan_restore_verified: true,
             manual_fan_write_verified: false,
             power_read_verified: true,
+            power_write_authorized: true,
             power_write_verified: true,
             rgb_read_verified: true,
             rgb_write_verified: true,
@@ -313,6 +327,7 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
             auto_fan_restore_verified: true,
             manual_fan_write_verified: false,
             power_read_verified: true,
+            power_write_authorized: true,
             power_write_verified: true,
             rgb_read_verified: true,
             rgb_write_verified: true,
@@ -325,7 +340,7 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
         // - Safe Auto Restore: Verified (0x27=0 -> 0x10 -> 0x1A {0xFF, 0x01}, readback 0).
         // - 30s Sustained Observation: Verified (fans 4000/3600 RPM, temp 78.1->75.1°C, zero 0x2E calls).
         // - Manual per-fan PWM / custom curve writes: UNVERIFIED (blocked).
-        // - Power profile writes: UNVERIFIED (EC 0x95 managed, blocked).
+        // - Power profile writes: AUTHORIZED via WMI command 0x1A; readback UNVERIFIED (EC register 0x95 managed).
         // - RGB writes: UNVERIFIED / N/A (no RGB zones on 8A3D).
         "8A3D" if bios == "F.22" => BoardValidation {
             board_id: normalized,
@@ -336,6 +351,7 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
             auto_fan_restore_verified: true,
             manual_fan_write_verified: false,
             power_read_verified: false,
+            power_write_authorized: true,
             power_write_verified: false,
             rgb_read_verified: false,
             rgb_write_verified: false,

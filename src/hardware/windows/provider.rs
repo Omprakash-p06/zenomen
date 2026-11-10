@@ -68,13 +68,13 @@ impl HardwareProvider for WindowsHardwareProvider {
                     1 => Some(crate::hardware::rgb::RgbInterfaceVariant::Legacy),
                     _ => None,
                 };
-                let has_power_wmi = board.thermal_profile_source
-                    == crate::service::windows::profiles::ThermalProfileSource::Wmi
+                let has_power = board.thermal_profile_source
+                    != crate::service::windows::profiles::ThermalProfileSource::None
                     && !board.supported_power_profiles.is_empty();
                 (
                     board.fan_count > 0,
                     board.has_max_fan || board.has_custom_curves,
-                    has_power_wmi,
+                    has_power,
                     board.rgb_zone_count > 0,
                     variant,
                 )
@@ -123,7 +123,7 @@ impl HardwareProvider for WindowsHardwareProvider {
         let (fan_mode, power_profile, power_profiles) = if let Some(ref board) = self.board_profile
         {
             let (p_first, p_list) = if board.thermal_profile_source
-                == crate::service::windows::profiles::ThermalProfileSource::Wmi
+                != crate::service::windows::profiles::ThermalProfileSource::None
             {
                 let first = board
                     .supported_power_profiles

@@ -430,6 +430,16 @@ fn sample_and_dispatch(
                     snapshot.fan_mode = mode;
                 }
             }
+            if snapshot.power_profiles.is_empty()
+                && client.status().is_connected()
+                && let Ok(profiles) = client.get_power_profiles()
+                && !profiles.is_empty()
+            {
+                if snapshot.power_profile.is_empty() {
+                    snapshot.power_profile = profiles.first().cloned().unwrap_or_default();
+                }
+                snapshot.power_profiles = profiles;
+            }
             event_sender
                 .send(AppEvent::TelemetryUpdated(snapshot))
                 .is_ok()

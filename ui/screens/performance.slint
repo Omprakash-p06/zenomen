@@ -435,7 +435,9 @@ export component Performance inherits Rectangle {
                     Text {
                         text: root.pending-power-profile != ""
                             ? "Applying " + root.pending-power-profile + " and verifying read-back..."
-                            : "Verified by reading and writing ACPI platform_profile sysfs interface.";
+                            : (root.is-windows
+                                ? "Platform profile control via HP WMI interface (command 0x1A)."
+                                : "Verified by reading and writing ACPI platform_profile sysfs interface.");
                         color: root.pending-power-profile != "" ? ThemeColors.gold : ThemeColors.text-secondary;
                         font-family: ThemeTypography.font-prose;
                         font-size: ThemeTypography.label;
@@ -514,7 +516,9 @@ export component Performance inherits Rectangle {
         if !root.has-power-profiles : UnavailablePanel {
             heading: "Platform profiles aren't available on this machine";
             reason: root.is-windows
-                ? "Platform power profiles not exposed by ACPI firmware or service offline."
+                ? (root.service-connected
+                    ? "Platform power profiles are not supported by this motherboard."
+                    : "Hardware service (ZenOmenHardwareService) is offline.")
                 : "ACPI platform_profile sysfs interface not exposed.";
             open-diagnostics => {
                 root.open-diagnostics();
