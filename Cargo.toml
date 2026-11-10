@@ -115,6 +115,9 @@ before-packaging-command = "cargo build --release --bins --locked"
 
 [package.metadata.packager.deb]
 depends = ["libxkbcommon0", "libfontconfig1", "libgl1", "libdbus-1-3"]
+postinst = "packaging/linux/debian/postinst"
+prerm = "packaging/linux/debian/prerm"
+postrm = "packaging/linux/debian/postrm"
 
 [package.metadata.packager.deb.files]
 "data/applications/zenomen.desktop" = "/usr/share/applications/zenomen.desktop"
