@@ -2,7 +2,7 @@
 ; Generates ZenOmen-Setup-x64.exe
 
 #define MyAppName "ZenOmen"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "ZenOmen Contributors"
 #define MyAppURL "https://github.com/Omprakash-p06/zenomen"
 #define MyAppExeName "zenomen.exe"

@@ -53,8 +53,8 @@ cargo test --all
 ### Step 1: Commit and Tag
 ```bash
 # Create signed or annotated release tag
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
 ```
 
 ### Step 2: CI Automation Execution

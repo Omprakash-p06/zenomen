@@ -93,7 +93,7 @@ Install the compatibility library or use the extraction fallback:
 ```bash
 sudo apt install libfuse2
 # Or run without FUSE:
-./ZenOmen-0.1.0-x86_64.AppImage --appimage-extract-and-run
+./ZenOmen-1.0.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 ---

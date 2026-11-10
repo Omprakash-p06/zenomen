@@ -109,7 +109,7 @@ Get-FileHash -Algorithm SHA256 .\ZenOmen-Setup-x64.exe
 ### Debian / Ubuntu / Linux Mint (`.deb`)
 
 ```bash
-sudo dpkg -i zenomen_0.1.0_amd64.deb
+sudo dpkg -i zenomen_1.0.0_amd64.deb
 sudo apt-get install -f
 ```
 
@@ -120,14 +120,14 @@ The package automatically installs the desktop entry, icons, D-Bus system bus co
 Make the AppImage executable and run it:
 
 ```bash
-chmod +x ZenOmen_0.1.0_amd64.AppImage
-./ZenOmen_0.1.0_amd64.AppImage
+chmod +x ZenOmen_1.0.0_amd64.AppImage
+./ZenOmen_1.0.0_amd64.AppImage
 ```
 
 To enable hardware fan and power control under AppImage, register the system integration files once as root:
 
 ```bash
-sudo ./ZenOmen_0.1.0_amd64.AppImage --install-system-integration
+sudo ./ZenOmen_1.0.0_amd64.AppImage --install-system-integration
 ```
 
 ### Windows 10/11 x64

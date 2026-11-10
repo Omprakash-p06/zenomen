@@ -2,7 +2,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="ZenOmen"
            Manufacturer="ZenOmen Project"
-           Version="0.1.0"
+           Version="1.0.0"
            UpgradeCode="4E1A9D5B-3B9B-4D78-9B92-7E5A2A1A7D10"
            Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of ZenOmen is already installed."

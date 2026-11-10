@@ -27,7 +27,7 @@ pub struct HardwareServiceDiagnostic {
 /// Full diagnostic detection and status report.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticsReport {
-    /// ZenOmen application version (e.g. `0.1.0`).
+    /// ZenOmen application version (e.g. `1.0.0`).
     pub app_version: String,
     /// Host operating system name (e.g. `Ubuntu 24.04 LTS`).
     pub os_name: String,

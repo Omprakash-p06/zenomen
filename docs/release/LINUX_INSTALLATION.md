@@ -21,13 +21,13 @@ Using `apt` automatically resolves dependencies (`libxkbcommon0`, `libfontconfig
 
 ```bash
 sudo apt update
-sudo apt install ./zenomen_0.1.0_amd64.deb
+sudo apt install ./zenomen_1.0.0_amd64.deb
 ```
 
 Or with `dpkg`:
 
 ```bash
-sudo dpkg -i zenomen_0.1.0_amd64.deb
+sudo dpkg -i zenomen_1.0.0_amd64.deb
 sudo apt-get install -f
 ```
 
@@ -74,14 +74,14 @@ The AppImage is completely standalone and bundles required libraries. It adheres
 ### Running Portably
 
 ```bash
-chmod +x ZenOmen-0.1.0-x86_64.AppImage
-./ZenOmen-0.1.0-x86_64.AppImage
+chmod +x ZenOmen-1.0.0-x86_64.AppImage
+./ZenOmen-1.0.0-x86_64.AppImage
 ```
 
 Options:
 ```bash
 # Launch directly minimized to the system tray
-./ZenOmen-0.1.0-x86_64.AppImage --minimized
+./ZenOmen-1.0.0-x86_64.AppImage --minimized
 ```
 
 ### Optional Explicit System Integration
@@ -89,7 +89,7 @@ Options:
 To allow the AppImage to manage system fan controls without manual terminal elevation each time, execute the explicit system integration command with `sudo`:
 
 ```bash
-sudo ./ZenOmen-0.1.0-x86_64.AppImage --install-system-integration
+sudo ./ZenOmen-1.0.0-x86_64.AppImage --install-system-integration
 ```
 
 This extracts the daemon binary to `/usr/bin/zenomen-hw`, writes the systemd unit and polkit policy, and enables the systemd service.
@@ -97,7 +97,7 @@ This extracts the daemon binary to `/usr/bin/zenomen-hw`, writes the systemd uni
 To reverse this and remove all system integrations:
 
 ```bash
-sudo ./ZenOmen-0.1.0-x86_64.AppImage --uninstall-system-integration
+sudo ./ZenOmen-1.0.0-x86_64.AppImage --uninstall-system-integration
 ```
 
 ---

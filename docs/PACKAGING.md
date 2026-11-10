@@ -108,13 +108,13 @@ Releases are fully automated via GitHub Actions (`.github/workflows/release.yml`
 2. Commit changes and push to `main`:
    ```bash
    git add Cargo.toml Cargo.lock
-   git commit -m "chore(release): bump version to v0.1.0"
+   git commit -m "chore(release): bump version to v1.0.0"
    git push origin main
    ```
 3. Tag the release with a `v` prefix:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v1.0.0
+   git push origin v1.0.0
    ```
 
 ### Quality Gates & Verification
