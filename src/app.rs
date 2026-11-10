@@ -507,6 +507,7 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
         snapshot.power_profile.as_str()
     };
     ui.set_power_profile(active_profile.into());
+    ui.set_power_profile_verified(state.power_profile_verified);
 
     let profile_choices = if !state.power_profile_choices.is_empty() {
         &state.power_profile_choices

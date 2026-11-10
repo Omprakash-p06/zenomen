@@ -151,6 +151,7 @@ pub fn apply_system_profile(
                 confirmed_refresh_rate,
                 partial_success,
                 message: composite_message,
+                power_profile_status: hw_res.power_profile_status,
             })
         }
         Err(hw_err) => {
@@ -168,6 +169,7 @@ pub fn apply_system_profile(
                     message: format!(
                         "Display switched to {actual_hz} Hz; hardware service mutation withheld ({hw_err})"
                     ),
+                    power_profile_status: None,
                 })
             } else {
                 Err(format!(

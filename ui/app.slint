@@ -80,6 +80,7 @@ export component AppWindow inherits Window {
     in-out property <string> fan-2-value: "";
     in-out property <string> fan-mode: "";
     in-out property <string> power-profile: "";
+    in-out property <bool> power-profile-verified: false;
     in-out property <[string]> power-profile-choices: [];
     in-out property <string> rgb-profile: "";
     in-out property <string> rgb-variant: "Four-Zone";
@@ -346,6 +347,7 @@ export component AppWindow inherits Window {
                                 service-connected: root.service-connected;
                                 is-windows: root.provider-mode == "windows";
                                 power-profile: root.power-profile;
+                                power-profile-verified: root.power-profile-verified;
                                 power-profile-choices: root.power-profile-choices;
                                 pending-power-profile: root.pending-power-profile;
                                 preset-result-message: root.preset-result-message;

@@ -139,6 +139,9 @@ pub struct PresetResult {
     pub partial_success: bool,
     /// Human-readable explanation of what was applied or what failed.
     pub message: String,
+    /// Status of the power profile transition (e.g. ProfileVerified vs ProfileUnverified).
+    #[serde(default)]
+    pub power_profile_status: Option<PowerProfileStatus>,
 }
 
 impl PresetResult {

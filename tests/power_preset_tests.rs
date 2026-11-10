@@ -156,10 +156,11 @@ fn test_state_handles_power_and_preset_events() {
     let mut state = AppState::default();
 
     // Power profile changed
-    state.apply(&AppEvent::PowerProfileChanged(
-        Ok("performance".to_string()),
-    ));
+    state.apply(&AppEvent::PowerProfileChanged(Ok(
+        zenomen::service::types::PowerProfileResult::verified("performance", "performance"),
+    )));
     assert_eq!(state.active_power_profile, "performance");
+    assert!(state.power_profile_verified);
     assert_eq!(state.last_control_error, None);
 
     // Preset applied with full success
@@ -173,10 +174,12 @@ fn test_state_handles_power_and_preset_events() {
         confirmed_refresh_rate: Some(144),
         partial_success: false,
         message: "Preset 'gaming' successfully applied".to_string(),
+        power_profile_status: Some(zenomen::service::types::PowerProfileStatus::ProfileVerified),
     };
     state.apply(&AppEvent::PresetApplied(Ok(full_preset.clone())));
     assert_eq!(state.fan_mode, "max");
     assert_eq!(state.active_power_profile, "performance");
+    assert_eq!(state.active_preset, Some("gaming".to_string()));
     assert_eq!(state.last_preset_result, Some(full_preset));
     assert_eq!(state.last_control_error, None);
 
@@ -186,14 +189,18 @@ fn test_state_handles_power_and_preset_events() {
         power_applied: true,
         confirmed_power_profile: Some("balanced".to_string()),
         fan_applied: false,
-        confirmed_fan_mode: None,
+        confirmed_fan_mode: Some("max".to_string()),
         display_applied: false,
         confirmed_refresh_rate: None,
         partial_success: true,
         message: "Preset 'balanced' partially applied".to_string(),
+        power_profile_status: Some(zenomen::service::types::PowerProfileStatus::ProfileVerified),
     };
     state.apply(&AppEvent::PresetApplied(Ok(partial_preset.clone())));
     assert_eq!(state.last_preset_result, Some(partial_preset));
+    // Confirmed fan mode remains max, and preset is NOT active
+    assert_eq!(state.fan_mode, "max");
+    assert_eq!(state.active_preset, None);
     assert_eq!(
         state.last_control_error,
         Some("Preset 'balanced' partially applied".to_string())

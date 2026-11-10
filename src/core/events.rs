@@ -136,8 +136,8 @@ pub enum AppEvent {
     FanModeRequested(String),
     /// Fan mode change completed with confirmed mode or error.
     FanModeChanged(Result<String, String>),
-    /// Power profile change completed with confirmed profile or error.
-    PowerProfileChanged(Result<String, String>),
+    /// Power profile change completed with typed PowerProfileResult or error.
+    PowerProfileChanged(Result<crate::service::types::PowerProfileResult, String>),
     /// Combined preset applied with granular PresetResult or error.
     PresetApplied(Result<crate::service::types::PresetResult, String>),
     /// RGB lighting profile applied with confirmed profile or error (RGB-02).

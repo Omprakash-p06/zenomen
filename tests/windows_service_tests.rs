@@ -3078,3 +3078,197 @@ fn test_8a3d_power_write_authorized_independently_from_fan() {
         HardwareControlError::AuthorizationFailed(_)
     ));
 }
+
+#[test]
+fn test_8a3d_apply_preset_quiet_and_balanced_restores_auto_fan_without_0x2e() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = BoardValidation::new_verified("8A3D", "F.22");
+
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+
+    // 1. Power profile write: Performance Mode (0x1A) with [0xFF, 0x00]
+    adapter.expect_call(write_ack());
+
+    // 2. Fan mode set to auto (from max):
+    // Pre-read: Max fan is currently ON (0x26 -> 1)
+    adapter.expect_call(fan_mode_response(0x01));
+
+    // Validated 8A3D auto restoration sequence:
+    // a. 0x27 = 0 (disable max fan)
+    adapter.expect_call(write_ack());
+    // b. 0x10 (arm 120s window)
+    adapter.expect_call(fan_count_response(2));
+    // c. 0x1A [0xFF, 0x00] (re-apply EC balanced profile)
+    adapter.expect_call(write_ack());
+
+    // Post-read: Max fan is now OFF (0x26 -> 0)
+    adapter.expect_call(fan_mode_response(0x00));
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    let req = HardwareRequest::ApplyPreset {
+        preset: "balanced".to_string(),
+    };
+    let resp = handle_request(req, &board, Some(&validation), &conn);
+
+    match resp {
+        HardwareResponse::PresetApplied(result) => {
+            assert_eq!(result.preset_name, "balanced");
+            assert!(result.power_applied);
+            assert_eq!(result.confirmed_power_profile.as_deref(), Some("balanced"));
+            assert!(result.fan_applied);
+            assert_eq!(result.confirmed_fan_mode.as_deref(), Some("auto"));
+            assert!(!result.partial_success);
+            assert!(result.is_full_success());
+            assert_eq!(
+                result.power_profile_status,
+                Some(zenomen::service::types::PowerProfileStatus::ProfileUnverified)
+            );
+            assert!(result.message.contains("power accepted unverified"));
+        }
+        other => panic!("Expected PresetApplied, got {other:?}"),
+    }
+
+    // CRITICAL FIRMWARE SAFETY INVARIANT: ZERO 0x2E calls made
+    let calls = adapter.recorded_calls();
+    for (i, call) in calls.iter().enumerate() {
+        assert_ne!(
+            call.command,
+            victus_s::FAN_LEVEL_SET_QUERY,
+            "Step {i}: 0x2E was called on board 8A3D! This causes 0 RPM freeze bug"
+        );
+    }
+}
+
+#[test]
+fn test_8a3d_apply_preset_performance_enables_max_fan() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = BoardValidation::new_verified("8A3D", "F.22");
+
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+
+    // 1. Power profile write: Performance Mode (0x1A) with [0xFF, 0x01]
+    adapter.expect_call(write_ack());
+
+    // 2. Fan mode set to max (from auto):
+    // Pre-read: Max fan is currently OFF (0x26 -> 0)
+    adapter.expect_call(fan_mode_response(0x00));
+
+    // On Victus S, set_max_fan_state(true) arms window with 0x10, then 0x27=1
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack()); // 0x27 = 1
+
+    // Post-read: Max fan is now ON (0x26 -> 1)
+    adapter.expect_call(fan_mode_response(0x01));
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    let req = HardwareRequest::ApplyPreset {
+        preset: "performance".to_string(),
+    };
+    let resp = handle_request(req, &board, Some(&validation), &conn);
+
+    match resp {
+        HardwareResponse::PresetApplied(result) => {
+            assert_eq!(result.preset_name, "performance");
+            assert!(result.power_applied);
+            assert_eq!(
+                result.confirmed_power_profile.as_deref(),
+                Some("performance")
+            );
+            assert!(result.fan_applied);
+            assert_eq!(result.confirmed_fan_mode.as_deref(), Some("max"));
+            assert!(!result.partial_success);
+            assert!(result.is_full_success());
+        }
+        other => panic!("Expected PresetApplied, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_8a3d_apply_preset_partial_failure_reconciles_confirmed_fan_state() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = BoardValidation::new_verified("8A3D", "F.22");
+
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+
+    // 1. Power profile write succeeds
+    adapter.expect_call(write_ack());
+
+    // 2. Fan mode: pre-read reports max (0x01)
+    adapter.expect_call(fan_mode_response(0x01));
+
+    // Restoration fails at max fan clear (0x27)
+    adapter.expect_call(FakeResponse::FirmwareError { status: 0x04 });
+
+    // On fan failure, server re-reads firmware fan mode to report confirmed hardware state
+    adapter.expect_call(fan_mode_response(0x01)); // still max
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    let req = HardwareRequest::ApplyPreset {
+        preset: "balanced".to_string(),
+    };
+    let resp = handle_request(req, &board, Some(&validation), &conn);
+
+    match resp {
+        HardwareResponse::PresetApplied(result) => {
+            assert_eq!(result.preset_name, "balanced");
+            assert!(result.power_applied);
+            assert!(!result.fan_applied);
+            assert!(result.partial_success);
+            assert!(!result.is_full_success());
+            // Confirmed fan mode is kept as "max" rather than falsely reporting "auto"
+            assert_eq!(result.confirmed_fan_mode.as_deref(), Some("max"));
+            assert!(
+                result
+                    .message
+                    .contains("Power profile applied but fan write failed")
+            );
+        }
+        other => panic!("Expected PresetApplied, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_8a3d_standalone_set_fan_mode_auto_refuses_unsafe_reset() {
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = BoardValidation::new_verified("8A3D", "F.22");
+
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // Pre-read reports max fan is on (0x01)
+    adapter.expect_call(fan_mode_response(0x01));
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    let req = HardwareRequest::SetFanMode {
+        mode: "auto".to_string(),
+    };
+    let resp = handle_request(req, &board, Some(&validation), &conn);
+
+    match resp {
+        HardwareResponse::Error(msg) => {
+            assert!(
+                msg.contains("EC thermal profile"),
+                "Expected message explaining EC thermal profile restore requirement, got: {msg}"
+            );
+            assert!(
+                msg.contains("refused"),
+                "Expected message stating unsafe reset is refused, got: {msg}"
+            );
+        }
+        other => {
+            panic!("Expected Error response for unknown profile standalone auto fan, got {other:?}")
+        }
+    }
+
+    // Zero 0x2E calls submitted
+    let calls = adapter.recorded_calls();
+    for (i, call) in calls.iter().enumerate() {
+        assert_ne!(
+            call.command,
+            victus_s::FAN_LEVEL_SET_QUERY,
+            "Step {i}: 0x2E was called on board 8A3D!"
+        );
+    }
+}

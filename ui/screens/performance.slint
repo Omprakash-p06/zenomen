@@ -20,6 +20,8 @@ export component Performance inherits Rectangle {
     in property <bool> is-windows: false;
     /// Active profile name, empty when the interface did not report one.
     in property <string> power-profile: "";
+    /// Whether the active power profile has been confirmed by independent read-back.
+    in property <bool> power-profile-verified: false;
     /// Advertised profiles from `platform_profile_choices`.
     in property <[string]> power-profile-choices: [];
     in property <string> pending-power-profile: "";
@@ -394,9 +396,13 @@ export component Performance inherits Rectangle {
                             }
                             Text {
                                 text: root.power-profile != ""
-                                    ? (root.power-profile + " — Verified")
-                                    : (root.is-windows ? "Accepted unverified (8A3D)" : "Managed");
-                                color: root.power-profile != "" ? ThemeColors.status-ok : ThemeColors.gold;
+                                    ? (root.power-profile-verified
+                                        ? (root.power-profile + " — Verified")
+                                        : (root.power-profile + " — Accepted, unverified"))
+                                    : (root.is-windows ? "Accepted, unverified (8A3D)" : "Managed");
+                                color: (root.power-profile != "" && root.power-profile-verified)
+                                    ? ThemeColors.status-ok
+                                    : ThemeColors.gold;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.label;
                                 font-weight: ThemeTypography.weight-semibold;
@@ -436,7 +442,9 @@ export component Performance inherits Rectangle {
                         text: root.pending-power-profile != ""
                             ? "Applying " + root.pending-power-profile + " and verifying read-back..."
                             : (root.is-windows
-                                ? "Platform profile control via HP WMI interface (command 0x1A)."
+                                ? (root.power-profile-verified
+                                    ? "Platform profile control via HP WMI interface (command 0x1A) — verified."
+                                    : "Platform profile control via HP WMI interface (command 0x1A) — accepted unverified (EC register 0x95).")
                                 : "Verified by reading and writing ACPI platform_profile sysfs interface.");
                         color: root.pending-power-profile != "" ? ThemeColors.gold : ThemeColors.text-secondary;
                         font-family: ThemeTypography.font-prose;

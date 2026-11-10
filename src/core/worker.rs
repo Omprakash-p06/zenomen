@@ -80,7 +80,9 @@ pub fn spawn_monitoring_worker(
                     let _ = event_sender.send(AppEvent::FanModeChanged(Ok(mode)));
                 }
                 if let Ok(profile) = client.get_power_profile() {
-                    let _ = event_sender.send(AppEvent::PowerProfileChanged(Ok(profile)));
+                    let _ = event_sender.send(AppEvent::PowerProfileChanged(Ok(
+                        crate::service::types::PowerProfileResult::verified(profile.clone(), profile),
+                    )));
                 }
             } else {
                 let _ = event_sender.send(AppEvent::PolkitStatusChanged(
@@ -293,7 +295,7 @@ pub fn spawn_monitoring_worker(
                                 "power",
                                 tx,
                                 &mutation_in_flight,
-                                move || c.set_power_profile(&profile),
+                                move || c.set_power_profile_detailed(&profile),
                                 AppEvent::PowerProfileChanged,
                             );
                         }

@@ -1176,6 +1176,19 @@ pub fn set_fan_mode_with_profile(
     mode: &str,
     active_profile: Option<victus_s::ThermalProfile>,
 ) -> Result<String, HardwareControlError> {
+    set_fan_mode_with_target(
+        conn,
+        mode,
+        active_profile.map(victus_s::ProfileRestoreTarget::Known),
+    )
+}
+
+/// Set fan mode with optional target (known profile or safe fallback) for boards requiring EC profile restore.
+pub fn set_fan_mode_with_target(
+    conn: &HpWmiConnection,
+    mode: &str,
+    target: Option<victus_s::ProfileRestoreTarget>,
+) -> Result<String, HardwareControlError> {
     conn.ensure_available("set fan mode")?;
 
     let normalized = mode.trim().to_lowercase();
@@ -1196,7 +1209,7 @@ pub fn set_fan_mode_with_profile(
     if normalized == "max" {
         set_max_fan_state(conn, true)?;
     } else {
-        restore_automatic_fan_control(conn, active_profile)?;
+        restore_automatic_fan_control_with_target(conn, target)?;
     }
 
     std::thread::sleep(std::time::Duration::from_millis(150));
@@ -1682,7 +1695,7 @@ pub fn set_rgb_profile(
 // ────────────────────── Internal firmware helpers ─────────────────────────
 
 /// Read the current fan mode from firmware via the Max Fan state query (`0x26`).
-fn read_fan_mode_from_firmware(conn: &HpWmiConnection) -> Result<String, HardwareControlError> {
+pub fn read_fan_mode_from_firmware(conn: &HpWmiConnection) -> Result<String, HardwareControlError> {
     let mode = if get_max_fan_state(conn)? {
         "max"
     } else {

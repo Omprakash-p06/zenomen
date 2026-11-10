@@ -102,7 +102,10 @@ impl GpuiApp {
             }
             AppEvent::PowerProfileChanged(res) => {
                 match res {
-                    Ok(profile) => self.state.active_power_profile = profile,
+                    Ok(result) => {
+                        self.state.active_power_profile = result.profile;
+                        self.state.power_profile_verified = result.status.is_readback_verified();
+                    }
                     Err(e) => self.state.last_control_error = Some(e),
                 }
                 self.performance = PerformanceScreen::from_state(&self.state);

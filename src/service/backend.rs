@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::service::types::{FanMode, HardwareControlError, PresetResult};
+use crate::service::types::{FanMode, HardwareControlError, PowerProfileStatus, PresetResult};
 
 /// Verified write helper with exponential backoff retry.
 /// Writes `target` to `path`, sleeps `initial_delay`, and checks read-back.
@@ -353,6 +353,11 @@ impl HardwareBackend {
             confirmed_refresh_rate: None,
             partial_success,
             message,
+            power_profile_status: if power_applied {
+                Some(PowerProfileStatus::ProfileVerified)
+            } else {
+                None
+            },
         })
     }
 

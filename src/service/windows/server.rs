@@ -13,6 +13,7 @@ use crate::service::windows::authorization::authorize_mutation;
 use crate::service::windows::hp_wmi::{self, HpWmiConnection};
 use crate::service::windows::profiles::{BoardProfile, BoardValidation};
 use crate::service::windows::protocol::{HardwareRequest, HardwareResponse};
+use crate::service::windows::victus_s;
 
 /// Dispatch and execute a single hardware request against the board profile and WMI driver.
 ///
@@ -117,11 +118,26 @@ pub fn handle_request(
             };
 
             let p_res = hp_wmi::set_power_profile(conn, target_power);
-            let f_res = hp_wmi::set_fan_mode(conn, target_fan);
+            let active_profile = victus_s::ThermalProfile::from_name(target_power);
+            let f_res = if validation.map(|v| v.fan_write_verified).unwrap_or(false) {
+                hp_wmi::set_fan_mode_with_profile(conn, target_fan, active_profile)
+            } else {
+                Err(HardwareControlError::AuthorizationFailed(format!(
+                    "Fan write not verified for board {}",
+                    board.board_id
+                )))
+            };
 
             let power_applied = p_res.is_ok();
             let fan_applied = f_res.is_ok();
             let partial_success = power_applied ^ fan_applied;
+
+            let confirmed_power_profile = p_res.as_ref().ok().map(|p| p.profile.clone());
+            let confirmed_fan_mode = match f_res.as_ref() {
+                Ok(mode) => Some(mode.clone()),
+                Err(_) => hp_wmi::read_fan_mode_from_firmware(conn).ok(),
+            };
+            let power_profile_status = p_res.as_ref().ok().map(|p| p.status);
 
             let message = if power_applied && fan_applied {
                 let p = p_res.as_ref().unwrap();
@@ -156,13 +172,14 @@ pub fn handle_request(
             HardwareResponse::PresetApplied(PresetResult {
                 preset_name: normalized,
                 power_applied,
-                confirmed_power_profile: p_res.ok().map(|p| p.profile),
+                confirmed_power_profile,
                 fan_applied,
-                confirmed_fan_mode: f_res.ok(),
+                confirmed_fan_mode,
                 display_applied: false,
                 confirmed_refresh_rate: None,
                 partial_success,
                 message,
+                power_profile_status,
             })
         }
 
@@ -411,7 +428,19 @@ pub fn run_pipe_server(
         // to restore and no reason to send a firmware write.
         if conn.is_available() && validation.fan_write_verified {
             tracing::info!("Service shutdown: restoring fan mode to Auto for EC safety");
-            if let Err(e) = hp_wmi::set_fan_mode(&conn, "auto") {
+            let board_id = conn.board_id().unwrap_or("unknown");
+            let restore_res = if victus_s::requires_thermal_profile_restore(board_id) {
+                hp_wmi::set_fan_mode_with_target(
+                    &conn,
+                    "auto",
+                    Some(victus_s::ProfileRestoreTarget::SafeFallback(
+                        victus_s::ThermalProfile::Balanced,
+                    )),
+                )
+            } else {
+                hp_wmi::set_fan_mode(&conn, "auto")
+            };
+            if let Err(e) = restore_res {
                 tracing::warn!(error = %e, "Could not restore fan mode to Auto on shutdown");
             }
         } else {

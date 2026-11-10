@@ -52,6 +52,8 @@ pub struct AppState {
     pub pending_fan_mode: Option<String>,
     /// Currently active ACPI power profile.
     pub active_power_profile: String,
+    /// Whether the active power profile is verified via independent hardware readback.
+    pub power_profile_verified: bool,
     /// Advertised ACPI power profile choices.
     pub power_profile_choices: Vec<String>,
     /// Granular result of the last applied combined preset.
@@ -95,6 +97,7 @@ impl Default for AppState {
             fan_mode: String::new(),
             pending_fan_mode: None,
             active_power_profile: String::new(),
+            power_profile_verified: cfg!(target_os = "linux"),
             power_profile_choices: Vec::new(),
             last_preset_result: None,
             service_status: crate::service::client::ServiceConnectionStatus::Disconnected,
@@ -193,8 +196,9 @@ impl AppState {
                 }
             }
             AppEvent::PowerProfileChanged(res) => match res {
-                Ok(profile) => {
-                    self.active_power_profile = profile.clone();
+                Ok(result) => {
+                    self.active_power_profile = result.profile.clone();
+                    self.power_profile_verified = result.status.is_readback_verified();
                     self.last_control_error = None;
                 }
                 Err(e) => {
@@ -218,14 +222,16 @@ impl AppState {
                     if let Some(ref profile) = preset_res.confirmed_power_profile {
                         self.active_power_profile = profile.clone();
                     }
+                    if let Some(status) = preset_res.power_profile_status {
+                        self.power_profile_verified = status.is_readback_verified();
+                    }
                     if preset_res.display_applied && preset_res.confirmed_refresh_rate.is_some() {
                         self.display_refresh_rate = preset_res.confirmed_refresh_rate;
                     }
-                    if preset_res.is_full_success()
-                        || (preset_res.display_applied
-                            && (preset_res.power_applied || preset_res.fan_applied))
-                    {
+                    if preset_res.is_full_success() && !preset_res.partial_success {
                         self.active_preset = Some(preset_res.preset_name.clone());
+                    } else if preset_res.partial_success {
+                        self.active_preset = None;
                     }
                     self.last_preset_result = Some(preset_res.clone());
                     if !preset_res.partial_success {
