@@ -1289,10 +1289,13 @@ pub fn get_fan_rpm(
 
     if conn.is_victus_s() {
         let levels = get_victus_fan_levels(conn)?;
-        if let Some(&level) = levels.get(fan_index as usize) {
-            return Ok(Some(victus_s::rpm_for_level(level)));
+        if (fan_index as usize) < levels.len() {
+            return Ok(Some(victus_s::rpm_for_level(levels[fan_index as usize])));
         } else {
-            return Ok(None);
+            return Err(HardwareControlError::ProtocolError(format!(
+                "Victus S fan level response too short ({} bytes) for fan index {fan_index}",
+                levels.len()
+            )));
         }
     }
 
@@ -1326,6 +1329,15 @@ pub fn get_victus_fan_levels(conn: &HpWmiConnection) -> Result<Vec<u8>, Hardware
         ));
     }
     Ok(payload)
+}
+
+/// Query both fans atomically in a single 0x2D call for Victus S boards.
+pub fn get_victus_dual_fan_rpm(
+    conn: &HpWmiConnection,
+) -> Result<victus_s::DualFanTelemetry, HardwareControlError> {
+    conn.ensure_available("read Victus S fan levels")?;
+    let payload = get_victus_fan_levels(conn)?;
+    victus_s::parse_dual_fan_levels(&payload)
 }
 
 /// Read and parse the Victus S fan table (command `0x2F`).
@@ -1406,11 +1418,22 @@ pub fn restore_automatic_fan_control(
     conn: &HpWmiConnection,
     active_profile: Option<victus_s::ThermalProfile>,
 ) -> Result<(), HardwareControlError> {
+    restore_automatic_fan_control_with_target(
+        conn,
+        active_profile.map(victus_s::ProfileRestoreTarget::Known),
+    )
+}
+
+/// Restore automatic fan control with explicit target handling (known profile vs safe fallback).
+pub fn restore_automatic_fan_control_with_target(
+    conn: &HpWmiConnection,
+    target: Option<victus_s::ProfileRestoreTarget>,
+) -> Result<(), HardwareControlError> {
     conn.ensure_available("restore automatic fan control")?;
 
     let board = conn.board_id().unwrap_or("unknown");
     if victus_s::requires_thermal_profile_restore(board) {
-        let profile = active_profile.ok_or_else(|| {
+        let restore_target = target.ok_or_else(|| {
             HardwareControlError::UnsupportedMode(format!(
                 "Board {board} restores automatic cooling through its EC thermal profile \
                  (offset 0x{:02X}); the active profile is not readable from userland, so the \
@@ -1418,6 +1441,19 @@ pub fn restore_automatic_fan_control(
                 victus_s::EC_THERMAL_PROFILE_OFFSET
             ))
         })?;
+
+        let profile = restore_target.profile();
+        if restore_target.is_known() {
+            tracing::info!(
+                profile = profile.as_str(),
+                "Restoring known EC thermal profile for automatic fan control"
+            );
+        } else {
+            tracing::warn!(
+                fallback_profile = profile.as_str(),
+                "Original profile was unknown; applying explicit safe fallback profile"
+            );
+        }
 
         // No firmware write happens before this point: an unknown profile must
         // leave the machine exactly as it was found.

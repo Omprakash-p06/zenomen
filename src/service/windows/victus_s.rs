@@ -203,6 +203,192 @@ pub fn rpm_for_level(level: u8) -> u32 {
     u32::from(level).saturating_mul(RPM_PER_LEVEL_UNIT)
 }
 
+/// Explicit state machine tracking the 8A3D physical validation lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ValidationState {
+    Idle,
+    BaselineCaptured,
+    MaxFanRequested,
+    MaxFanConfirmed,
+    FanAccelerationObserved,
+    Restoring,
+    RestorationCommandAccepted,
+    ObservingAutomaticControl,
+    RestorationVerified,
+    RestorationUnverified,
+    RestorationFailed,
+}
+
+impl ValidationState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "Idle",
+            Self::BaselineCaptured => "BaselineCaptured",
+            Self::MaxFanRequested => "MaxFanRequested",
+            Self::MaxFanConfirmed => "MaxFanConfirmed",
+            Self::FanAccelerationObserved => "FanAccelerationObserved",
+            Self::Restoring => "Restoring",
+            Self::RestorationCommandAccepted => "RestorationCommandAccepted",
+            Self::ObservingAutomaticControl => "ObservingAutomaticControl",
+            Self::RestorationVerified => "RestorationVerified",
+            Self::RestorationUnverified => "RestorationUnverified",
+            Self::RestorationFailed => "RestorationFailed",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::RestorationVerified | Self::RestorationUnverified | Self::RestorationFailed
+        )
+    }
+}
+
+/// Target thermal profile for 8A3D restoration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileRestoreTarget {
+    /// Original profile is known with certainty.
+    Known(ThermalProfile),
+    /// Original profile was unknown; explicit safe fallback authorized.
+    SafeFallback(ThermalProfile),
+}
+
+impl ProfileRestoreTarget {
+    pub fn profile(self) -> ThermalProfile {
+        match self {
+            Self::Known(p) | Self::SafeFallback(p) => p,
+        }
+    }
+
+    pub fn is_known(self) -> bool {
+        matches!(self, Self::Known(_))
+    }
+}
+
+impl From<ThermalProfile> for ProfileRestoreTarget {
+    fn from(p: ThermalProfile) -> Self {
+        ProfileRestoreTarget::Known(p)
+    }
+}
+
+/// Atomically sampled dual fan tachometer readings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DualFanTelemetry {
+    pub cpu_rpm: u32,
+    pub gpu_rpm: u32,
+}
+
+/// Parse raw 0x2D response into individual RPMs for a 2-fan Victus S system.
+pub fn parse_dual_fan_levels(bytes: &[u8]) -> Result<DualFanTelemetry, HardwareControlError> {
+    if bytes.len() < 2 {
+        return Err(HardwareControlError::ProtocolError(format!(
+            "Victus S fan level response too short: expected at least 2 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    Ok(DualFanTelemetry {
+        cpu_rpm: rpm_for_level(bytes[0]),
+        gpu_rpm: rpm_for_level(bytes[1]),
+    })
+}
+
+/// Parse raw 0x2D response for `fan_count` fans with strict length checking.
+pub fn parse_fan_levels(bytes: &[u8], fan_count: u8) -> Result<Vec<u32>, HardwareControlError> {
+    let expected = fan_count as usize;
+    if bytes.len() < expected {
+        return Err(HardwareControlError::ProtocolError(format!(
+            "Victus S fan level response too short: expected at least {expected} bytes for {fan_count} fans, got {}",
+            bytes.len()
+        )));
+    }
+    Ok(bytes[..expected]
+        .iter()
+        .map(|&b| rpm_for_level(b))
+        .collect())
+}
+
+/// A single timestamped telemetry sample during the 30-second post-restoration observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationSample {
+    pub elapsed_secs: u32,
+    pub max_fan_active: Result<bool, String>,
+    pub cpu_rpm: Result<u32, String>,
+    pub gpu_rpm: Result<u32, String>,
+}
+
+/// Evaluate 30-second post-restoration telemetry samples to determine the terminal validation state.
+pub fn evaluate_observation(
+    samples: &[ObservationSample],
+    peak_cpu: u32,
+    _peak_gpu: u32,
+    profile_restored: bool,
+) -> ValidationState {
+    if !profile_restored {
+        return ValidationState::RestorationFailed;
+    }
+
+    // Must have at least 30 samples for full observation verification
+    if samples.len() < 30 {
+        return ValidationState::RestorationUnverified;
+    }
+
+    let mut wmi_error_count = 0;
+    let mut any_max_fan_active = false;
+    let mut last_cpu_rpms = Vec::new();
+
+    for sample in samples {
+        match sample.max_fan_active {
+            Ok(true) => any_max_fan_active = true,
+            Ok(false) => {}
+            Err(_) => wmi_error_count += 1,
+        }
+
+        match sample.cpu_rpm {
+            Ok(rpm) => {
+                if sample.elapsed_secs >= 20 {
+                    last_cpu_rpms.push(rpm);
+                }
+            }
+            Err(_) => wmi_error_count += 1,
+        }
+
+        if sample.gpu_rpm.is_err() {
+            wmi_error_count += 1;
+        }
+    }
+
+    // If Max Fan was observed active at any point during observation, restoration failed.
+    if any_max_fan_active {
+        return ValidationState::RestorationFailed;
+    }
+
+    // Too many WMI errors during observation makes results inconclusive.
+    // Allow at most 3 intermittent transient errors out of 30 samples if recovery succeeded.
+    if wmi_error_count > 3 {
+        return ValidationState::RestorationUnverified;
+    }
+
+    // Check if the final sample ended with an error
+    if samples.last().is_some_and(|last| {
+        last.max_fan_active.is_err() || last.cpu_rpm.is_err() || last.gpu_rpm.is_err()
+    }) {
+        return ValidationState::RestorationUnverified;
+    }
+
+    // Deceleration check: If fans were accelerated to high speed (e.g. peak_cpu >= 3500),
+    // fans should show deceleration towards normal curve in the final 10 seconds.
+    // If CPU fan remains pinned near peak (within 100 RPM) for all final samples, fail.
+    if peak_cpu >= 3500 && !last_cpu_rpms.is_empty() {
+        let avg_final_cpu: u32 = last_cpu_rpms.iter().sum::<u32>() / (last_cpu_rpms.len() as u32);
+        if avg_final_cpu >= peak_cpu.saturating_sub(100) {
+            // Fan remained locked at max speed
+            return ValidationState::RestorationFailed;
+        }
+    }
+
+    ValidationState::RestorationVerified
+}
+
 /// Map a 0..=255 PWM-style value onto the table's `1..=max_level` range.
 ///
 /// Integer equivalent of the driver's `pwm_to_rpm()` / `fixp_linear_interpolate`
@@ -470,5 +656,127 @@ mod tests {
         for board in ["8B2F", "8C99", "8DE1", "88F8", ""] {
             assert!(!requires_thermal_profile_restore(board), "{board}");
         }
+    }
+
+    #[test]
+    fn parse_dual_fan_levels_extracts_rpms_and_validates_length() {
+        let ok = parse_dual_fan_levels(&[34, 29]).expect("dual fan");
+        assert_eq!(ok.cpu_rpm, 3400);
+        assert_eq!(ok.gpu_rpm, 2900);
+
+        let zero_gpu = parse_dual_fan_levels(&[34, 0]).expect("zero gpu");
+        assert_eq!(zero_gpu.cpu_rpm, 3400);
+        assert_eq!(zero_gpu.gpu_rpm, 0);
+
+        let both_zero = parse_dual_fan_levels(&[0, 0]).expect("both zero");
+        assert_eq!(both_zero.cpu_rpm, 0);
+        assert_eq!(both_zero.gpu_rpm, 0);
+
+        assert!(matches!(
+            parse_dual_fan_levels(&[]).unwrap_err(),
+            HardwareControlError::ProtocolError(_)
+        ));
+        assert!(matches!(
+            parse_dual_fan_levels(&[34]).unwrap_err(),
+            HardwareControlError::ProtocolError(_)
+        ));
+    }
+
+    #[test]
+    fn parse_fan_levels_bounds_checks_and_converts() {
+        let rpms = parse_fan_levels(&[32, 28, 99], 2).expect("parse 2 fans");
+        assert_eq!(rpms, vec![3200, 2800]);
+
+        assert!(matches!(
+            parse_fan_levels(&[32], 2).unwrap_err(),
+            HardwareControlError::ProtocolError(_)
+        ));
+    }
+
+    #[test]
+    fn profile_restore_target_helpers() {
+        let known = ProfileRestoreTarget::Known(ThermalProfile::Quiet);
+        assert!(known.is_known());
+        assert_eq!(known.profile(), ThermalProfile::Quiet);
+
+        let fallback = ProfileRestoreTarget::SafeFallback(ThermalProfile::Balanced);
+        assert!(!fallback.is_known());
+        assert_eq!(fallback.profile(), ThermalProfile::Balanced);
+
+        let from: ProfileRestoreTarget = ThermalProfile::Performance.into();
+        assert!(from.is_known());
+        assert_eq!(from.profile(), ThermalProfile::Performance);
+    }
+
+    #[test]
+    fn evaluate_observation_handles_various_scenarios() {
+        let mut clean_samples = Vec::new();
+        for s in 1..=30 {
+            clean_samples.push(ObservationSample {
+                elapsed_secs: s,
+                max_fan_active: Ok(false),
+                cpu_rpm: Ok(if s < 10 { 4200 - s * 150 } else { 2200 }),
+                gpu_rpm: Ok(if s < 10 { 3900 - s * 200 } else { 0 }),
+            });
+        }
+
+        // 1. Clean run: deceleration from 4700 peak -> Verified
+        assert_eq!(
+            evaluate_observation(&clean_samples, 4700, 4500, true),
+            ValidationState::RestorationVerified
+        );
+
+        // 2. Profile restoration failed initially -> Failed
+        assert_eq!(
+            evaluate_observation(&clean_samples, 4700, 4500, false),
+            ValidationState::RestorationFailed
+        );
+
+        // 3. Incomplete observation (< 30 samples) -> Unverified
+        assert_eq!(
+            evaluate_observation(&clean_samples[..15], 4700, 4500, true),
+            ValidationState::RestorationUnverified
+        );
+
+        // 4. Max Fan re-enabled during observation -> Failed
+        let mut failed_max = clean_samples.clone();
+        failed_max[10].max_fan_active = Ok(true);
+        assert_eq!(
+            evaluate_observation(&failed_max, 4700, 4500, true),
+            ValidationState::RestorationFailed
+        );
+
+        // 5. Fans pinned at peak with no deceleration -> Failed
+        let mut pinned_samples = Vec::new();
+        for s in 1..=30 {
+            pinned_samples.push(ObservationSample {
+                elapsed_secs: s,
+                max_fan_active: Ok(false),
+                cpu_rpm: Ok(4700),
+                gpu_rpm: Ok(4500),
+            });
+        }
+        assert_eq!(
+            evaluate_observation(&pinned_samples, 4700, 4500, true),
+            ValidationState::RestorationFailed
+        );
+
+        // 6. Too many WMI errors -> Unverified
+        let mut error_samples = clean_samples.clone();
+        for item in error_samples.iter_mut().take(5) {
+            item.cpu_rpm = Err("WMI error".to_string());
+        }
+        assert_eq!(
+            evaluate_observation(&error_samples, 4700, 4500, true),
+            ValidationState::RestorationUnverified
+        );
+
+        // 7. Final sample errored -> Unverified
+        let mut final_error = clean_samples.clone();
+        final_error[29].cpu_rpm = Err("WMI error".to_string());
+        assert_eq!(
+            evaluate_observation(&final_error, 4700, 4500, true),
+            ValidationState::RestorationUnverified
+        );
     }
 }
