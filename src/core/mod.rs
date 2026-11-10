@@ -8,6 +8,7 @@
 pub mod benchmark;
 pub mod diagnostics;
 pub mod events;
+pub mod profile_orchestrator;
 pub mod state;
 pub mod telemetry;
 pub mod worker;

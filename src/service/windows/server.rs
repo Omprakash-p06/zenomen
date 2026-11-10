@@ -109,8 +109,8 @@ pub fn handle_request(
             let normalized = preset.trim().to_lowercase();
             let (target_power, target_fan) = match normalized.as_str() {
                 "quiet" => ("quiet", "auto"),
-                "balanced" => ("balanced", "auto"),
-                "gaming" => ("performance", "max"),
+                "balanced" | "auto" => ("balanced", "auto"),
+                "performance" | "gaming" => ("performance", "max"),
                 other => {
                     return HardwareResponse::Error(format!("Unknown preset '{other}'"));
                 }
@@ -159,6 +159,8 @@ pub fn handle_request(
                 confirmed_power_profile: p_res.ok().map(|p| p.profile),
                 fan_applied,
                 confirmed_fan_mode: f_res.ok(),
+                display_applied: false,
+                confirmed_refresh_rate: None,
                 partial_success,
                 message,
             })

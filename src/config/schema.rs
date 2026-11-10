@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub general: GeneralConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+    #[serde(default)]
+    pub display: DisplayConfig,
 }
 
 /// General application preferences.
@@ -85,6 +87,42 @@ fn default_polling_interval() -> u64 {
     DEFAULT_POLLING_INTERVAL_MS
 }
 
+/// Display refresh rate and combined system profile preferences.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DisplayConfig {
+    /// Preferred refresh rate in Hz for quiet/battery saving profiles (default 60).
+    #[serde(default = "default_quiet_refresh_rate")]
+    pub preferred_quiet_refresh_rate: u32,
+    /// Preferred refresh rate in Hz for active/performance profiles (default 144).
+    #[serde(default = "default_active_refresh_rate")]
+    pub preferred_active_refresh_rate: u32,
+    /// Restore display refresh rate on application exit.
+    #[serde(default)]
+    pub restore_refresh_rate_on_exit: bool,
+    /// Preset to automatically apply upon application startup (e.g. "balanced", "quiet", "performance").
+    #[serde(default)]
+    pub apply_profile_on_startup: Option<String>,
+}
+
+fn default_quiet_refresh_rate() -> u32 {
+    60
+}
+
+fn default_active_refresh_rate() -> u32 {
+    144
+}
+
+impl Default for DisplayConfig {
+    fn default() -> Self {
+        Self {
+            preferred_quiet_refresh_rate: default_quiet_refresh_rate(),
+            preferred_active_refresh_rate: default_active_refresh_rate(),
+            restore_refresh_rate_on_exit: false,
+            apply_profile_on_startup: None,
+        }
+    }
+}
+
 impl AppConfig {
     /// Validate configuration and clamp any fields outside safe bounds.
     pub fn sanitize(&mut self) {
@@ -102,6 +140,14 @@ impl AppConfig {
         // Enforce supported theme
         if self.general.theme.trim().is_empty() {
             self.general.theme = "dark".to_string();
+        }
+
+        // Enforce non-zero refresh rates
+        if self.display.preferred_quiet_refresh_rate == 0 {
+            self.display.preferred_quiet_refresh_rate = 60;
+        }
+        if self.display.preferred_active_refresh_rate == 0 {
+            self.display.preferred_active_refresh_rate = 144;
         }
     }
 }

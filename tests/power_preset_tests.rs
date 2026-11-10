@@ -169,6 +169,8 @@ fn test_state_handles_power_and_preset_events() {
         confirmed_power_profile: Some("performance".to_string()),
         fan_applied: true,
         confirmed_fan_mode: Some("max".to_string()),
+        display_applied: true,
+        confirmed_refresh_rate: Some(144),
         partial_success: false,
         message: "Preset 'gaming' successfully applied".to_string(),
     };
@@ -185,6 +187,8 @@ fn test_state_handles_power_and_preset_events() {
         confirmed_power_profile: Some("balanced".to_string()),
         fan_applied: false,
         confirmed_fan_mode: None,
+        display_applied: false,
+        confirmed_refresh_rate: None,
         partial_success: true,
         message: "Preset 'balanced' partially applied".to_string(),
     };

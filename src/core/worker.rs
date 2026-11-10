@@ -106,11 +106,32 @@ pub fn spawn_monitoring_worker(
                 ),
             ));
 
+            // Initial display refresh rate detection
+            let init_hz = crate::core::profile_orchestrator::get_active_refresh_rate();
+            let _ = event_sender.send(AppEvent::DisplayRefreshRateChanged(init_hz));
+
             // 4. Deadline loop with channel timeout scheduling
             let (mut current_config, _) = crate::config::default_config_path()
                 .as_deref()
                 .map(crate::config::load_or_default)
                 .unwrap_or_else(|| (crate::config::AppConfig::default(), None));
+
+            // If configured, apply startup preset
+            if let Some(ref startup_preset) = current_config.display.apply_profile_on_startup {
+                tracing::info!(preset = startup_preset.as_str(), "applying startup system profile");
+                let preset_to_apply = startup_preset.clone();
+                let c = client.clone();
+                let cfg = current_config.clone();
+                let tx = event_sender.clone();
+                execute_mutating_action(
+                    "preset-startup",
+                    tx,
+                    &mutation_in_flight,
+                    move || crate::core::profile_orchestrator::apply_system_profile(&c, &preset_to_apply, &cfg),
+                    AppEvent::PresetApplied,
+                );
+            }
+
             let mut sampling_interval = Duration::from_millis(
                 current_config
                     .telemetry
@@ -277,14 +298,15 @@ pub fn spawn_monitoring_worker(
                             );
                         }
                         AppCommand::ApplyPreset(preset) => {
-                            tracing::info!(preset = preset.as_str(), "applying preset via service");
+                            tracing::info!(preset = preset.as_str(), "applying combined system profile");
                             let c = client.clone();
+                            let cfg = current_config.clone();
                             let tx = event_sender.clone();
                             execute_mutating_action(
                                 "preset",
                                 tx,
                                 &mutation_in_flight,
-                                move || c.apply_preset(&preset),
+                                move || crate::core::profile_orchestrator::apply_system_profile(&c, &preset, &cfg),
                                 AppEvent::PresetApplied,
                             );
                         }
@@ -320,7 +342,8 @@ pub fn spawn_monitoring_worker(
                             let _ = event_sender.send(AppEvent::ControlErrorDismissed);
                         }
                         AppCommand::Shutdown => {
-                            tracing::debug!("shutdown command received; exiting worker");
+                            tracing::debug!("shutdown command received; restoring refresh rate and exiting worker");
+                            let _ = crate::core::profile_orchestrator::restore_default_refresh_rate(&current_config);
                             break;
                         }
                     }

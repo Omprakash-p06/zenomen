@@ -119,7 +119,7 @@ impl FanControlState {
 /// Granular result of applying a combined preset (PWR-06).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresetResult {
-    /// Name of the preset (e.g., "gaming", "balanced", "quiet").
+    /// Name of the preset (e.g., "gaming", "balanced", "quiet", "auto", "performance").
     pub preset_name: String,
     /// Whether the power profile was successfully written and verified.
     pub power_applied: bool,
@@ -129,6 +129,12 @@ pub struct PresetResult {
     pub fan_applied: bool,
     /// Confirmed fan mode read back from hardware, if applied.
     pub confirmed_fan_mode: Option<String>,
+    /// Whether display refresh rate was successfully changed and verified.
+    #[serde(default)]
+    pub display_applied: bool,
+    /// Confirmed display refresh rate (e.g. 60 or 144 Hz).
+    #[serde(default)]
+    pub confirmed_refresh_rate: Option<u32>,
     /// True if only one part of the preset succeeded while the other failed.
     pub partial_success: bool,
     /// Human-readable explanation of what was applied or what failed.
@@ -138,7 +144,10 @@ pub struct PresetResult {
 impl PresetResult {
     /// Check if the preset was fully applied without errors.
     pub fn is_full_success(&self) -> bool {
-        self.power_applied && self.fan_applied && !self.partial_success
+        self.power_applied
+            && self.fan_applied
+            && !self.partial_success
+            && (self.confirmed_refresh_rate.is_none() || self.display_applied)
     }
 }
 

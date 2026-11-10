@@ -51,6 +51,7 @@ fn config_roundtrip_save_and_load() {
             history_window: 60,
             polling_interval_ms: 2000,
         },
+        ..Default::default()
     };
 
     save_atomic(&path, &custom).expect("atomic save succeeds");
@@ -94,6 +95,7 @@ fn config_polling_interval_clamped_to_safe_bounds() {
             history_window: 120,
             polling_interval_ms: 100, // < 500ms
         },
+        ..Default::default()
     };
     underflow.sanitize();
     assert_eq!(
@@ -108,6 +110,7 @@ fn config_polling_interval_clamped_to_safe_bounds() {
             history_window: 120,
             polling_interval_ms: 10_000, // > 5000ms
         },
+        ..Default::default()
     };
     overflow.sanitize();
     assert_eq!(

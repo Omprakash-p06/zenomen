@@ -152,4 +152,6 @@ pub enum AppEvent {
     ControlErrorDismissed,
     /// Dual-process memory telemetry update (GUI + Hardware Service) (WIN-08 / MON-12).
     MemoryTelemetryUpdated(crate::hardware::ZenomenMemoryTelemetry),
+    /// Display refresh rate detected or changed (in Hz, e.g. 60 or 144).
+    DisplayRefreshRateChanged(Option<u32>),
 }

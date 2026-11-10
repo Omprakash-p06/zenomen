@@ -27,6 +27,9 @@ export component Performance inherits Rectangle {
     in property <bool> preset-result-partial: false;
     in property <bool> preset-result-success: false;
     in property <string> control-error-message: "";
+    in property <int> display-refresh-rate: 0;
+    in property <string> fan-mode: "";
+    in property <string> active-preset: "";
 
     callback set-power-profile(string);
     callback apply-preset(string);
@@ -135,7 +138,7 @@ export component Performance inherits Rectangle {
 
                 Text {
                     text: root.is-windows
-                        ? "Coordinate power profiles and cooling fans together with verified read-back."
+                        ? "Coordinate display refresh rate, platform power profile, and cooling fans with verified hardware read-back."
                         : "Coordinate ACPI power profiles and cooling fans together with verified read-back.";
                     color: ThemeColors.text-secondary;
                     font-family: ThemeTypography.font-prose;
@@ -145,7 +148,7 @@ export component Performance inherits Rectangle {
 
                 if !root.service-connected : CapabilityNotice {
                     text: root.is-windows
-                        ? "Hardware service (ZenOmenHardwareService) is offline. Start the service (or run zenomen-hw --console) to apply hardware changes."
+                        ? "Hardware service (ZenOmenHardwareService) is offline. Display switching will still operate; hardware mutations require the service."
                         : "Hardware service (com.zenomen.Hardware1) is disconnected. Controls will request daemon connection when toggled.";
                 }
 
@@ -154,12 +157,12 @@ export component Performance inherits Rectangle {
 
                     // Quiet Preset
                     Rectangle {
-                        min-width: 180px;
+                        min-width: 140px;
                         horizontal-stretch: 1;
-                        height: 64px;
-                        background: ThemeColors.charcoal;
-                        border-width: ThemeMetrics.stroke-hairline;
-                        border-color: ThemeColors.outline;
+                        height: 68px;
+                        background: root.active-preset == "quiet" ? ThemeColors.slate : ThemeColors.charcoal;
+                        border-width: root.active-preset == "quiet" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.active-preset == "quiet" ? ThemeColors.gold : ThemeColors.outline;
                         border-radius: 8px;
 
                         VerticalLayout {
@@ -168,14 +171,14 @@ export component Performance inherits Rectangle {
 
                             Text {
                                 text: "Quiet";
-                                color: ThemeColors.text-primary;
+                                color: root.active-preset == "quiet" ? ThemeColors.gold : ThemeColors.text-primary;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.body;
                                 font-weight: ThemeTypography.weight-semibold;
                                 horizontal-alignment: center;
                             }
                             Text {
-                                text: "Cool profile · Auto fan";
+                                text: "60 Hz · Quiet · Auto";
                                 color: ThemeColors.text-secondary;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.label;
@@ -191,12 +194,12 @@ export component Performance inherits Rectangle {
 
                     // Balanced Preset
                     Rectangle {
-                        min-width: 180px;
+                        min-width: 140px;
                         horizontal-stretch: 1;
-                        height: 64px;
-                        background: ThemeColors.charcoal;
-                        border-width: ThemeMetrics.stroke-hairline;
-                        border-color: ThemeColors.outline;
+                        height: 68px;
+                        background: root.active-preset == "balanced" ? ThemeColors.slate : ThemeColors.charcoal;
+                        border-width: root.active-preset == "balanced" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.active-preset == "balanced" ? ThemeColors.gold : ThemeColors.outline;
                         border-radius: 8px;
 
                         VerticalLayout {
@@ -205,14 +208,14 @@ export component Performance inherits Rectangle {
 
                             Text {
                                 text: "Balanced";
-                                color: ThemeColors.text-primary;
+                                color: root.active-preset == "balanced" ? ThemeColors.gold : ThemeColors.text-primary;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.body;
                                 font-weight: ThemeTypography.weight-semibold;
                                 horizontal-alignment: center;
                             }
                             Text {
-                                text: "Balanced profile · Auto fan";
+                                text: "144 Hz · Balanced · Auto";
                                 color: ThemeColors.text-secondary;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.label;
@@ -226,14 +229,14 @@ export component Performance inherits Rectangle {
                         }
                     }
 
-                    // Gaming Preset
+                    // Auto Preset
                     Rectangle {
-                        min-width: 180px;
+                        min-width: 140px;
                         horizontal-stretch: 1;
-                        height: 64px;
-                        background: ThemeColors.charcoal;
-                        border-width: ThemeMetrics.stroke-hairline;
-                        border-color: ThemeColors.outline;
+                        height: 68px;
+                        background: root.active-preset == "auto" ? ThemeColors.slate : ThemeColors.charcoal;
+                        border-width: root.active-preset == "auto" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.active-preset == "auto" ? ThemeColors.gold : ThemeColors.outline;
                         border-radius: 8px;
 
                         VerticalLayout {
@@ -241,15 +244,15 @@ export component Performance inherits Rectangle {
                             spacing: 4px;
 
                             Text {
-                                text: "Gaming";
-                                color: ThemeColors.gold;
+                                text: "Auto";
+                                color: root.active-preset == "auto" ? ThemeColors.gold : ThemeColors.text-primary;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.body;
                                 font-weight: ThemeTypography.weight-semibold;
                                 horizontal-alignment: center;
                             }
                             Text {
-                                text: "Performance · Max fan";
+                                text: "144 Hz · Default · Auto";
                                 color: ThemeColors.text-secondary;
                                 font-family: ThemeTypography.font-prose;
                                 font-size: ThemeTypography.label;
@@ -258,8 +261,146 @@ export component Performance inherits Rectangle {
                         }
 
                         TouchArea {
-                            clicked => { root.apply-preset("gaming"); }
+                            clicked => { root.apply-preset("auto"); }
                             mouse-cursor: pointer;
+                        }
+                    }
+
+                    // Performance Preset
+                    Rectangle {
+                        min-width: 140px;
+                        horizontal-stretch: 1;
+                        height: 68px;
+                        background: (root.active-preset == "performance" || root.active-preset == "gaming") ? ThemeColors.slate : ThemeColors.charcoal;
+                        border-width: (root.active-preset == "performance" || root.active-preset == "gaming") ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: (root.active-preset == "performance" || root.active-preset == "gaming") ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 8px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+
+                            Text {
+                                text: "Performance";
+                                color: (root.active-preset == "performance" || root.active-preset == "gaming") ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.body;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: "144 Hz · Performance · Max";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => { root.apply-preset("performance"); }
+                            mouse-cursor: pointer;
+                        }
+                    }
+                }
+
+                // Live Component Status Readout
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: ThemeColors.charcoal;
+                        border-width: ThemeMetrics.stroke-hairline;
+                        border-color: ThemeColors.outline;
+                        border-radius: 6px;
+                        height: 52px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: 2px;
+
+                            Text {
+                                text: "Display";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                            }
+                            Text {
+                                text: root.display-refresh-rate > 0
+                                    ? (root.display-refresh-rate + " Hz — Verified")
+                                    : "Active — Verified";
+                                color: ThemeColors.status-ok;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: ThemeColors.charcoal;
+                        border-width: ThemeMetrics.stroke-hairline;
+                        border-color: ThemeColors.outline;
+                        border-radius: 6px;
+                        height: 52px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: 2px;
+
+                            Text {
+                                text: "Cooling Fan";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                            }
+                            Text {
+                                text: root.fan-mode == "max"
+                                    ? "Max Fan — Verified"
+                                    : (root.fan-mode != "" ? (root.fan-mode + " — Verified") : "Auto Fan — Verified");
+                                color: root.fan-mode == "max" ? ThemeColors.gold : ThemeColors.status-ok;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: ThemeColors.charcoal;
+                        border-width: ThemeMetrics.stroke-hairline;
+                        border-color: ThemeColors.outline;
+                        border-radius: 6px;
+                        height: 52px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: 2px;
+
+                            Text {
+                                text: "Platform Profile";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                            }
+                            Text {
+                                text: root.power-profile != ""
+                                    ? (root.power-profile + " — Verified")
+                                    : (root.is-windows ? "Accepted unverified (8A3D)" : "Managed");
+                                color: root.power-profile != "" ? ThemeColors.status-ok : ThemeColors.gold;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                            }
                         }
                     }
                 }

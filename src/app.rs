@@ -525,6 +525,9 @@ fn apply_to_ui(ui: &AppWindow, state: &AppState, event: &AppEvent) {
         ui.set_preset_result_success(false);
     }
 
+    ui.set_display_refresh_rate(state.display_refresh_rate.unwrap_or(0) as i32);
+    ui.set_active_preset(state.active_preset.as_deref().unwrap_or("").into());
+
     ui.set_service_status_text(state.service_status.description().into());
     ui.set_polkit_status_text(state.polkit_status.as_str().into());
 

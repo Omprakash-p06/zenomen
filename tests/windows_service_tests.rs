@@ -2720,46 +2720,49 @@ fn test_8a3d_manual_pwm_remains_locked() {
 }
 
 #[test]
-fn test_8a3d_power_mutations_remain_locked() {
+fn test_8a3d_f22_power_and_presets_authorized_while_unvalidated_bios_and_rgb_remain_locked() {
     let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation_f22 = resolve_board_validation("8A3D", "F.22");
 
     assert!(
-        !validation.power_write_verified,
-        "power_write_verified must be false on 8A3D"
-    );
-    assert!(
-        !validation.rgb_write_verified,
+        !validation_f22.rgb_write_verified,
         "rgb_write_verified must be false on 8A3D"
     );
 
-    // SetPowerProfile rejected
+    // SetPowerProfile authorized on 8A3D BIOS F.22
     let req_power = HardwareRequest::SetPowerProfile {
         profile: "performance".to_string(),
     };
-    let err_power = authorize_mutation(&req_power, &board, Some(&validation))
-        .expect_err("SetPowerProfile must be blocked");
-    assert!(matches!(
-        err_power,
-        HardwareControlError::UnsupportedMode(_)
-    ));
+    assert!(
+        authorize_mutation(&req_power, &board, Some(&validation_f22)).is_ok(),
+        "SetPowerProfile should be authorized on 8A3D F.22"
+    );
 
-    // ApplyPreset rejected
-    let req_preset = HardwareRequest::ApplyPreset {
-        preset: "gaming".to_string(),
-    };
-    let err_preset = authorize_mutation(&req_preset, &board, Some(&validation))
-        .expect_err("ApplyPreset must be blocked");
-    assert!(matches!(
-        err_preset,
-        HardwareControlError::UnsupportedMode(_)
-    ));
+    // ApplyPreset authorized on 8A3D BIOS F.22
+    for preset in &["quiet", "balanced", "auto", "performance", "gaming"] {
+        let req_preset = HardwareRequest::ApplyPreset {
+            preset: preset.to_string(),
+        };
+        assert!(
+            authorize_mutation(&req_preset, &board, Some(&validation_f22)).is_ok(),
+            "Preset '{preset}' should be authorized on 8A3D F.22"
+        );
+    }
 
-    // SetRgbEnabled rejected
+    // SetRgbEnabled rejected on 8A3D
     let req_rgb = HardwareRequest::SetRgbEnabled { enabled: true };
-    let err_rgb = authorize_mutation(&req_rgb, &board, Some(&validation))
-        .expect_err("SetRgbEnabled must be blocked");
+    let err_rgb = authorize_mutation(&req_rgb, &board, Some(&validation_f22))
+        .expect_err("SetRgbEnabled must be blocked on 8A3D");
     assert!(matches!(err_rgb, HardwareControlError::UnsupportedMode(_)));
+
+    // Unvalidated BIOS version (e.g. F.21) remains locked for power and preset mutations
+    let validation_f21 = resolve_board_validation("8A3D", "F.21");
+    let err_power_f21 = authorize_mutation(&req_power, &board, Some(&validation_f21))
+        .expect_err("SetPowerProfile must be blocked on unvalidated 8A3D F.21");
+    assert!(matches!(
+        err_power_f21,
+        HardwareControlError::UnsupportedMode(_)
+    ));
 }
 
 #[test]

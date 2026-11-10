@@ -349,6 +349,8 @@ impl HardwareBackend {
             confirmed_power_profile,
             fan_applied,
             confirmed_fan_mode,
+            display_applied: false,
+            confirmed_refresh_rate: None,
             partial_success,
             message,
         })

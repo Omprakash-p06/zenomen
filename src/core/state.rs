@@ -76,6 +76,10 @@ pub struct AppState {
     pub provider_label: String,
     /// Dual-process memory telemetry (GUI + Service) (WIN-08 / MON-12).
     pub memory_telemetry: crate::hardware::ZenomenMemoryTelemetry,
+    /// Currently active display refresh rate in Hz (e.g. 60, 144), if detected.
+    pub display_refresh_rate: Option<u32>,
+    /// Currently active system preset name ("quiet", "balanced", "auto", "performance"), if set.
+    pub active_preset: Option<String>,
 }
 
 impl Default for AppState {
@@ -103,6 +107,8 @@ impl Default for AppState {
             rgb_variant: None,
             provider_label: "Mock provider".to_string(),
             memory_telemetry: crate::hardware::ZenomenMemoryTelemetry::default(),
+            display_refresh_rate: None,
+            active_preset: None,
         }
     }
 }
@@ -201,7 +207,9 @@ impl AppState {
                     if let Some(ref mode) = preset_res.confirmed_fan_mode {
                         self.fan_mode = mode.clone();
                     } else if preset_res.fan_applied {
-                        self.fan_mode = if preset_res.preset_name == "gaming" {
+                        self.fan_mode = if preset_res.preset_name == "gaming"
+                            || preset_res.preset_name == "performance"
+                        {
                             "max".to_string()
                         } else {
                             "auto".to_string()
@@ -209,6 +217,15 @@ impl AppState {
                     }
                     if let Some(ref profile) = preset_res.confirmed_power_profile {
                         self.active_power_profile = profile.clone();
+                    }
+                    if preset_res.display_applied && preset_res.confirmed_refresh_rate.is_some() {
+                        self.display_refresh_rate = preset_res.confirmed_refresh_rate;
+                    }
+                    if preset_res.is_full_success()
+                        || (preset_res.display_applied
+                            && (preset_res.power_applied || preset_res.fan_applied))
+                    {
+                        self.active_preset = Some(preset_res.preset_name.clone());
                     }
                     self.last_preset_result = Some(preset_res.clone());
                     if !preset_res.partial_success {
@@ -222,6 +239,9 @@ impl AppState {
                     self.last_control_error = Some(e.clone());
                 }
             },
+            AppEvent::DisplayRefreshRateChanged(hz) => {
+                self.display_refresh_rate = *hz;
+            }
             AppEvent::ServiceStatusChanged(status) => {
                 self.service_status = status.clone();
                 if !status.is_connected() {

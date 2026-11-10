@@ -118,6 +118,8 @@ export component AppWindow inherits Window {
     in-out property <string> diag-sandboxing-label: "Sandboxing:";
     in-out property <string> diag-sandboxing-text: "ProtectSystem=strict, ReadWritePaths=/sys/devices/platform/hp-wmi /sys/firmware/acpi";
     in-out property <string> control-error-message: "";
+    in-out property <int> display-refresh-rate: 0;
+    in-out property <string> active-preset: "";
 
     // ---- ZenOmen Process Memory Telemetry (WIN-08 / MON-12) ----------------
     in-out property <string> mem-zenomen-total: "Unavailable";
@@ -350,6 +352,9 @@ export component AppWindow inherits Window {
                                 preset-result-partial: root.preset-result-partial;
                                 preset-result-success: root.preset-result-success;
                                 control-error-message: root.control-error-message;
+                                display-refresh-rate: root.display-refresh-rate;
+                                fan-mode: root.fan-mode;
+                                active-preset: root.active-preset;
                                 set-power-profile(p) => {
                                     root.set-power-profile(p);
                                 }
