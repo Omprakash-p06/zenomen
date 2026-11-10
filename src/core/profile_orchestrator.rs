@@ -124,7 +124,11 @@ pub fn apply_system_profile(
         }
     };
     #[cfg(not(target_os = "windows"))]
-    let (display_applied, confirmed_refresh_rate, display_message) = (true, None, None);
+    let (display_applied, confirmed_refresh_rate, display_message): (
+        bool,
+        Option<u32>,
+        Option<String>,
+    ) = (true, None, None);
 
     // 2. Switch OEM Platform Profile and Fan Mode via Hardware Service
     let hw_result = client.apply_preset(&targets.name);

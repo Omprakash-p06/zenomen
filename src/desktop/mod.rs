@@ -9,7 +9,6 @@ pub mod single_instance;
 pub mod system_integration;
 #[cfg(target_os = "linux")]
 pub mod tray;
-#[cfg(target_os = "windows")]
 pub mod windows;
 
 pub use actions::DesktopAction;
