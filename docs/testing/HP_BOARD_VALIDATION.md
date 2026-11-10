@@ -127,16 +127,19 @@ Observe standard output:
 - It will log that `fan_write_verified = false`, `power_write_verified = false`.
 - It will verify the real WMI connection and start the named pipe server on `\\.\pipe\ZenOmen.Hardware.v1`.
 
-#### Step 4: Physical Fan Mutation Verification (When Approved)
-If the operator authorizes physical testing:
-1. Verify initial fan state is `auto`.
-2. Issue `SetFanMode("max")`.
-3. Check daemon log:
-   - Does the firmware return status `0` (success), `3` (unknown command), `4` (unknown command type), or `5` (invalid parameters)?
-   - If `0x00`, does the post-write read-back confirm `max`?
-   - Do the fans audibly spool up to 100% RPM within 3 seconds?
-4. Immediately issue `SetFanMode("auto")` or stop the daemon (daemon automatically restores `auto` on shutdown).
-   On `8A3D` the restore is refused unless the active EC thermal profile is known — check the
-   daemon log instead of assuming Auto was applied.
-5. Record whether the BIOS accepted or restricted manual fan control.
-6. If confirmed working, update `resolve_board_validation` in `src/service/windows/profiles.rs` to mark `fan_write_verified: true` for `8A3D` with BIOS `F.22`.
+#### Step 4: Physical Fan Mutation Verification via Dedicated Validation Runbook
+When the operator authorizes physical testing on motherboard `8A3D` with BIOS `F.22`:
+```powershell
+.\target\debug\zenomen-hw.exe --validate-8a3d-fan
+```
+The runbook executes the 10-state safety validation protocol:
+1. **Interactive Confirmation:** Requires typing `'VALIDATE'` before any mutation.
+2. **Thermal Profile Specification:** Prompts for active profile (Balanced, Performance, Quiet, or Unknown -> Safe Fallback).
+3. **Baseline Acquisition:** Atomically queries dual-fan speeds via `0x2D` (`get_victus_dual_fan_rpm`), fan count (`0x10`), and Max Fan status (`0x26`).
+4. **Fan Table Inspection:** Inspects table rows (`0x2F`) and verifies GPU offset.
+5. **Arm Window:** Arms user-defined state (`0x10`).
+6. **Commanded Max Fan:** Writes `0x27 = [1, 0, 0, 0]` and confirms readback (`0x26 = 1`).
+7. **Acceleration Observation:** Live 6-second polling loop observing tachometer spool-up (reaching ~4,700 CPU / ~4,500 GPU RPM).
+8. **EC Cooling Restoration:** Executes safe restore `0x27=0` -> `0x10` -> `0x1A {0xFF, profile}` (strictly forbidding `0x2E {0,0}`).
+9. **Sustained 30-Second Observation:** 30 consecutive 1-second samples recording timestamps, WMI transport integrity, independent CPU/GPU RPMs, verifying `0x26` stays 0, and watching physical deceleration to autonomous curves (recognizing legitimate GPU fan stops under cold temperatures).
+10. **Final Evaluation:** Evaluates terminal state (`RestorationVerified`, `RestorationUnverified`, or `RestorationFailed`) and leaves `fan_write_verified: false` unchanged pending formal sign-off.

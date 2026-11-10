@@ -187,12 +187,14 @@ Upstream's replacement sequence for `PWM_MODE_AUTO` on this board:
 4. (upstream only) `0x22` — re-write GPU CTGP/PPAB bytes. ZenOmen never changes those, so it
    does not rewrite them.
 
-**ZenOmen policy** (`restore_automatic_fan_control`):
+**ZenOmen policy** (`restore_automatic_fan_control_with_target`):
 The active profile on `8A3D` lives in EC register `0x95`, which a userland Windows process cannot
-access directly. Therefore, restoration takes `Option<ThermalProfile>`:
+access directly. Therefore, restoration takes `Option<ProfileRestoreTarget>`:
 
-- `Some(profile)` → Executes the verified sequence: clear Max Fan (`0x27 = 0`), arm state (`0x10`), and re-apply active profile (`0x1A {0xFF, profile.value()}`). Never writes `0x2E`. If any step fails, the function halts immediately without writing subsequent opcodes.
+- `Some(ProfileRestoreTarget::Known(profile))` → Executes the verified sequence: clear Max Fan (`0x27 = 0`), arm state (`0x10`), and re-apply active profile (`0x1A {0xFF, profile.value()}`). Never writes `0x2E`. If any step fails, the function halts immediately without writing subsequent opcodes.
+- `Some(ProfileRestoreTarget::SafeFallback(profile))` → Logs explicit warning that original profile was unknown and applies the operator-authorized safe fallback profile (e.g. Balanced `0x00`). Does NOT pretend the original profile was restored.
 - `None` → Immediately transitions state to `RestoreFailed` and returns `HardwareControlError::UnsupportedMode` with **zero firmware writes**. Refusing is safe (Max Fan remains active); sending `0x2E {0,0}` or guessing a profile is unsafe.
+- **Validation Runbook:** The `--validate-8a3d-fan` runbook implements a 10-state machine (`Idle` -> `BaselineCaptured` -> `MaxFanRequested` -> `MaxFanConfirmed` -> `FanAccelerationObserved` -> `Restoring` -> `RestorationCommandAccepted` -> `ObservingAutomaticControl` -> `RestorationVerified`/`RestorationUnverified`/`RestorationFailed`) with a sustained 30-second observation loop.
 - **Shutdown Invariant:** On service shutdown, `restore_fan_mode_on_shutdown` checks `validation.fan_write_verified`. Since `fan_write_verified` is strictly `false` for unratified boards (`8A3D`), shutdown writes are safely skipped.
 
 ### 4.6 Opcode 0x4C Thermal Profile Query Candidate
