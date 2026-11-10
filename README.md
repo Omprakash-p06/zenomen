@@ -1,10 +1,19 @@
-# ZenOmen
+<p align="center">
+  <img src="data/icons/zenomen.png" alt="ZenOmen Logo" width="128" height="128">
+</p>
 
-A lightweight, native hardware control center for HP OMEN and Victus laptops on Linux and Windows.
+<h1 align="center">ZenOmen</h1>
 
-[![Latest Release](https://img.shields.io/github/v/release/Omprakash-p06/zenomen?label=release)](https://github.com/Omprakash-p06/zenomen/releases/latest)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
-[![CI](https://github.com/Omprakash-p06/zenomen/actions/workflows/release.yml/badge.svg)](https://github.com/Omprakash-p06/zenomen/actions)
+<p align="center">
+  <strong>A lightweight, native hardware control center for HP OMEN and Victus laptops on Linux and Windows.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Omprakash-p06/zenomen/releases"><img src="https://img.shields.io/github/v/tag/Omprakash-p06/zenomen?sort=semver&label=version" alt="Latest Version"></a>
+  <a href="https://github.com/Omprakash-p06/zenomen/releases/latest"><img src="https://img.shields.io/github/v/release/Omprakash-p06/zenomen?label=release" alt="Latest Release"></a>
+  <a href="https://github.com/Omprakash-p06/zenomen/actions/workflows/release.yml"><img src="https://github.com/Omprakash-p06/zenomen/actions/workflows/release.yml/badge.svg" alt="Release Build Status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-green.svg" alt="License: GPL v3"></a>
+</p>
 
 ---
 
@@ -120,14 +129,14 @@ The package automatically installs the desktop entry, icons, D-Bus system bus co
 Make the AppImage executable and run it:
 
 ```bash
-chmod +x ZenOmen_1.0.0_amd64.AppImage
-./ZenOmen_1.0.0_amd64.AppImage
+chmod +x ZenOmen-1.0.0-x86_64.AppImage
+./ZenOmen-1.0.0-x86_64.AppImage
 ```
 
 To enable hardware fan and power control under AppImage, register the system integration files once as root:
 
 ```bash
-sudo ./ZenOmen_1.0.0_amd64.AppImage --install-system-integration
+sudo ./ZenOmen-1.0.0-x86_64.AppImage --install-system-integration
 ```
 
 ### Windows 10/11 x64

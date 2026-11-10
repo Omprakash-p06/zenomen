@@ -7,7 +7,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-VERSION="$(cargo pkgid --manifest-path "${PROJECT_ROOT}/Cargo.toml" | cut -d'#' -f2 | cut -d':' -f2 || echo "0.1.0")"
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "${PROJECT_ROOT}/Cargo.toml" | head -n1)"
+if [ -z "${VERSION}" ]; then
+    VERSION="1.0.0"
+fi
 TARGET_DIR="${PROJECT_ROOT}/target/release"
 BUILD_DIR="${PROJECT_ROOT}/target/appimage"
 APP_DIR="${BUILD_DIR}/AppDir"
@@ -72,7 +79,7 @@ elif [ -f "${BUILD_DIR}/appimagetool-x86_64.AppImage" ]; then
 else
     echo "==> Downloading appimagetool..."
     mkdir -p "${BUILD_DIR}"
-    APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage"
+    APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
     curl -sSL -o "${BUILD_DIR}/appimagetool-x86_64.AppImage" "${APPIMAGETOOL_URL}"
     chmod +x "${BUILD_DIR}/appimagetool-x86_64.AppImage"
     APPIMAGETOOL="${BUILD_DIR}/appimagetool-x86_64.AppImage"
@@ -81,6 +88,10 @@ fi
 # 7. Package AppImage
 OUTPUT_FILE="${OUTPUT_DIR}/ZenOmen-${VERSION}-x86_64.AppImage"
 echo "==> Generating ${OUTPUT_FILE}..."
-ARCH=x86_64 "${APPIMAGETOOL}" "${APP_DIR}" "${OUTPUT_FILE}"
+APPIMAGETOOL_FLAGS=()
+if [[ "${APPIMAGETOOL}" == *.AppImage ]]; then
+    APPIMAGETOOL_FLAGS+=("--appimage-extract-and-run")
+fi
+ARCH=x86_64 "${APPIMAGETOOL}" "${APPIMAGETOOL_FLAGS[@]}" "${APP_DIR}" "${OUTPUT_FILE}"
 
 echo "==> AppImage created successfully: ${OUTPUT_FILE}"
