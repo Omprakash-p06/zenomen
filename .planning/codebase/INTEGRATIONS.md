@@ -1,285 +1,177 @@
+<!-- refreshed: 2026-11-11 -->
 # External Integrations
 
-**Analysis Date:** 2026-11-09
+**Analysis Date:** 2026-11-11
 
 ## APIs & External Services
 
+ZenOmen has **no network integrations**: no HTTP client, no telemetry upload, no accounts, no cloud sync. Every integration is local to the machine.
+
 ### Linux Kernel Interfaces (sysfs / procfs)
 
-Direct filesystem reads and writes via standard library (`std::fs`); no dependence on external sensor daemons (e.g. `lm-sensors`) or userland intermediaries. Path discovery and validation live in `src/hardware/linux/provider.rs`, with specialized parsers in `src/hardware/linux/`.
+Read-only telemetry (`src/hardware/linux/`):
+- `/proc/stat` — aggregate CPU utilization (`sample_proc_stat`, `src/hardware/linux/cpu.rs`).
+- `/proc/cpuinfo` — CPU model and frequency fallback.
+- `/proc/meminfo` — RAM via `MemTotal - MemAvailable` (`src/hardware/linux/memory.rs`).
+- `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq` — CPU frequency (`LinuxHardwareProvider`, `src/hardware/linux/provider.rs`).
+- `/sys/class/hwmon/hwmon*/` — temperature and fan tachometers via `SensorRegistry::scan_roots` (`src/hardware/registry.rs`, `src/hardware/linux/hwmon.rs`).
+  - CPU temperature priority: `k10temp` (Tctl/Tdie) → `coretemp` (Package id 0) → `acpitz` temp1.
+  - Fan tachometers: any `fan*_input`; fan *control* is restricted to `hp`/`hp-wmi`/`platform` devices.
+- `/sys/class/drm/card*/` — dynamic GPU discovery and AMD utilization/temperature (`src/hardware/linux/gpu.rs`).
+- `/sys/class/power_supply/BAT*/{capacity,status,time_to_empty_now,time_to_full_now}` — battery telemetry.
+- `/sys/firmware/acpi/platform_profile` and `platform_profile_choices` — ACPI power profiles.
+- `/etc/os-release`, `/proc/sys/kernel/osrelease`, `/sys/class/dmi/id/{product_name,sys_vendor}` — diagnostics (`src/core/diagnostics.rs`).
 
-| Subsystem | Target Filesystem Path | Purpose | Implementation Module |
-|---|---|---|---|
-| **CPU Utilization** | `/proc/stat` | Aggregate and per-core CPU jiffies calculation | `src/hardware/linux/cpu.rs` |
-| **CPU Identification** | `/proc/cpuinfo` | Processor model name string, fallback clock speeds | `src/hardware/linux/cpu.rs` |
-| **CPU Frequency** | `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq` | Dynamic core clock frequency (kHz to MHz conversion) | `src/hardware/linux/cpu.rs` |
-| **Memory Metrics** | `/proc/meminfo` | `MemTotal`, `MemAvailable`, `MemFree`, buffers, and cache | `src/hardware/linux/memory.rs` |
-| **DRM GPU Enumeration** | `/sys/class/drm/card*` | Dynamic discrete and integrated GPU discovery | `src/hardware/linux/gpu.rs` |
-| **AMD GPU Telemetry** | `<drm_card>/device/gpu_busy_percent`<br>`<drm_card>/device/mem_info_vram_used`<br>`<drm_card>/device/mem_info_vram_total` | AMD GPU core load percentage and dedicated VRAM usage | `src/hardware/linux/gpu.rs` |
-| **Thermal & Tachometer Sensors** | `/sys/class/hwmon/hwmon*` (`name`, `temp*_input`, `temp*_label`, `fan*_input`, `fan*_label`) | Temperature probe readings (m°C to °C) and fan speeds (RPM) | `src/hardware/linux/hwmon.rs` |
-| **ACPI Platform Profile** | `/sys/firmware/acpi/platform_profile`<br>`/sys/firmware/acpi/platform_profile_choices` | Reading and writing ACPI power profiles (`quiet`, `balanced`, `performance`) | `src/service/backend.rs` |
-| **HP WMI Fan Mode** | `/sys/devices/platform/hp-wmi/hwmon/hwmon*/pwm1_enable`<br>fallback: `/sys/class/hwmon/hwmon*/pwm1_enable` | Hardware cooling mode write/read: `0` = Max Fan, `1` = Manual, `2` = Automatic | `src/service/backend.rs` |
-| **Battery Subsystem** | `/sys/class/power_supply/BAT*` (`capacity`, `status`) | Battery charge percentage and AC/discharging status | `src/hardware/linux/provider.rs` |
-| **4-Zone RGB Lighting** | `/sys/devices/platform/hp-wmi/rgb_zones/zone00` … `zone03` | Hex/RGB color control for 4 independent keyboard zones | `src/hardware/rgb.rs` |
-| **Monolithic RGB (Legacy)** | `/sys/devices/platform/hp-wmi/keyboardleds` | Legacy single-zone RGB backlight hex write | `src/hardware/rgb.rs` |
-| **Upstream LED Subsystem** | `/sys/class/leds/hp_omen::kbd_backlight/zone_colors` | Kernel-patch standard LED class RGB interface | `src/hardware/rgb.rs` |
-
-**Verification & Write Semantics:**
-Mutations to `pwm1_enable` and `platform_profile` are exclusively performed by the privileged `zenomen-hw` daemon. After writing to sysfs, values are read back immediately with exponential backoff retries (`src/service/backend.rs`). Mutating operations via D-Bus are enforced by Polkit authorization checks (`src/service/contract.rs`).
-
----
+Privileged writes (`src/service/backend.rs`, root only, behind D-Bus):
+- `sys/devices/platform/hp-wmi/hwmon/hwmon*/pwm1_enable` — fan mode (0=max, 1=manual, 2=auto), with `write_and_verify` (3 attempts, 50 ms doubling backoff).
+- `sys/firmware/acpi/platform_profile` — power profile, validated against `platform_profile_choices` and rejecting names containing `\n`, `\r`, `/`, `\0`.
+- RGB interfaces, all under `/sys/devices/platform/hp-wmi/` or `/sys/class/leds/`:
+  - `rgb_zones/zone00..zone03` (FourZone, hex strings),
+  - `keyboardleds` (Legacy, 24-char concatenated hex),
+  - `/sys/class/leds/hp_omen::kbd_backlight/zone_colors` (KernelPatch, 12 raw bytes).
+  - Detection order is encoded in `HardwareBackend::find_rgb_interface` and `src/hardware/rgb.rs`.
 
 ### External Executables (Linux)
 
-- **`nvidia-smi` (NVIDIA GPU Metrics):**
-  - **Path Probe:** `/usr/bin/nvidia-smi`, `/bin/nvidia-smi`, or resolved through `$PATH`.
-  - **Invocation:** `nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total --format=csv,noheader,nounits`.
-  - **Architecture:** Managed via a single persistent background watcher thread (`src/hardware/linux/gpu.rs`). Polling occurs asynchronously; cached samples older than 3 seconds are treated as unavailable to prevent presenting stale telemetry.
-- **`xdg-open` (Desktop Web Browser Invocation):**
-  - Used in `src/desktop/releases.rs` to launch the user's default browser at the GitHub Releases page when update checks are clicked.
-
----
+- `nvidia-smi` — optional NVIDIA GPU telemetry. A single background watcher thread (`NvidiaSampler` in `src/hardware/linux/gpu.rs`) is created at provider construction; the 1 Hz tick never blocks on the process and reads the latest sample (or nothing).
+- `systemctl` — invoked by `src/desktop/system_integration.rs` (`daemon-reload`, `enable`, `restart`, `stop`, `disable`) with `--no-ask-password`, resolved as `/usr/bin/systemctl` → `/bin/systemctl` → `PATH`.
+- GUI providers are resolved by `zenomen::hardware::linux::provider`; no `sudo` is ever invoked by the GUI.
 
 ### D-Bus — Linux System Bus (Privilege Separation Boundary)
 
-- **Service Bus Name:** `com.zenomen.Hardware1`
-- **Object Path:** `/com/zenomen/Hardware1`
-- **Interface Name:** `com.zenomen.Hardware1`
-- **Daemon Implementation:** `src/service/contract.rs` (`#[interface(name = "com.zenomen.Hardware1")]`), started by `src/bin/zenomen-hw.rs`.
-- **Client Implementation:** `src/service/client.rs` (`HardwareServiceClient`).
-- **Transport Library:** `zbus` 5.19 (using synchronous/blocking APIs; no async runtime required).
-- **Bus Configuration File:** `data/dbus/com.zenomen.Hardware1.conf` (allows unprivileged users to call methods; root owns service name).
-- **Activation Service File:** `data/dbus/com.zenomen.Hardware1.service` (declares `Exec=/usr/bin/zenomen-hw` and `SystemdService=zenomen-hw.service`).
-- **Exposed D-Bus Methods:**
-  - `GetCapabilities() -> String` (JSON containing supported features and versions)
-  - `GetFanStatus() -> (String, Vec<u32>)` (Active mode: `"auto"`, `"max"`, etc., and fan RPMs)
-  - `SetFanMode(String) -> String` (*Mutating*, Polkit-gated)
-  - `GetPowerProfiles() -> Vec<String>` (List of supported ACPI profile strings)
-  - `GetPowerProfile() -> String` (Current active profile)
-  - `SetPowerProfile(String) -> String` (*Mutating*, Polkit-gated)
-  - `ApplyPreset(String) -> String` (*Mutating*, Polkit-gated, returns JSON `PresetResult`)
-  - `ApplyRgbProfile(String) -> String` (*Mutating*, Polkit-gated, accepts serialized `RgbProfile`)
-  - `SetRgbEnabled(bool) -> String` (*Mutating*, Polkit-gated)
-- **Development Flag:** Setting `ZENOMEN_HW_SESSION=1` forces `zenomen-hw` to connect to the session bus instead of the system bus (`src/bin/zenomen-hw.rs`).
-
----
+- Bus name: `com.zenomen.Hardware1`; object path `/com/zenomen/Hardware1`; interface `com.zenomen.Hardware1`.
+- Server: `src/service/contract.rs` (`HardwareService`), bus registration in `src/bin/zenomen-hw.rs`.
+- Client: `src/service/client.rs` (`HardwareServiceClient`), caching one `zbus::blocking::Connection` in a `Mutex`.
+- Methods:
+  - `GetCapabilities() -> String` (JSON: `has_fan_control`, `has_power_profiles`, `has_rgb_lighting`, `rgb_variant`, `service_version`)
+  - `GetFanStatus() -> (String, Vec<u32>)`
+  - `SetFanMode(String) -> String` *(mutating)*
+  - `GetPowerProfiles() -> Vec<String>`
+  - `GetPowerProfile() -> String`
+  - `SetPowerProfile(String) -> String` *(mutating)*
+  - `ApplyPreset(String) -> String` (JSON `PresetResult`) *(mutating)*
+  - `ApplyRgbProfile(String) -> String` (JSON profile) *(mutating)*
+  - `SetRgbEnabled(bool) -> String` *(mutating)*
+- Every mutating method calls `HardwareService::authorize`, which extracts the message sender and runs a Polkit `CheckAuthorization` with `flags = 1` (interactive allowed).
+- Bus policy: `data/dbus/com.zenomen.Hardware1.conf`; activation file `data/dbus/com.zenomen.Hardware1.service`; unit `data/systemd/zenomen-hw.service`.
+- Client-side error text is rewritten into actionable guidance when the service is missing (`connect_service`/`format_service_error` in `src/service/client.rs`).
 
 ### D-Bus — Linux Session Bus (Desktop Integration)
 
-- **Single Instance Enforcement:**
-  - Registered under bus name `com.zenomen.App` with object path `/com/zenomen/App` (`src/desktop/single_instance.rs`).
-  - Second instance attempts to acquire name; if already owned, calls `com.zenomen.App.Activate()` to raise existing window and immediately exits.
-- **System Tray & Application Menu:**
-  - Implements `org.kde.StatusNotifierItem` at `/StatusNotifierItem` (`src/desktop/tray.rs`).
-  - Implements `com.canonical.dbusmenu` at the same object path for tray context menus.
-  - Registers with desktop StatusNotifierWatcher via `org.kde.StatusNotifierWatcher.RegisterStatusNotifierItem`.
-
----
+- Single instance: `src/desktop/single_instance.rs` owns a session-bus name and exposes `PresentWindow`; a second launch signals the primary and exits 0 (`src/main.rs`).
+- Tray: `src/desktop/tray.rs` publishes `org.kde.StatusNotifierItem` and `com.canonical.dbusmenu`-style menu over the session bus.
+- Failure to reach the session bus degrades to standalone mode (`SingleInstanceResult::Disabled`) rather than aborting.
+- Tests may set `ZENOMEN_HW_SESSION` to move the *service* onto the session bus.
 
 ### Polkit Authorization (Linux Privilege Gate)
 
-- **Action Identifier:** `com.zenomen.hardware.control`
-- **Policy Definition:** `data/polkit/com.zenomen.hardware.policy`
-  - `allow_any`: `auth_admin`
-  - `allow_inactive`: `auth_admin`
-  - `allow_active`: `auth_admin_keep` (caches authentication for session window)
-- **Enforcement:**
-  - `PolkitVerifier::check_authorization(&conn, sender, POLKIT_ACTION_CONTROL, true)` is executed inside `src/service/contract.rs` on every mutating D-Bus invocation prior to modifying kernel sysfs.
-
----
+- Action id: `com.zenomen.hardware.control` (`POLKIT_ACTION_CONTROL` in `src/service/polkit.rs`).
+- Policy file: `data/polkit/com.zenomen.hardware.policy`.
+- Call: `org.freedesktop.PolicyKit1.Authority.CheckAuthorization` with subject `("system-bus-name", {"name": <unique name>})`.
+- Diagnostics performs a *non-interactive* check (`flags = 0`) to report "Authorized" / "challenge required" / "not granted" (`check_polkit_status`, `src/service/client.rs`).
 
 ### systemd Service Lifecycle (Linux)
 
-- **Unit File:** `data/systemd/zenomen-hw.service` installed to `/usr/lib/systemd/system/zenomen-hw.service`.
-- **Command:** `ExecStart=/usr/bin/zenomen-hw`.
-- **Security Sandboxing:**
-  - `ProtectSystem=strict`
-  - `ProtectHome=true`
-  - `CapabilityBoundingSet=` (drops all POSIX capabilities)
-  - `SystemCallFilter=@system-service`
-  - `ReadWritePaths=-/sys/devices/platform/hp-wmi -/sys/firmware/acpi -/sys/class/hwmon -/sys/class/leds` (restricts write access exclusively to HP hardware control paths).
-
----
+- Unit: `data/systemd/zenomen-hw.service`, installed to `/usr/lib/systemd/system/`.
+- Enabled/restarted by `zenomen --install-system-integration` (`src/desktop/system_integration.rs`), which also copies `zenomen-hw` to `/usr/bin/zenomen-hw` (mode 0755, atomic rename) and installs desktop entry, D-Bus policy/service, and Polkit policy.
+- Package maintainer scripts: `packaging/linux/debian/{postinst,prerm,postrm}`.
 
 ### Windows HP WMI Firmware Interface
 
-Direct hardware control on HP OMEN and Victus laptops under Windows interacts with the HP BIOS ACPI WMI provider (`src/service/windows/hp_wmi.rs`).
+Driver module: `src/service/windows/hp_wmi.rs`; protocol constants in `src/service/windows/victus_s.rs`.
 
-- **Namespace:** `ROOT\WMI`
-- **Classes:** `hpqBIntM` (method container), `hpqBDataIn` (input object), `hpqBDataOut4` / `hpqBDataOut128` / `hpqBDataOut1024` / `hpqBDataOut4096`
-- **Method:** `hpqBIOSInt0` / `hpqBIOSInt4` / `hpqBIOSInt128` / `hpqBIOSInt1024` / `hpqBIOSInt4096`, selected by output size
-- **BIOS GUID:** `5FB7F034-2C63-45E9-BE91-3D44E2C707E4`
-- **COM FFI Implementation:** Direct custom COM FFI (`src/service/windows/wmi_ffi.rs`) using `IWbemLocator`, `IWbemServices`, `IWbemClassObject`, and `IEnumWbemClassObject`. Avoids heavy third-party WMI crates.
-- **Protocol & Buffer Layout (`hpqBDataIn` envelope):**
-  - `Sign`: 4-byte `uint8[]` = `53 45 43 55` (ASCII `"SECU"`).
-  - `Command`: `uint32` = `0x20008` (`HPWMI_GM`) for **both** reads and writes. `0x20009` is the keyboard-lighting family and is never used as a fan command.
-  - `CommandType`: `uint32` opcode (`0x10`, `0x11`, `0x1A`, `0x26`, `0x27`, `0x2D`, `0x2E`, `0x2F`, …).
-  - `Size`: `uint32` meaningful payload length; `hpqBData` (variable-length `uint8[]`) is **omitted** when the length is 0.
-  - Output: `hpqBDataOut4/128/1024/4096` carrying `rwReturnCode` + `Data`.
-  - **Firmware Return Codes (`rwReturnCode`, upstream `hp_return_value`):**
-    - `0`: success (the only success value)
-    - `2`: wrong signature
-    - `3`: unknown command
-    - `4`: unknown command type
-    - `5`: invalid parameters
-- **Command IDs (`src/service/windows/hp_wmi.rs`):**
-  - `0x10`: Fan count (also arms the 120 s manual-fan window)
-  - `0x11`: Fan RPM (generic; `[2]<<8 | [3]`) — not used on Victus S
-  - `0x1A`: Thermal profile write, 2-byte payload `{0xFF, value}`; `0x00`/`0x01`/`0x03` = balanced/performance/quiet on `8A3D`
-  - `0x26`: Max Fan state read
-  - `0x27`: Max Fan set, 4-byte little-endian integer `0`/`1`
-  - `0x28`: System design data (unused)
-  - `0x2D` / `0x2E` / `0x2F`: Victus S fan speed (100 RPM units) / fan levels `{cpu, gpu}` / fan table
-  - `0x20009`: keyboard-lighting family — **not implemented**; `set_rgb_profile` returns `UnsupportedMode`
-- **Read-Back Verification:**
-  - Mutations to fan mode (`set_fan_mode`) and performance mode (`set_performance_mode`) verify state by issuing a read query 150 ms after writing. If firmware returns discordant values, `HardwareControlError::VerificationFailed` is raised. No process-local statics are used.
-
----
+- Namespace `ROOT\WMI`, class `hpqBIntM`, methods `hpqBIOSInt0/4/128/1024/4096` chosen by output size (`method_for_output_size`).
+- Input instance class `hpqBDataIn`; output `hpqBDataOut128`/`hpqBDataOut4`.
+- GUID `5FB7F034-2C63-45E9-BE91-3D44E2C707E4`; signature `SECU`.
+- Command family `HPWMI_GM = 0x20008` for all gaming/fan/thermal calls; `0x20009` is the keyboard-lighting family and is **not** used as a write flag.
+- Command types: `0x10` fan count (also arms a 120 s manual window), `0x11` generic fan speed, `0x1A` thermal profile write (`[0xFF, profile]`), `0x26` Max Fan read, `0x27` Max Fan write, `0x28` system design data, `0x4C` thermal profile query (diagnostic only), `0x2D` Victus S fan level read, `0x2E` Victus S fan level write, `0x2F` Victus S fan table.
+- Board routing: `VICTUS_S_BOARDS` (`8A3D`, `8B2F`, `8BBE`, `8BD4`, `8BD5`, `8C99`, `8C9C`, `8DE1`) uses the Victus S protocol; `8A3D` additionally uses EC thermal-profile restoration (`EC_THERMAL_PROFILE_OFFSET = 0x95`).
+- Every mutation reads firmware before and after writing (`set_fan_mode_with_target`, `set_power_profile`), sleeping 150 ms before the verification read-back; disagreement returns `VerificationFailed`.
+- Real COM access lives in `src/service/windows/wmi_ffi.rs` (locator, services, class objects, VARIANT/SAFEARRAY handling). Tests substitute `FakeWmiAdapter` (`src/service/windows/hp_wmi.rs`).
+- Diagnostics: `src/service/windows/wmi_diag.rs` (`zenomen-hw --wmi-diag`), read-only probes of class types and envelope construction.
 
 ### Windows Motherboard Safety & Physical Validation (WIN-07)
 
-Firmware mutation safety is enforced in `src/service/windows/profiles.rs` and `src/service/windows/authorization.rs`.
-
-- **Board Catalog (`resolve_board_profile`):**
-  - `88F8`: HP OMEN 15/16 (AMD Zen 3) — 2 fans, Max Fan supported, 4 RGB zones.
-  - `8A24`: HP OMEN 16/17 (Intel 12th/13th Gen) — 2 fans, Max Fan supported, 4 RGB zones.
-  - `8A3D`: HP Victus 15-fb0xxx (AMD) — 2 fans, Max Fan supported, 0 RGB zones.
-  - `8A3E`: HP Victus 15/16 (Intel) — 2 fans, Max Fan supported, 0 RGB zones.
-  - `88D0`: HP OMEN 15 (2020 Intel) — 2 fans, Max Fan supported, 4 RGB zones.
-- **Physical Validation Gating (`BoardValidation`):**
-  - Only boards with verified physical test records (`BoardValidation::new_verified`) have write flags set (`fan_write_verified`, `power_write_verified`, `rgb_write_verified`).
-  - `88F8` is validated on BIOS `F.20` and `F.21`.
-  - `8A24` is validated on BIOS `F.10`.
-  - **Board `8A3D` (Victus 15-fb0xxx, BIOS F.22) is currently unvalidated:** Fan and power write operations are strictly blocked by authorization until physical validation is completed per `docs/testing/HP_BOARD_VALIDATION.md`. Safe read-only WMI probing is permitted.
-  - **`8A3D` thermal-profile interface:** the active profile is stored in EC register `0x95` (upstream patch 2026-10-24) and is not readable from userland Windows. Automatic cooling is restored by clearing Max Fan and re-applying the profile through `0x1A`; the generic `0x2E {0,0}` reset can leave the fans at 0 RPM under load and is refused by `restore_automatic_fan_control`.
-
----
+- `resolve_board_profile` (`src/service/windows/profiles.rs`) recognizes `88F8`, `8A24`, `8A3D`, `8A3E`, `88D0`; unknown boards get a generic read-only profile in `run_pipe_server`.
+- `resolve_board_validation` returns write flags **only** for exact board+BIOS pairs:
+  - `88F8` on `F.20`/`F.21`, `8A24` on `F.10`, `8A3D` on `F.22`.
+  - `8A3D`/F.22: fan write, max fan, auto restore, and power write authorization are true; manual PWM and RGB remain false; `power_write_verified` and `power_read_verified` are false (EC-managed).
+  - Everything else returns `BoardValidation::new_unvalidated` (reads allowed, all writes false).
+- Enforcement: `authorize_mutation` (`src/service/windows/authorization.rs`) runs before any firmware call in `handle_request` (`src/service/windows/server.rs`). Read-only requests bypass validation.
+- Hardware-in-the-loop evidence procedure: `docs/testing/HP_BOARD_VALIDATION.md`; runbooks `--validate-8a3d-fan` (`validation_runbook.rs`) and `--validate-8a3d-power` (`power_validation_runbook.rs`).
+- Shutdown restore: the pipe server clears Max Fan (and re-applies the EC profile on `8A3D` via `SafeFallback(Balanced)`) only when `fan_write_verified` is true; otherwise it logs and skips.
 
 ### Windows Named-Pipe IPC (Privilege Separation Boundary)
 
-- **Pipe Endpoint:** `\\.\pipe\ZenOmen.Hardware.v1` (`src/service/windows/pipe.rs:7`).
-- **Pipe Mode:** `PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT`, 4 max instances, 64 KiB buffer (`PIPE_BUFFER_SIZE = 65536`), 30-second default timeout (`src/service/windows/pipe.rs`).
-- **Framing Protocol:**
-  - Length Prefix: 4-byte **big-endian** integer defining payload byte length (`src/service/windows/protocol.rs:41-90`).
-  - Payload: Serialized JSON representation of `HardwareRequest` or `HardwareResponse`.
-  - Max Frame Size: 65,536 bytes (`MAX_PAYLOAD_SIZE`).
-- **Security & DACL Restrictions (`src/service/windows/security.rs`):**
-  - Pipe Security Descriptor created via SDDL string:
-    `D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`
-    - `(A;;GA;;;SY)`: Generic All for `NT AUTHORITY\SYSTEM`
-    - `(A;;GA;;;BA)`: Generic All for `BUILTIN\Administrators`
-    - `(A;;GRGW;;;IU)`: Generic Read + Generic Write for `NT AUTHORITY\Interactive Users`
-- **Session Hijack Prevention:**
-  - Server invokes `GetNamedPipeClientSessionId(pipe, &mut pipe_session_id)` and compares it against `WTSGetActiveConsoleSessionId()`.
-  - Cross-session connections (remote desktop, SSH terminals, background services) are rejected with `HardwareControlError::AccessDenied`.
-  - In elevated service mode, client token is impersonated via `ImpersonateNamedPipeClient` to perform defense-in-depth token inspection before reverting to self (`RevertToSelf`).
-
----
+- Pipe: `\\.\pipe\ZenOmen.Hardware.v1` (`PIPE_NAME`, `src/service/windows/pipe.rs`), 64 KiB buffer.
+- Framing: 4-byte big-endian length prefix + JSON; `MAX_PAYLOAD_SIZE = 65536` enforced on encode and decode (`src/service/windows/protocol.rs`).
+- Requests/responses: `HardwareRequest` / `HardwareResponse` enums (capabilities, fan status/mode, power profiles/profile, presets, RGB, service memory).
+- DACL: SDDL `D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)` — SYSTEM, Administrators, Interactive Users (`src/service/windows/security.rs`).
+- Session check: `GetNamedPipeClientSessionId` must equal `WTSGetActiveConsoleSessionId`; token impersonation is used as defense-in-depth when available, and skipped (logged at debug) in console/dev mode.
+- Client (`src/service/windows/client.rs`): `CreateFileW` with `SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION`, up to 5 attempts with 50 ms `WaitNamedPipeW`, single request/response per connection.
 
 ### Windows Service Control Manager (SCM)
 
-- **Service Name:** `ZenOmenHardwareService`
-- **Display Name:** `ZenOmen Hardware Control Service`
-- **Service Account:** `LocalSystem`
-- **Binary:** `zenomen-hw.exe`
-- **Lifecycle Implementation:** `src/service/windows/lifecycle.rs`
-- **CLI Commands on `zenomen-hw.exe`:**
-  - `--install-service`: Registers service in SCM with `SERVICE_WIN32_OWN_PROCESS` and `SERVICE_AUTO_START`.
-  - `--uninstall-service`: Marks service for deletion in SCM.
-  - `--console` / `-c`: Runs the named-pipe server in standalone console mode for testing.
-  - (No flags): Invokes `StartServiceCtrlDispatcherW`; automatically falls back to console mode if `ERROR_FAILED_SERVICE_CONTROLLER_CONNECT` is detected.
-- **SCM Control Handler:** Handles `SERVICE_CONTROL_STOP` and `SERVICE_CONTROL_SHUTDOWN`. On shutdown, the service restores fan mode to Auto (`0x00`) so the EC resumes autonomous cooling safely.
-- **GUI Elevation Helper:** `src/desktop/windows/installer.rs` provides `install_service_elevated`, executing `ShellExecuteExW` with the `"runas"` verb to prompt for UAC elevation during service setup.
-
----
+- Service name `ZenOmenHardwareService`, display name "ZenOmen Hardware Control Service", `SERVICE_WIN32_OWN_PROCESS`, `SERVICE_AUTO_START`, LocalSystem (`src/service/windows/lifecycle.rs`).
+- `StartServiceCtrlDispatcherW` with `ERROR_FAILED_SERVICE_CONTROLLER_CONNECT` fallback to console mode.
+- Handles `SERVICE_CONTROL_STOP`/`SHUTDOWN` by setting a shared `AtomicBool` stop signal consumed by the pipe loop.
+- Install/uninstall exposed via `zenomen --install-service`, `zenomen --uninstall-service`, and `zenomen-hw --install-service` / `--uninstall-service`.
 
 ### Windows Telemetry & Desktop APIs
 
-| Data / Subsystem | Windows API / Source | File Reference |
-|---|---|---|
-| **CPU Utilization** | `GetSystemTimes` (kernel, user, idle delta calculation) | `src/hardware/windows/cpu.rs` |
-| **CPU Identification** | Registry `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString` | `src/hardware/windows/cpu.rs` |
-| **Physical Memory** | `GlobalMemoryStatusEx` (`ullTotalPhys`, `ullAvailPhys`) | `src/hardware/windows/memory.rs` |
-| **Battery Status** | `GetSystemPowerStatus` (`BatteryFlag`, `BatteryLifePercent`, `ACLineStatus`) | `src/hardware/windows/battery.rs` |
-| **GPU Enumeration** | DXGI 1.3 (`dxgi.dll` -> `CreateDXGIFactory1`, `EnumAdapters1`, `GetDesc1`) for name, vendor ID, dedicated/shared VRAM | `src/hardware/windows/gpu.rs` |
-| **GPU Utilization** | PDH (`pdh.dll` -> `\GPU Engine(*)\Utilization Percentage`) query across all GPU engines | `src/hardware/windows/gpu.rs` |
-| **Temperature / Fan Sensors** | Guaranteed Absence: returns `(None, None)` and empty fan vectors because no ring-0 driver is bundled | `src/hardware/windows/sensors.rs` |
-| **Motherboard Identity** | Registry `HKLM\HARDWARE\DESCRIPTION\System\BIOS` (`BaseBoardProduct`, `BIOSVersion`, `SystemProductName`) | `src/hardware/windows/device.rs` |
-| **System Tray** | Win32 `Shell_NotifyIconW` with custom window message `WM_USER + 1` | `src/desktop/windows/tray.rs` |
-| **Balloon Notifications** | `Shell_NotifyIconW` with `NIF_INFO` flags | `src/desktop/windows/notifications.rs` |
-| **Single Instance** | Win32 Named Mutex `Local\ZenOmen.SingleInstance` via `CreateMutexW` | `src/desktop/windows/single_instance.rs` |
-| **Registry Autostart** | Registry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `ZenOmen` | `src/desktop/windows/autostart.rs` |
-| **Release Browser Launch** | Win32 `ShellExecuteW` with `"open"` verb | `src/desktop/windows/releases.rs` |
-| **Known Folder Paths** | `SHGetKnownFolderPath` (`FOLDERID_LocalAppData`, `FOLDERID_ProgramData`) | `src/desktop/windows/paths.rs` |
-
----
+- CPU: `GetSystemTimes` deltas (`src/hardware/windows/cpu.rs`), `NtQuerySystemInformation`-free implementation.
+- RAM: `GlobalMemoryStatusEx` (`src/hardware/windows/memory.rs`).
+- GPU: DXGI adapter enumeration (`src/hardware/windows/gpu.rs`), vendor recognition from PCI IDs.
+- Temperature: PDH counters `\Thermal Zone Information(\_TZ.THRM|TZ00)\High Precision Temperature` / `Temperature`, Kelvin→Celsius, `None` on absence (`src/hardware/windows/sensors.rs`).
+- Battery: `GetSystemPowerStatus` parsing (`src/hardware/windows/battery.rs`).
+- Board/BIOS identity: registry/DMI reads in `src/hardware/windows/device.rs` (`read_board_id`, `read_bios_version`, `read_system_identity`).
+- Display refresh rate: `EnumDisplayDevicesW` / `EnumDisplaySettingsW` / `ChangeDisplaySettingsExW` with `CDS_TEST` then `CDS_UPDATEREGISTRY` and read-back (`src/hardware/windows/display.rs`).
+- Tray: `Shell_NotifyIconW` (`src/desktop/windows/tray.rs`); notifications in `notifications.rs`.
+- Autostart: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (`src/desktop/windows/autostart.rs`).
+- Single instance: named mutex + window present (`src/desktop/windows/single_instance.rs`).
+- Process memory: `K32GetProcessMemoryInfo` for GUI and service (`src/hardware/process_memory.rs`).
+- Paths: `%LOCALAPPDATA%\ZenOmen` (GUI), `%PROGRAMDATA%\ZenOmen` (service) in `src/desktop/windows/paths.rs`.
 
 ## Data Storage
 
-**Databases:**
-- None. No SQL/NoSQL embedded database engine is linked or required.
+**Files on disk:**
+- Config: `config.toml` under the platform config dir, written atomically (`src/config/mod.rs`).
+- Backups: `config.toml.bak.<unix-timestamp>` when parsing fails.
+- Logs: daily-rotated `zenomen*.log`, max 7 files (`src/logging.rs`).
+  - Linux: `~/.local/state/zenomen/logs`.
+  - Windows GUI: `%LOCALAPPDATA%\ZenOmen\logs`; service: `%PROGRAMDATA%\ZenOmen\logs` (selected by exe name containing `zenomen-hw`).
+- Diagnostics export: `zenomen-diagnostics-<timestamp>.json` under the config dir `diagnostics/` (Linux) or `%LOCALAPPDATA%\ZenOmen\diagnostics` (Windows), atomic rename (`src/core/diagnostics.rs`).
+- RGB profiles: JSON files in the ZenOmen RGB directory; legacy OpenOMEN profiles are migrated non-destructively at startup (`src/rgb/migration.rs`, called from `src/main.rs`).
 
-**Configuration Files:**
-- **Linux:** `~/.config/zenomen/config.toml` (standard XDG path).
-- **Windows GUI:** `%LOCALAPPDATA%\ZenOmen\config.toml`.
-- **Windows Service State:** `%PROGRAMDATA%\ZenOmen\`.
-- **Storage Strategy:** Parsed via `toml` 0.8 into `AppConfig`. Writes use atomic temporary file creation followed by rename. Corrupted configurations are automatically backed up as `config.toml.bak.<timestamp>` before resetting to verified defaults (`src/config/mod.rs`).
-
-**Logging Storage:**
-- **Linux:** `~/.local/state/zenomen/logs/` (daily rolling `zenomen*.log`, capped at 7 historical files).
-- **Windows GUI:** `%LOCALAPPDATA%\ZenOmen\logs\`.
-- **Windows Service:** `%PROGRAMDATA%\ZenOmen\logs\`.
-- **Implementation:** `src/logging.rs` via `tracing-appender::rolling::daily`.
-
-**In-Memory Caching:**
-- Bounded ring buffer (`src/core/telemetry.rs`) holding the most recent 120 `TelemetrySample` entries for real-time charting.
-- Single-slot cache for asynchronous NVIDIA metrics with a 3-second expiration threshold.
-
----
+**Databases / caches:** none.
 
 ## Authentication & Authorization
 
-- **Linux:**
-  - Polkit authorization policy `com.zenomen.hardware.control` enforced by the privileged D-Bus daemon (`src/service/polkit.rs`).
-- **Windows:**
-  - Local-only Named Pipe security:
-    - DACL explicitly restricts pipe access to `LocalSystem`, `Administrators`, and `Interactive Users`.
-    - Session ID check strictly matches `WTSGetActiveConsoleSessionId` to block non-console callers.
-- **Cloud / Network Identity:**
-  - Zero cloud, web, or remote network authentication. No API keys, passwords, or tokens exist in the codebase.
-
----
+- Linux: Polkit action `com.zenomen.hardware.control` on the *system* bus; the GUI never runs as root and never writes sysfs.
+- Windows: OS-level separation — GUI runs `asInvoker` (manifest in `build.rs`), service runs as LocalSystem; the pipe DACL plus interactive-console-session check is the authorization boundary. There is no password prompt.
+- Physical-write gate: `BoardValidation` flags decide whether any firmware mutation is permitted, independent of OS authorization (WIN-07).
+- Firmware authorization errors are surfaced distinctly as `HardwareControlError::AuthorizationFailed` (e.g. `WBEM_E_ACCESS_DENIED`, elevation required).
 
 ## Webhooks, Callbacks & Network Communications
 
-- **Inbound:** No HTTP servers, webhook receivers, or TCP/UDP listeners. The only entry points are local IPC endpoints:
-  - Linux D-Bus System Bus: `com.zenomen.Hardware1`.
-  - Windows Named Pipe: `\\.\pipe\ZenOmen.Hardware.v1`.
-- **Outbound:** Application code performs zero outbound network requests. Update checking delegates entirely to the host OS default browser opening `https://github.com/Omprakash-p06/zenomen/releases/latest` via `xdg-open` or `ShellExecuteW`.
-
----
+- None. No HTTP server, no outbound requests, no webhook receivers, no analytics.
+- The only "external link" behavior is `open_releases_page`, which asks the OS to open `RELEASES_URL` in the default browser on explicit user action (`src/desktop/releases.rs`, `src/desktop/windows/releases.rs`).
 
 ## Platform Capability Matrix
 
-| Feature / Subsystem | Linux Implementation | Windows Implementation |
+| Capability | Linux (verified) | Windows (this codebase) |
 |---|---|---|
-| **CPU Telemetry** | sysfs (`cpufreq`) + procfs (`/proc/stat`, `/proc/cpuinfo`) | Win32 `GetSystemTimes` + Registry `CentralProcessor` |
-| **RAM Telemetry** | procfs (`/proc/meminfo`) | Win32 `GlobalMemoryStatusEx` |
-| **Battery Telemetry** | sysfs (`/sys/class/power_supply/BAT*`) | Win32 `GetSystemPowerStatus` |
-| **GPU Enumeration** | sysfs DRM (`/sys/class/drm/card*`) | DXGI 1.3 (`CreateDXGIFactory1`, `EnumAdapters1`) |
-| **GPU Utilization** | AMD sysfs (`gpu_busy_percent`) / `nvidia-smi` | PDH (`\GPU Engine(*)\Utilization Percentage`) |
-| **GPU Dedicated VRAM** | AMD sysfs (`mem_info_vram_*`) / `nvidia-smi` | DXGI adapter description (`dedicated_video_memory`) |
-| **Thermal Telemetry** | hwmon sysfs (`/sys/class/hwmon/hwmon*`) | Unavailable (`(None, None)` returned; no ring-0 driver) |
-| **Fan Tachometer (RPM)** | hwmon sysfs (`fan*_input`) | Unavailable (empty vector returned; no ring-0 driver) |
-| **Fan Mode Control** | sysfs `pwm1_enable` via D-Bus daemon | HP WMI (`hpqBIOSInt*`, cmd `0x26`/`0x27`; Victus S `0x2D`/`0x2E`/`0x2F`) via LocalSystem service |
-| **Power Profiles** | ACPI `platform_profile` via D-Bus daemon | HP WMI (`hpqBIOSInt*`, cmd `0x1A`) via LocalSystem service; `UnsupportedMode` on Victus S (profile is EC-only) |
-| **Keyboard RGB Lighting** | hp-wmi sysfs driver variants | Not implemented (`UnsupportedMode`; `0x20009` is a command family) |
-| **IPC Transport** | D-Bus system bus (`com.zenomen.Hardware1`) | Message-mode Named Pipe (`\\.\pipe\ZenOmen.Hardware.v1`) |
-| **Access Authorization** | Polkit (`com.zenomen.hardware.control`) | Named Pipe DACL + Active Console Session ID check |
-| **Desktop System Tray** | `org.kde.StatusNotifierItem` + `com.canonical.dbusmenu` | Win32 `Shell_NotifyIconW` |
-| **Single Instance Lock** | Session D-Bus name `com.zenomen.App` | Win32 Named Mutex `Local\ZenOmen.SingleInstance` |
-| **Autostart Mechanism** | XDG desktop file in `~/.config/autostart/` | Registry key `HKCU\...\CurrentVersion\Run` |
+| CPU / RAM telemetry | procfs + sysfs | Win32 + PDK counters |
+| GPU telemetry | DRM sysfs, `nvidia-smi` | DXGI enumeration; utilization via GPU collector |
+| CPU temperature | hwmon priority matrix | PDH thermal zone, else `Unavailable` |
+| Fan RPM | hwmon tachometers | via service (`0x2D` on Victus S, `0x11` otherwise) |
+| Fan control | `pwm1_enable` via `zenomen-hw` | `0x27` / Victus S `0x2E`, gated by `BoardValidation` |
+| Power profiles | ACPI `platform_profile` | `0x1A` (verified on WMI boards, unverified on `8A3D` EC) |
+| RGB | Three sysfs variants | `set_rgb_profile` always returns `UnsupportedMode` (no verified contract) |
+| Display refresh | not implemented (`None`/no-op) | GDI mode switch with read-back |
+| Battery | `/sys/class/power_supply` | `GetSystemPowerStatus` |
+| Unsupported OS | — | third OS: `UnavailableHardwareProvider` (zero capabilities) |
 
 ---
 
-*Integration audit verified: 2026-11-09*
+*Integrations analysis: 2026-11-11*
