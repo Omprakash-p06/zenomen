@@ -51,7 +51,8 @@ jobs:
             xvfb \
             dpkg-dev \
             file \
-            libfuse2
+            libfuse2 \
+            desktop-file-utils
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -62,19 +63,31 @@ jobs:
       - name: Test (headless)
         run: xvfb-run --auto-servernum cargo test --locked --all
 
+      - name: Build release binaries
+        run: cargo build --release --locked --bins
+
       - name: Install cargo-packager
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager
 
-      - name: Build release packages (DEB & AppImage)
-        run: cargo packager --release --formats deb,appimage
+      - name: Build Debian Package (.deb)
+        run: cargo packager --release --formats deb
 
-      - name: Generate SHA-256 checksums
+      - name: Build AppImage (.AppImage)
+        run: bash packaging/linux/build-appimage.sh
+
+      - name: Organize Linux Distribution Artifacts
+        run: |
+          mkdir -p dist
+          find dist/ -name "*.deb" -exec cp -t dist/ {} + || true
+          find dist/ -name "*.AppImage" -exec cp -t dist/ {} + || true
+
+      - name: Generate Linux SHA-256 checksums
         working-directory: dist
         run: |
-          sha256sum *.deb *.AppImage > SHA256SUMS-linux
-          cat SHA256SUMS-linux
+          sha256sum *.deb *.AppImage > SHA256SUMS-linux.txt
+          cat SHA256SUMS-linux.txt
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -83,49 +96,77 @@ jobs:
           path: |
             dist/*.deb
             dist/*.AppImage
-            dist/SHA256SUMS-linux
+            dist/SHA256SUMS-linux.txt
 
   release-windows:
-    name: Build Windows Release (MSI & Binaries)
+    name: Build Windows Release (Inno Setup EXE, WiX MSI & Zip)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain (stable)
+      - name: Verify tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         run: |
-          rustup toolchain install stable --profile minimal
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "zenomen") | .version')
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag v$tag does not match Cargo.toml version $ver" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain (stable, clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
           rustup default stable
 
-      - name: Install WiX Toolset
-        run: |
-          dotnet tool install --global wix
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy Windows (zero warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test Windows
+        run: cargo test --all
 
       - name: Build release binaries
+        run: cargo build --release --locked --bins
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build Windows Setup Installer (Inno Setup)
         run: |
-          cargo build --release --locked --bins
+          mkdir -p dist
+          powershell -ExecutionPolicy Bypass -File packaging/windows/build-installer.ps1
+          Copy-Item target/installer/ZenOmen-Setup-x64.exe dist/ZenOmen-Setup-x64.exe
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix
 
       - name: Package WiX MSI
-        run: |
-          mkdir dist
-          wix build packaging/windows/ZenOmen.wxs -o dist/ZenOmen-x64.msi
+        run: wix build packaging/windows/ZenOmen.wxs -o dist/ZenOmen-x64.msi
 
-      - name: Package Zip archive
+      - name: Package Portable Zip archive
         run: |
-          Compress-Archive -Path target/release/zenomen.exe, target/release/zenomen-hw.exe, LICENSE, README.md -DestinationPath dist/zenomen-windows-x64.zip
+          Compress-Archive -Path target/release/zenomen.exe, target/release/zenomen-hw.exe, LICENSE, README.md -DestinationPath dist/ZenOmen-windows-x64.zip
 
       - name: Generate Windows SHA-256 Checksums
         working-directory: dist
         run: |
-          Get-FileHash -Algorithm SHA256 ZenOmen-x64.msi, zenomen-windows-x64.zip | Out-File -Encoding utf8 SHA256SUMS-windows.txt
+          Get-FileHash -Algorithm SHA256 ZenOmen-Setup-x64.exe, ZenOmen-x64.msi, ZenOmen-windows-x64.zip | Out-File -Encoding utf8 SHA256SUMS-windows.txt
+          Get-Content SHA256SUMS-windows.txt
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-dist
           path: |
+            dist/ZenOmen-Setup-x64.exe
             dist/ZenOmen-x64.msi
-            dist/zenomen-windows-x64.zip
+            dist/ZenOmen-windows-x64.zip
             dist/SHA256SUMS-windows.txt
 
   publish-release:
@@ -149,9 +190,9 @@ jobs:
       - name: Consolidate Checksums
         working-directory: artifacts
         run: |
-          cat SHA256SUMS-linux > SHA256SUMS
+          cat SHA256SUMS-linux.txt > SHA256SUMS
           cat SHA256SUMS-windows.txt >> SHA256SUMS
-          rm SHA256SUMS-linux SHA256SUMS-windows.txt
+          rm -f SHA256SUMS-linux.txt SHA256SUMS-windows.txt
           cat SHA256SUMS
 
       - name: Publish GitHub Release
