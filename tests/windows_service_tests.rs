@@ -1918,3 +1918,538 @@ fn test_8a3d_authorization_failure_message_guides_operator_to_validation() {
         other => panic!("Expected AuthorizationFailed, got {other:?}"),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8A3D Physical Validation Runbook & Restoration Test Suite (Section 8)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_wmi_telemetry_valid_two_fan_response() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let mut payload = vec![0u8; 128];
+    payload[0] = 34; // CPU 3,400 RPM
+    payload[1] = 29; // GPU 2,900 RPM
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let telemetry = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect("dual fan telemetry");
+    assert_eq!(telemetry.cpu_rpm, 3400);
+    assert_eq!(telemetry.gpu_rpm, 2900);
+}
+
+#[test]
+fn test_wmi_telemetry_cpu_zero_while_gpu_running() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let mut payload = vec![0u8; 128];
+    payload[0] = 0; // CPU stopped
+    payload[1] = 25; // GPU 2,500 RPM
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let telemetry = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect("dual fan telemetry");
+    assert_eq!(telemetry.cpu_rpm, 0);
+    assert_eq!(telemetry.gpu_rpm, 2500);
+}
+
+#[test]
+fn test_wmi_telemetry_gpu_zero_while_cpu_running() {
+    // Normal autonomous EC condition when GPU is idle and temperature is low
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let mut payload = vec![0u8; 128];
+    payload[0] = 32; // CPU 3,200 RPM
+    payload[1] = 0; // GPU 0 RPM (EC stopped)
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let telemetry = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect("dual fan telemetry");
+    assert_eq!(telemetry.cpu_rpm, 3200);
+    assert_eq!(telemetry.gpu_rpm, 0);
+}
+
+#[test]
+fn test_wmi_telemetry_both_fans_zero() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let payload = vec![0u8; 128]; // Both 0
+    adapter.expect_call(FakeResponse::Success { payload });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let telemetry = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect("dual fan telemetry");
+    assert_eq!(telemetry.cpu_rpm, 0);
+    assert_eq!(telemetry.gpu_rpm, 0);
+}
+
+#[test]
+fn test_wmi_telemetry_truncated_response() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::Success {
+        payload: vec![34], // Only 1 byte instead of >= 2
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let err = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect_err("truncated payload must error");
+    assert!(matches!(err, HardwareControlError::ProtocolError(_)));
+}
+
+#[test]
+fn test_wmi_telemetry_invalid_response_length() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::Success { payload: vec![] }); // Empty
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let err = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect_err("empty payload must error");
+    assert!(matches!(err, HardwareControlError::ProtocolError(_)));
+}
+
+#[test]
+fn test_wmi_telemetry_wmi_query_failure() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::WmiError {
+        message: "ExecMethod failed: 0x80041002".to_string(),
+    }); // WBEM_E_NOT_FOUND
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let err = zenomen::service::windows::hp_wmi::get_victus_dual_fan_rpm(&conn)
+        .expect_err("WMI query error must be propagated");
+    assert!(matches!(err, HardwareControlError::ConnectionFailed(_)));
+}
+
+#[test]
+fn test_wmi_telemetry_invalid_fan_count() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(fan_count_response(0)); // 0 fans
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let err = zenomen::service::windows::hp_wmi::get_fan_count(&conn)
+        .expect_err("fan count 0 must be rejected");
+    assert!(matches!(err, HardwareControlError::ProtocolError(_)));
+
+    let adapter2 = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter2.expect_call(fan_count_response(255)); // Implausible count
+
+    let conn2 = HpWmiConnection::from_adapter_for_board(adapter2, "8A3D");
+    let err2 = zenomen::service::windows::hp_wmi::get_fan_count(&conn2)
+        .expect_err("fan count 255 must be rejected");
+    assert!(matches!(err2, HardwareControlError::ProtocolError(_)));
+}
+
+#[test]
+fn test_wmi_telemetry_independent_cpu_gpu_rpm_conversion() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let mut payload = vec![0u8; 128];
+    payload[0] = 41; // CPU 4100 RPM
+    payload[1] = 37; // GPU 3700 RPM
+    adapter.expect_call(FakeResponse::Success {
+        payload: payload.clone(),
+    });
+    adapter.expect_call(FakeResponse::Success {
+        payload: payload.clone(),
+    });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+    let cpu_rpm = zenomen::service::windows::hp_wmi::get_fan_rpm(&conn, 0)
+        .expect("read cpu")
+        .expect("cpu rpm");
+    let gpu_rpm = zenomen::service::windows::hp_wmi::get_fan_rpm(&conn, 1)
+        .expect("read gpu")
+        .expect("gpu rpm");
+
+    assert_eq!(cpu_rpm, 4100);
+    assert_eq!(gpu_rpm, 3700);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Restoration Unit Tests
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_restoration_successful_max_fan_disable() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack()); // 0x27 = 0
+    adapter.expect_call(fan_count_response(2)); // 0x10 arm
+    adapter.expect_call(write_ack()); // 0x1A {0xFF, balanced}
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Balanced,
+        )),
+    )
+    .expect("restore must succeed");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls[0].command_type, commands::MAX_FAN_SET);
+    assert_eq!(calls[0].payload, vec![0, 0, 0, 0]);
+}
+
+#[test]
+fn test_restoration_failed_max_fan_disable() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(FakeResponse::FirmwareError { status: 4 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let err = zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Balanced,
+        )),
+    )
+    .expect_err("failed max fan clear must halt");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    assert_eq!(adapter.recorded_calls().len(), 1);
+}
+
+#[test]
+fn test_restoration_successful_profile_restoration() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Performance,
+        )),
+    )
+    .expect("restore performance");
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2].command_type, commands::PERFORMANCE_MODE);
+    assert_eq!(calls[2].payload, vec![0xFF, 0x01]);
+}
+
+#[test]
+fn test_restoration_failed_profile_restoration() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(FakeResponse::FirmwareError { status: 3 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    let err = zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Performance,
+        )),
+    )
+    .expect_err("profile write error must fail");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+}
+
+#[test]
+fn test_restoration_unknown_original_profile_refuses_write() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+
+    let err =
+        zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(&conn, None)
+            .expect_err("unknown profile must fail closed without writes");
+
+    assert!(matches!(err, HardwareControlError::UnsupportedMode(_)));
+    assert!(adapter.recorded_calls().is_empty());
+}
+
+#[test]
+fn test_restoration_known_balanced_profile() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Balanced,
+        )),
+    )
+    .expect("restore balanced");
+
+    assert_eq!(adapter.recorded_calls()[2].payload, vec![0xFF, 0x00]);
+}
+
+#[test]
+fn test_restoration_known_performance_profile() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Performance,
+        )),
+    )
+    .expect("restore performance");
+
+    assert_eq!(adapter.recorded_calls()[2].payload, vec![0xFF, 0x01]);
+}
+
+#[test]
+fn test_restoration_known_quiet_profile() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Quiet,
+        )),
+    )
+    .expect("restore quiet");
+
+    assert_eq!(adapter.recorded_calls()[2].payload, vec![0xFF, 0x03]);
+}
+
+#[test]
+fn test_restoration_safe_fallback_profile() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::SafeFallback(
+            victus_s::ThermalProfile::Balanced,
+        )),
+    )
+    .expect("restore safe fallback");
+
+    assert_eq!(adapter.recorded_calls()[2].payload, vec![0xFF, 0x00]);
+}
+
+#[test]
+fn test_restoration_does_not_continue_after_preceding_failure() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    // Step 1 fails
+    adapter.expect_call(FakeResponse::FirmwareError { status: 5 });
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    assert!(
+        zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+            &conn,
+            Some(victus_s::ProfileRestoreTarget::Known(
+                victus_s::ThermalProfile::Quiet
+            )),
+        )
+        .is_err()
+    );
+
+    let calls = adapter.recorded_calls();
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls.iter().all(|c| c.command_type != commands::FAN_COUNT
+            && c.command_type != commands::PERFORMANCE_MODE)
+    );
+}
+
+#[test]
+fn test_restoration_no_0x2e_call_on_8a3d() {
+    let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
+    adapter.expect_call(write_ack());
+    adapter.expect_call(fan_count_response(2));
+    adapter.expect_call(write_ack());
+
+    let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
+    zenomen::service::windows::hp_wmi::restore_automatic_fan_control_with_target(
+        &conn,
+        Some(victus_s::ProfileRestoreTarget::Known(
+            victus_s::ThermalProfile::Balanced,
+        )),
+    )
+    .expect("restore");
+
+    for call in adapter.recorded_calls() {
+        assert_ne!(
+            call.command_type,
+            victus_s::FAN_LEVEL_SET_QUERY,
+            "0x2E must NEVER be called during 8A3D restoration: {call:?}"
+        );
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Observation Unit Tests
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_observation_max_fan_remains_disabled() {
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(if s < 12 { 4500 - s * 180 } else { 2200 }),
+            gpu_rpm: Ok(if s < 10 { 4000 - s * 300 } else { 0 }),
+        });
+    }
+
+    let result = victus_s::evaluate_observation(&samples, 4700, 4500, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationVerified);
+}
+
+#[test]
+fn test_observation_max_fan_becomes_enabled_again() {
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(s == 18), // Re-enabled at 18s!
+            cpu_rpm: Ok(3000),
+            gpu_rpm: Ok(2000),
+        });
+    }
+
+    let result = victus_s::evaluate_observation(&samples, 4700, 4500, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationFailed);
+}
+
+#[test]
+fn test_observation_one_fan_temporarily_zero() {
+    // GPU fan at 0 RPM is normal under cool temperatures
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(2400),
+            gpu_rpm: Ok(0), // Legitimate autonomous stop
+        });
+    }
+
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationVerified);
+}
+
+#[test]
+fn test_observation_both_fans_temporarily_zero() {
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(if s < 15 { 3000 - s * 150 } else { 0 }),
+            gpu_rpm: Ok(0),
+        });
+    }
+
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationVerified);
+}
+
+#[test]
+fn test_observation_wmi_failure_during_observation() {
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: if s > 20 {
+                Err("WMI error".to_string())
+            } else {
+                Ok(false)
+            },
+            cpu_rpm: if s > 20 {
+                Err("WMI error".to_string())
+            } else {
+                Ok(2500)
+            },
+            gpu_rpm: if s > 20 {
+                Err("WMI error".to_string())
+            } else {
+                Ok(0)
+            },
+        });
+    }
+
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationUnverified);
+}
+
+#[test]
+fn test_observation_recovery_after_failed_sample() {
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        let is_transient_error = s == 12;
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: if is_transient_error {
+                Err("Transient RPC error".to_string())
+            } else {
+                Ok(false)
+            },
+            cpu_rpm: if is_transient_error {
+                Err("Transient RPC error".to_string())
+            } else {
+                Ok(2400)
+            },
+            gpu_rpm: if is_transient_error {
+                Err("Transient RPC error".to_string())
+            } else {
+                Ok(0)
+            },
+        });
+    }
+
+    // 1 transient failure that recovers must verify
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationVerified);
+}
+
+#[test]
+fn test_observation_timeout() {
+    let mut samples = Vec::new();
+    // Only 18 seconds collected due to premature exit / timeout
+    for s in 1..=18 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(2500),
+            gpu_rpm: Ok(0),
+        });
+    }
+
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationUnverified);
+}
+
+#[test]
+fn test_observation_incomplete_evidence_never_verified() {
+    // Empty samples
+    assert_eq!(
+        victus_s::evaluate_observation(&[], 4500, 4200, true),
+        victus_s::ValidationState::RestorationUnverified
+    );
+
+    // Profile restoration failed before observation
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(2500),
+            gpu_rpm: Ok(0),
+        });
+    }
+    assert_eq!(
+        victus_s::evaluate_observation(&samples, 4500, 4200, false),
+        victus_s::ValidationState::RestorationFailed
+    );
+}
