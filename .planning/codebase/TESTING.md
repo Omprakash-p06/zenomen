@@ -44,7 +44,7 @@ cargo audit
 | Integration suites in `tests/` | 19 | **238** |
 | **Total** | | **322** |
 
-> `README.md` still says "123 automated tests across 16 integration test suites"; that number is stale relative to the code.
+> These counts are mirrored in `README.md`; update both whenever the suite inventory changes.
 
 ## Test Organization & Suite Inventory
 

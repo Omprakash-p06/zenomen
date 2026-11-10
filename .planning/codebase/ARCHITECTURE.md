@@ -174,7 +174,7 @@ pub trait WmiAdapter: Send + Sync {
 6. **Platform isolation:** all Linux hardware paths under `src/hardware/linux/` and `src/service/backend.rs`; all Windows driver code under `src/hardware/windows/` and `src/service/windows/`. Other OSes report zero capabilities.
 7. **Honest combined results:** `PresetResult.partial_success` and `PowerProfileStatus::ProfileUnverified` exist so a partial or unreadable outcome is never presented as full success.
 8. **Safe 8A3D restoration:** never send `0x2E {0,0}` on `8A3D`; require a known profile or an explicit safe fallback, otherwise refuse before writing.
-9. **Bounded resources:** `panic = "abort"`, size-optimized release profile, no Qt/Skia, sampling paused when hidden, bounded history (30/60/120/300 samples).
+9. **Bounded resources:** `panic = "abort"`, size-optimized release profile, no Qt/Skia, sampling paused when hidden, bounded history (30/60/120/300-second windows, capacity derived from the polling interval).
 10. **Graceful teardown:** `Shutdown` command → restore refresh rate → drop senders → join worker/event pump/desktop-action threads; Windows service restores fan mode only on validated boards.
 
 ---

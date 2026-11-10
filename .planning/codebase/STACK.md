@@ -78,7 +78,7 @@
 - TOML at `ProjectDirs::config_dir()/config.toml` (`~/.config/zenomen/config.toml` on Linux; `%APPDATA%\zenomen\zenomen\config\config.toml`-style path on Windows via `directories`).
 - Schema in `src/config/schema.rs`:
   - `[general]` — `theme`, `start_minimized`, `close_to_tray` (default true), `autostart`.
-  - `[telemetry]` — `history_window` (validated to 30/60/120/300, default 120), `polling_interval_ms` (clamped 500–5000, default 1000).
+  - `[telemetry]` — `history_window` (seconds; validated to 30/60/120/300, default 120), `polling_interval_ms` (clamped 500–5000, default 1000).
   - `[display]` — `preferred_quiet_refresh_rate` (60), `preferred_active_refresh_rate` (144), `restore_refresh_rate_on_exit`, `apply_profile_on_startup`.
 - Corrupt TOML is backed up to `config.toml.bak.<unix-ts>` and defaults are loaded (`load_or_default`, `src/config/mod.rs`).
 - Writes are atomic (`save_atomic`).

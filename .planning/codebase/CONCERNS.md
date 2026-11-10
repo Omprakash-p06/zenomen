@@ -20,25 +20,20 @@
 - The actual arm for `8A3D` on BIOS `F.22` returns `power_write_authorized: true` and `fan_write_verified: true`, with the F.22 validation comment block above it.
 - Risk: a future editor trusting the prose could "restore" the block, or a reviewer could misread the current safety posture. This is exactly the drift AGENTS.md rule 10 is meant to prevent.
 
-### 3. Stale test counts in `README.md`
-- `README.md` claims "123 automated unit and integration tests across 16 integration test suites".
-- Actual: **322** `#[test]` functions — 84 unit tests in `src/`, 238 tests across **19** suites in `tests/`.
-- `windows_service_tests.rs` alone holds 127 of them, so the suite is heavily skewed toward Windows protocol tests.
-
-### 4. Stale "70/70 passing" claim in planning state
+### 3. Stale "70/70 passing" claim in planning state
 - `.planning/STATE.md` records "unit tests 70/70 passing" for Phase 07; the tree now contains 322 test attributes and a new 8A3D authorization surface.
 - Risk: phase verification claims that outlive the code they described.
 
-### 5. Windows capability reporting is inferred from the board catalog, not probed
+### 4. Windows capability reporting is inferred from the board catalog, not probed
 - `WindowsHardwareProvider::capabilities` (`src/hardware/windows/provider.rs`) sets `fan_rpm`, `fan_control`, `power_profiles`, and `rgb_lighting` from `BoardProfile` alone.
 - The board catalog describes protocol support, not whether `ZenOmenHardwareService` is installed, running, or WMI-reachable.
 - Result: the GUI can advertise fan/power controls on a machine where every mutation will fail with "named pipe unavailable" or `InterfaceMissing`.
 - Contrast with `hp_wmi::query_hp_capabilities`, which does probe firmware but is only reached through the service.
 
-### 6. Two overlapping UI stacks and two D-Bus/pipe client layers are documented as one
+### 5. Two overlapping UI stacks and two D-Bus/pipe client layers are documented as one
 - `src/service/client.rs` is the façade, but Windows-specific behavior lives in `src/service/windows/client.rs` with its own retry loop; the facade just forwards. Acceptable, but every new method must be added in both places plus `HardwareRequest`/`HardwareResponse`, `contract.rs` (Linux) and `backend.rs`.
 
-### 7. No `TODO`/`FIXME` markers
+### 6. No `TODO`/`FIXME` markers
 - A repo-wide search finds zero `TODO`, `FIXME`, `XXX`, or `HACK` comments. That is tidy but means deferred work is only recorded in `.planning/` and `docs/`, not at the code site.
 
 ---
@@ -155,7 +150,7 @@ hp_wmi::connect_hp_wmi().unwrap_or_else(|_| {
 - Hardcoded two-fan assumption in UI (`fan-1-value`, `fan-2-value` in `ui/app.slint`) and in `read_fan_rpms` enrichment; `TelemetrySnapshot.fan_rpms` is a `Vec`, but only two are displayed.
 - Six screens are a compile-time set (`ScreenId::ALL`); adding a screen touches the enum, `index()`, `from_index()`, `title()`, `ui/app.slint`, and `src/app.rs` routing.
 - RGB is fixed at four zones (`[RgbColor; 4]`) across schema, migration, backend and UI. Boards with 1 zone map to `Legacy` but the type still carries 4.
-- History window is limited to 30/60/120/300 samples by `AppConfig::sanitize`; arbitrary values silently reset to 120.
+- History window is limited to 30/60/120/300 seconds by `AppConfig::sanitize`; arbitrary values silently reset to 120. Buffer capacity is derived from the polling interval (`capacity_for_duration`), so the same window holds 60–600 samples depending on cadence.
 - Board catalog is a hardcoded match in `resolve_board_profile`; every new model requires a code change and a re-release.
 - Pipe server handles one connection at a time (accept → read → respond → disconnect). Fine for one GUI, but two concurrent clients serialize.
 
@@ -192,7 +187,7 @@ No `cargo-deny`, no license audit beyond `cargo audit` in CI. GPL-3.0-only licen
 - Working tree is clean at `86a33bb`; branch is `fix/windows-8a3d-authorization-and-restore`, 14 commits ahead of the last codebase-map refresh.
 - Version is `0.1.0` for both binaries; release workflow enforces tag == `Cargo.toml` version.
 - Physical validation for `8A3D`/F.22 is recorded in code (`profiles.rs`) and in `.planning/STATE.md`, but the evidence file lives in `docs/testing/HP_BOARD_VALIDATION.md` — confirm it names the same BIOS and measurements before shipping.
-- `README.md` still describes the D-Bus conf as installed to `/etc/dbus-1/system.d/com.zenomen.Hardware1.conf`, while `Cargo.toml` maps it to `/usr/share/dbus-1/system.d/`. Both locations work for D-Bus, but the docs and packaging should agree.
+- `README.md` now documents the packaging paths and test counts reported by `Cargo.toml` and the suite inventory; keep it in step when either changes.
 
 ---
 
