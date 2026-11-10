@@ -8,10 +8,10 @@
 //!   only after the hardware-in-the-loop procedure in
 //!   `docs/testing/HP_BOARD_VALIDATION.md` has been completed and recorded.
 //!
-//! - Board `8A3D` (HP Victus 15-fb0xxx, BIOS F.22) has **not** completed
-//!   physical write validation. All mutations are blocked until the procedure
-//!   produces a ratified `BoardValidation` record matching both board ID and
-//!   BIOS version.
+//! - Board `8A3D` (HP Victus 15-fb0xxx, BIOS F.22) has completed physical
+//!   validation for Max Fan and Auto restoration. Manual PWM and power mutations
+//!   remain blocked. All other BIOS versions on `8A3D` remain locked until
+//!   individually validated on target hardware.
 //!
 //! - Recognized boards that are not write-validated are allowed safe read-only
 //!   discovery and WMI probing. Only the write flags are withheld.
@@ -37,6 +37,9 @@ pub struct BoardCapabilities {
     pub fan_table_supported: bool,
     pub manual_fan_control_supported: bool,
     pub max_fan_supported: bool,
+    pub max_fan_write_verified: bool,
+    pub auto_fan_restore_verified: bool,
+    pub manual_fan_write_verified: bool,
     pub thermal_profile_source: ThermalProfileSource,
     pub fan_write_verified: bool,
     pub power_write_verified: bool,
@@ -69,20 +72,27 @@ pub struct BoardProfile {
 impl BoardProfile {
     /// Derive granular capabilities combining board specs and physical verification state.
     pub fn capabilities(&self, validation: Option<&BoardValidation>) -> BoardCapabilities {
-        let (fan_write, power_write, rgb_write) = match validation {
-            Some(v) => (
-                v.fan_write_verified,
-                v.power_write_verified,
-                v.rgb_write_verified,
-            ),
-            None => (false, false, false),
-        };
+        let (fan_write, max_fan_write, auto_restore, manual_write, power_write, rgb_write) =
+            match validation {
+                Some(v) => (
+                    v.fan_write_verified,
+                    v.max_fan_write_verified,
+                    v.auto_fan_restore_verified,
+                    v.manual_fan_write_verified,
+                    v.power_write_verified,
+                    v.rgb_write_verified,
+                ),
+                None => (false, false, false, false, false, false),
+            };
         BoardCapabilities {
             fan_count_supported: self.fan_count > 0,
             fan_rpm_supported: self.fan_count > 0,
             fan_table_supported: self.has_custom_curves,
             manual_fan_control_supported: self.has_custom_curves,
             max_fan_supported: self.has_max_fan,
+            max_fan_write_verified: max_fan_write,
+            auto_fan_restore_verified: auto_restore,
+            manual_fan_write_verified: manual_write,
             thermal_profile_source: self.thermal_profile_source,
             fan_write_verified: fan_write,
             power_write_verified: power_write,
@@ -109,6 +119,9 @@ pub struct BoardValidation {
     pub bios_version: String,
     pub fan_read_verified: bool,
     pub fan_write_verified: bool,
+    pub max_fan_write_verified: bool,
+    pub auto_fan_restore_verified: bool,
+    pub manual_fan_write_verified: bool,
     pub power_read_verified: bool,
     pub power_write_verified: bool,
     pub rgb_read_verified: bool,
@@ -129,6 +142,9 @@ impl BoardValidation {
             // Allow read-only probing on unknown/unvalidated boards.
             fan_read_verified: true,
             fan_write_verified: false,
+            max_fan_write_verified: false,
+            auto_fan_restore_verified: false,
+            manual_fan_write_verified: false,
             power_read_verified: true,
             power_write_verified: false,
             rgb_read_verified: false,
@@ -149,6 +165,9 @@ impl BoardValidation {
             bios_version: bios_version.trim().to_string(),
             fan_read_verified: true,
             fan_write_verified: true,
+            max_fan_write_verified: true,
+            auto_fan_restore_verified: true,
+            manual_fan_write_verified: true,
             power_read_verified: true,
             power_write_verified: true,
             rgb_read_verified: true,
@@ -269,6 +288,9 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
             bios_version: bios.to_string(),
             fan_read_verified: true,
             fan_write_verified: true,
+            max_fan_write_verified: true,
+            auto_fan_restore_verified: true,
+            manual_fan_write_verified: false,
             power_read_verified: true,
             power_write_verified: true,
             rgb_read_verified: true,
@@ -283,6 +305,9 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
             bios_version: bios.to_string(),
             fan_read_verified: true,
             fan_write_verified: true,
+            max_fan_write_verified: true,
+            auto_fan_restore_verified: true,
+            manual_fan_write_verified: false,
             power_read_verified: true,
             power_write_verified: true,
             rgb_read_verified: true,
@@ -291,18 +316,33 @@ pub fn resolve_board_validation(board_id: &str, bios_version: &str) -> BoardVali
         },
 
         // ── HP Victus 15-fb0xxx (8A3D, BIOS F.22) ───────────────────────────
-        // Board 8A3D has NOT completed physical write validation.
-        // The WMI class and fan count probe may succeed, but no write operation
-        // has been confirmed on this BIOS version. Mutations are blocked until
-        // the hardware-in-the-loop procedure is run and a evidence record is
-        // committed. See docs/testing/HP_BOARD_VALIDATION.md.
+        // Physically validated on target hardware (2026-11-10):
+        // - Max Fan (0x27=1): Verified (CPU 4000->5400, GPU 3600->5200 RPM, readback 1).
+        // - Safe Auto Restore: Verified (0x27=0 -> 0x10 -> 0x1A {0xFF, 0x01}, readback 0).
+        // - 30s Sustained Observation: Verified (fans 4000/3600 RPM, temp 78.1->75.1°C, zero 0x2E calls).
+        // - Manual per-fan PWM / custom curve writes: UNVERIFIED (blocked).
+        // - Power profile writes: UNVERIFIED (EC 0x95 managed, blocked).
+        // - RGB writes: UNVERIFIED / N/A (no RGB zones on 8A3D).
+        "8A3D" if bios == "F.22" => BoardValidation {
+            board_id: normalized,
+            bios_version: bios.to_string(),
+            fan_read_verified: true,
+            fan_write_verified: true,
+            max_fan_write_verified: true,
+            auto_fan_restore_verified: true,
+            manual_fan_write_verified: false,
+            power_read_verified: false,
+            power_write_verified: false,
+            rgb_read_verified: false,
+            rgb_write_verified: false,
+            validation_record_version: 1,
+        },
         "8A3D" => {
             tracing::warn!(
                 board = "8A3D",
                 bios = bios,
-                "Board 8A3D (Victus 15-fb0xxx) has no physical write validation record. \
-                 Fan and power mutations are blocked. Run the HP_BOARD_VALIDATION procedure \
-                 and commit evidence to unlock writes."
+                "Board 8A3D (Victus 15-fb0xxx) on BIOS {bios} has no physical write validation record \
+                 (only BIOS F.22 is ratified). Fan mutations remain blocked."
             );
             BoardValidation::new_unvalidated(&normalized, bios)
         }

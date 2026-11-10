@@ -48,7 +48,15 @@ pub fn authorize_mutation(
 
             let normalized = mode.trim().to_lowercase();
             match normalized.as_str() {
-                "auto" => Ok(()),
+                "auto" => {
+                    if !val.auto_fan_restore_verified {
+                        return Err(HardwareControlError::AuthorizationFailed(format!(
+                            "Physical write withheld for board {}: automatic fan restoration is not verified on physical hardware (bios {})",
+                            board.board_id, val.bios_version
+                        )));
+                    }
+                    Ok(())
+                }
                 "max" => {
                     if !board.has_max_fan {
                         return Err(HardwareControlError::UnsupportedMode(format!(
@@ -56,11 +64,29 @@ pub fn authorize_mutation(
                             board.board_id
                         )));
                     }
+                    if !val.max_fan_write_verified {
+                        return Err(HardwareControlError::AuthorizationFailed(format!(
+                            "Physical write withheld for board {}: Maximum Fan override is not verified on physical hardware (bios {})",
+                            board.board_id, val.bios_version
+                        )));
+                    }
                     Ok(())
                 }
-                "manual" => Err(HardwareControlError::UnsupportedMode(
-                    "Manual fan curve setting is not supported on this platform".to_string(),
-                )),
+                "manual" => {
+                    if !board.has_custom_curves {
+                        return Err(HardwareControlError::UnsupportedMode(format!(
+                            "Motherboard {} does not support manual fan curve control",
+                            board.board_id
+                        )));
+                    }
+                    if !val.manual_fan_write_verified {
+                        return Err(HardwareControlError::UnsupportedMode(format!(
+                            "Manual per-fan PWM / curve control is not verified on physical hardware for board {}",
+                            board.board_id
+                        )));
+                    }
+                    Ok(())
+                }
                 other => Err(HardwareControlError::InvalidParameter(format!(
                     "Unrecognized fan mode '{other}'"
                 ))),

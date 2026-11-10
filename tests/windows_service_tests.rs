@@ -202,27 +202,32 @@ fn test_board_profile_rejects_unknown_motherboard() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 3. Board validation — 8A3D is NEVER auto-verified
+// 3. Board validation — 8A3D F.22 ratified; other BIOS versions remain locked
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_8a3d_is_never_write_verified_by_resolve() {
-    // This is the user's target machine. The validation must ALWAYS be unvalidated
-    // from resolve_board_validation regardless of BIOS version.
-    for bios in &["F.00", "F.10", "F.20", "F.22", "F.99", ""] {
+fn test_8a3d_f22_ratified_and_other_bios_remain_locked() {
+    // Board 8A3D BIOS F.22 has physical hardware validation for Max Fan and Auto restore
+    let v_f22 = resolve_board_validation("8A3D", "F.22");
+    assert!(v_f22.fan_write_verified);
+    assert!(v_f22.max_fan_write_verified);
+    assert!(v_f22.auto_fan_restore_verified);
+    assert!(!v_f22.manual_fan_write_verified);
+    assert!(!v_f22.power_write_verified);
+    assert!(!v_f22.rgb_write_verified);
+
+    // Any other BIOS version for 8A3D must remain completely unvalidated
+    for bios in &["F.00", "F.10", "F.20", "F.21", "F.23", "F.99", ""] {
         let v = resolve_board_validation("8A3D", bios);
         assert!(
             !v.fan_write_verified,
-            "8A3D BIOS {bios}: fan_write_verified must be false (physical validation required)"
+            "8A3D BIOS {bios}: fan_write_verified must be false (only F.22 is ratified)"
         );
-        assert!(
-            !v.power_write_verified,
-            "8A3D BIOS {bios}: power_write_verified must be false"
-        );
-        assert!(
-            !v.rgb_write_verified,
-            "8A3D BIOS {bios}: rgb_write_verified must be false"
-        );
+        assert!(!v.max_fan_write_verified);
+        assert!(!v.auto_fan_restore_verified);
+        assert!(!v.manual_fan_write_verified);
+        assert!(!v.power_write_verified);
+        assert!(!v.rgb_write_verified);
     }
 }
 
@@ -384,10 +389,10 @@ fn test_authorization_blocks_unvalidated_hardware_mutations() {
 
 #[test]
 fn test_authorization_blocks_8a3d_mutations_from_resolve() {
-    // Even if someone passes the resolved (unvalidated) record for 8A3D,
+    // Even if someone passes the resolved (unvalidated) record for 8A3D (e.g. BIOS F.20),
     // mutations must be blocked for both max and auto modes.
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
 
     assert!(!validation.fan_write_verified);
 
@@ -411,6 +416,9 @@ fn test_authorization_power_rgb_flags_cannot_authorize_fan_write() {
         bios_version: "F.20".to_string(),
         fan_read_verified: true,
         fan_write_verified: false, // ← NOT set
+        max_fan_write_verified: false,
+        auto_fan_restore_verified: false,
+        manual_fan_write_verified: false,
         power_read_verified: true,
         power_write_verified: true,
         rgb_read_verified: true,
@@ -666,9 +674,9 @@ fn test_handle_request_get_fan_status_unavailable_wmi() {
 
 #[test]
 fn test_handle_request_set_fan_mode_blocked_by_unvalidated_board() {
-    // Board 8A3D with the auto-resolved (unvalidated) record must block SetFanMode.
+    // Board 8A3D with an unvalidated BIOS record must block SetFanMode.
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     // Fake adapter should not be called (authorization gate fires first).
     let adapter = FakeWmiAdapter::new(true);
     let conn = HpWmiConnection::from_adapter(adapter);
@@ -893,13 +901,12 @@ fn test_mock_client_server_communication_verified_board() {
 }
 
 #[test]
-fn test_mock_client_server_8a3d_blocked() {
-    // Full round-trip for board 8A3D with its auto-resolved unvalidated record
+fn test_mock_client_server_8a3d_unvalidated_bios_blocked() {
+    // Full round-trip for board 8A3D on unvalidated BIOS F.20
     // must produce an Error response without touching WMI.
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     let adapter = FakeWmiAdapter::new(true);
-    // No responses pre-loaded.
     let conn = HpWmiConnection::from_adapter(adapter);
 
     let req = HardwareRequest::SetFanMode {
@@ -915,8 +922,35 @@ fn test_mock_client_server_8a3d_blocked() {
 
     assert!(
         matches!(client_resp, HardwareResponse::Error(_)),
-        "8A3D must produce Error, got {client_resp:?}"
+        "Unvalidated BIOS must produce Error, got {client_resp:?}"
     );
+}
+
+#[test]
+fn test_mock_client_server_8a3d_f22_max_fan_authorized() {
+    // Full round-trip for board 8A3D on ratified BIOS F.22
+    // must authorize and execute SetFanMode(max).
+    let board = resolve_board_profile("8A3D").unwrap();
+    let validation = resolve_board_validation("8A3D", "F.22");
+    let adapter = FakeWmiAdapter::new(true);
+    adapter.expect_call(fan_mode_response(0x00)); // pre-read
+    adapter.expect_call(fan_count_response(2)); // 0x10 arming for Victus S
+    adapter.expect_call(write_ack()); // write 0x27=1
+    adapter.expect_call(fan_mode_response(0x01)); // post-read verification
+    let conn = HpWmiConnection::from_adapter_for_board(adapter, "8A3D");
+
+    let req = HardwareRequest::SetFanMode {
+        mode: "max".to_string(),
+    };
+    let tx_frame = encode_frame(&req).expect("client encode");
+    let (server_req, _): (HardwareRequest, usize) = decode_frame(&tx_frame).expect("server decode");
+
+    let response = handle_request(server_req, &board, Some(&validation), &conn);
+    let resp_frame = encode_frame(&response).expect("server encode response");
+    let (client_resp, _): (HardwareResponse, usize) =
+        decode_frame(&resp_frame).expect("client decode response");
+
+    assert_eq!(client_resp, HardwareResponse::FanModeSet("max".to_string()));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1136,10 +1170,10 @@ fn test_generic_board_auto_restore_only_clears_max_fan() {
 
 #[test]
 fn test_8a3d_auto_request_cannot_reach_the_unsafe_reset() {
-    // `SetFanMode { auto }` is blocked by authorization when fan_write_verified
-    // is false, so zero calls reach the firmware adapter.
+    // `SetFanMode { auto }` is blocked by authorization on unvalidated BIOS revisions,
+    // so zero calls reach the firmware adapter.
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
 
     let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
@@ -1190,7 +1224,7 @@ fn test_fan_write_uses_gaming_family_not_lighting_family() {
 #[test]
 fn test_8a3d_fan_write_still_blocked_before_firmware() {
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
     let conn = HpWmiConnection::from_adapter_for_board(adapter.clone(), "8A3D");
 
@@ -1317,7 +1351,7 @@ fn test_probe_thermal_profile_query_does_not_unlock_writes() {
     // Probing 0x4C must strictly remain a diagnostic action and never grant
     // write authorization or mutate the board validation record.
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     assert!(!validation.fan_write_verified);
 
     let adapter = std::sync::Arc::new(FakeWmiAdapter::new(true));
@@ -1638,7 +1672,7 @@ fn test_fan_control_state_lifecycle_and_helpers() {
 #[test]
 fn test_guarded_8a3d_fan_control_blocks_writes_when_unvalidated() {
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     assert!(!validation.fan_write_verified);
 
     let adapter = FakeWmiAdapter::new(true);
@@ -1696,7 +1730,7 @@ fn test_8a3d_set_fan_mode_auto_succeeds_with_known_profile() {
 #[test]
 fn test_8a3d_shutdown_skips_firmware_write_when_unvalidated() {
     let _board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     assert!(!validation.fan_write_verified);
 
     let adapter = FakeWmiAdapter::new(true);
@@ -1892,7 +1926,7 @@ fn test_8a3d_thermal_profile_separation_in_server() {
 #[test]
 fn test_8a3d_authorization_failure_message_guides_operator_to_validation() {
     let board = resolve_board_profile("8A3D").unwrap();
-    let validation = resolve_board_validation("8A3D", "F.22");
+    let validation = resolve_board_validation("8A3D", "F.20");
     assert!(!validation.fan_write_verified);
 
     let err = authorize_mutation(
@@ -2554,5 +2588,259 @@ fn test_observation_incomplete_evidence_never_verified() {
     assert_eq!(
         victus_s::evaluate_observation(&samples, 4500, 4200, balanced, false),
         victus_s::ValidationState::RestorationFailed
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 19. Physical validation ratification & authorization regression tests (8A3D F.22)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_8a3d_f22_validated_max_fan_authorization() {
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+    let validation = resolve_board_validation("8A3D", "F.22");
+
+    assert!(validation.fan_write_verified);
+    assert!(validation.max_fan_write_verified);
+
+    let req = HardwareRequest::SetFanMode {
+        mode: "max".to_string(),
+    };
+    assert!(
+        authorize_mutation(&req, &board, Some(&validation)).is_ok(),
+        "SetFanMode(max) must be authorized for 8A3D on BIOS F.22"
+    );
+}
+
+#[test]
+fn test_8a3d_f22_auto_authorization() {
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+    let validation = resolve_board_validation("8A3D", "F.22");
+
+    assert!(validation.fan_write_verified);
+    assert!(validation.auto_fan_restore_verified);
+
+    let req = HardwareRequest::SetFanMode {
+        mode: "auto".to_string(),
+    };
+    assert!(
+        authorize_mutation(&req, &board, Some(&validation)).is_ok(),
+        "SetFanMode(auto) must be authorized for 8A3D on BIOS F.22"
+    );
+}
+
+#[test]
+fn test_8a3d_different_bios_revision_remains_locked() {
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+
+    for unverified_bios in &["F.10", "F.20", "F.21", "F.23", "F.30", ""] {
+        let validation = resolve_board_validation("8A3D", unverified_bios);
+
+        assert!(
+            !validation.fan_write_verified,
+            "8A3D BIOS {unverified_bios} must NOT have fan_write_verified"
+        );
+        assert!(!validation.max_fan_write_verified);
+        assert!(!validation.auto_fan_restore_verified);
+
+        for mode in &["max", "auto"] {
+            let req = HardwareRequest::SetFanMode {
+                mode: mode.to_string(),
+            };
+            let err = authorize_mutation(&req, &board, Some(&validation))
+                .expect_err("Unverified BIOS must be rejected");
+            assert!(
+                matches!(err, HardwareControlError::AuthorizationFailed(_)),
+                "Expected AuthorizationFailed for BIOS {unverified_bios}, got {err:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_different_motherboard_remains_unaffected() {
+    // 8A3E on F.22 remains completely unvalidated
+    let victus_intel = resolve_board_profile("8A3E").expect("resolve 8A3E");
+    let val_8a3e = resolve_board_validation("8A3E", "F.22");
+    assert!(!val_8a3e.fan_write_verified);
+    assert!(!val_8a3e.max_fan_write_verified);
+    assert!(!val_8a3e.auto_fan_restore_verified);
+
+    let req_max = HardwareRequest::SetFanMode {
+        mode: "max".to_string(),
+    };
+    let err_8a3e = authorize_mutation(&req_max, &victus_intel, Some(&val_8a3e))
+        .expect_err("8A3E must not be authorized");
+    assert!(matches!(
+        err_8a3e,
+        HardwareControlError::AuthorizationFailed(_)
+    ));
+
+    // Unknown board remains unaffected
+    assert_eq!(resolve_board_profile("UNKNOWN_BOARD"), None);
+    let val_unknown = resolve_board_validation("UNKNOWN_BOARD", "F.22");
+    assert!(!val_unknown.fan_write_verified);
+
+    // 88F8 on F.20 remains valid per its own record
+    let board_88f8 = resolve_board_profile("88F8").expect("resolve 88F8");
+    let val_88f8 = resolve_board_validation("88F8", "F.20");
+    assert!(val_88f8.fan_write_verified);
+    assert!(authorize_mutation(&req_max, &board_88f8, Some(&val_88f8)).is_ok());
+}
+
+#[test]
+fn test_8a3d_manual_pwm_remains_locked() {
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+    let validation = resolve_board_validation("8A3D", "F.22");
+
+    assert!(
+        !validation.manual_fan_write_verified,
+        "manual_fan_write_verified must remain false"
+    );
+
+    let caps = board.capabilities(Some(&validation));
+    assert!(
+        caps.manual_fan_control_supported,
+        "spec table support should be true"
+    );
+    assert!(
+        !caps.manual_fan_write_verified,
+        "manual fan write must not be verified on physical hardware"
+    );
+
+    let req = HardwareRequest::SetFanMode {
+        mode: "manual".to_string(),
+    };
+    let err = authorize_mutation(&req, &board, Some(&validation))
+        .expect_err("manual fan mode must be rejected");
+    assert!(
+        matches!(err, HardwareControlError::UnsupportedMode(_)),
+        "Expected UnsupportedMode for manual fan mode on 8A3D, got {err:?}"
+    );
+}
+
+#[test]
+fn test_8a3d_power_mutations_remain_locked() {
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+    let validation = resolve_board_validation("8A3D", "F.22");
+
+    assert!(
+        !validation.power_write_verified,
+        "power_write_verified must be false on 8A3D"
+    );
+    assert!(
+        !validation.rgb_write_verified,
+        "rgb_write_verified must be false on 8A3D"
+    );
+
+    // SetPowerProfile rejected
+    let req_power = HardwareRequest::SetPowerProfile {
+        profile: "performance".to_string(),
+    };
+    let err_power = authorize_mutation(&req_power, &board, Some(&validation))
+        .expect_err("SetPowerProfile must be blocked");
+    assert!(matches!(
+        err_power,
+        HardwareControlError::UnsupportedMode(_)
+    ));
+
+    // ApplyPreset rejected
+    let req_preset = HardwareRequest::ApplyPreset {
+        preset: "gaming".to_string(),
+    };
+    let err_preset = authorize_mutation(&req_preset, &board, Some(&validation))
+        .expect_err("ApplyPreset must be blocked");
+    assert!(matches!(
+        err_preset,
+        HardwareControlError::UnsupportedMode(_)
+    ));
+
+    // SetRgbEnabled rejected
+    let req_rgb = HardwareRequest::SetRgbEnabled { enabled: true };
+    let err_rgb = authorize_mutation(&req_rgb, &board, Some(&validation))
+        .expect_err("SetRgbEnabled must be blocked");
+    assert!(matches!(err_rgb, HardwareControlError::UnsupportedMode(_)));
+}
+
+#[test]
+fn test_missing_validation_evidence_fails_closed() {
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+
+    let mutating_requests = vec![
+        HardwareRequest::SetFanMode {
+            mode: "max".to_string(),
+        },
+        HardwareRequest::SetFanMode {
+            mode: "auto".to_string(),
+        },
+        HardwareRequest::SetPowerProfile {
+            profile: "performance".to_string(),
+        },
+        HardwareRequest::ApplyPreset {
+            preset: "gaming".to_string(),
+        },
+        HardwareRequest::SetRgbEnabled { enabled: true },
+    ];
+
+    for req in mutating_requests {
+        // None validation fails closed
+        let err_none = authorize_mutation(&req, &board, None)
+            .expect_err("Missing validation record must fail closed");
+        assert!(matches!(err_none, HardwareControlError::UnsupportedMode(_)));
+
+        // Default unvalidated record fails closed
+        let unval = BoardValidation::new_unvalidated("8A3D", "F.22");
+        let err_unval = authorize_mutation(&req, &board, Some(&unval))
+            .expect_err("Unvalidated record must fail closed");
+        assert!(matches!(
+            err_unval,
+            HardwareControlError::UnsupportedMode(_) | HardwareControlError::AuthorizationFailed(_)
+        ));
+    }
+}
+
+#[test]
+fn test_daemon_and_gui_report_consistent_capabilities() {
+    use zenomen::service::windows::profiles::ThermalProfileSource;
+
+    let board = resolve_board_profile("8A3D").expect("resolve 8A3D");
+    let validation = resolve_board_validation("8A3D", "F.22");
+
+    let caps = board.capabilities(Some(&validation));
+
+    // Telemetry capabilities
+    assert!(caps.fan_count_supported);
+    assert!(caps.fan_rpm_supported);
+    assert!(caps.fan_table_supported);
+    assert!(caps.max_fan_supported);
+    assert_eq!(
+        caps.thermal_profile_source,
+        ThermalProfileSource::EmbeddedController
+    );
+
+    // Granular verification flags
+    assert!(caps.fan_write_verified);
+    assert!(caps.max_fan_write_verified);
+    assert!(caps.auto_fan_restore_verified);
+    assert!(caps.manual_fan_control_supported);
+    assert!(!caps.manual_fan_write_verified);
+    assert!(!caps.power_write_verified);
+    assert!(!caps.rgb_write_verified);
+
+    // Serialization and deserialization consistency for RPC / GUI
+    let json = serde_json::to_string(&caps).expect("serialize BoardCapabilities");
+    let decoded_caps: zenomen::service::windows::profiles::BoardCapabilities =
+        serde_json::from_str(&json).expect("deserialize BoardCapabilities");
+
+    assert!(decoded_caps.fan_write_verified);
+    assert!(decoded_caps.max_fan_write_verified);
+    assert!(decoded_caps.auto_fan_restore_verified);
+    assert!(decoded_caps.manual_fan_control_supported);
+    assert!(!decoded_caps.manual_fan_write_verified);
+    assert!(!decoded_caps.power_write_verified);
+    assert!(!decoded_caps.rgb_write_verified);
+    assert_eq!(
+        decoded_caps.thermal_profile_source,
+        caps.thermal_profile_source
     );
 }

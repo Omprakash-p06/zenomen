@@ -84,9 +84,23 @@ Never grant write authorization based solely on a recognized board ID without ph
 
 ### Current Status:
 - **Implemented:** Yes (`RealWmiAdapter`, `hpqBIntM`, `hpqBIOSInt128`).
-- **Unit Tested:** Yes (70 tests in `tests/windows_service_tests.rs`).
-- **Physical Validation:** **PENDING EXECUTION BY OPERATOR ON TARGET HARDWARE**.
-- **Mutations Allowed:** **NONE** (Safely blocked by `resolve_board_validation("8A3D", "F.22")`).
+- **Unit Tested:** Yes (107 tests in `tests/windows_service_tests.rs`).
+- **Physical Validation:** **COMPLETED AND RATIFIED ON TARGET HARDWARE (2026-11-10)**.
+- **Physical Telemetry Evidence:**
+  - Initial Baseline: CPU 4,000 RPM, GPU 3,600 RPM, 0x26 = 0 (OFF).
+  - Max Fan Commanded: `0x27 = [1, 0, 0, 0]`, firmware readback `0x26 = 1` (ACTIVE).
+  - Physical Tachometer Acceleration: Spooled up to CPU 5,400 RPM (+1,400), GPU 5,200 RPM (+1,600).
+  - Autonomous Cooling Restoration: `0x27=0` -> `0x10` -> `0x1A {0xFF, 0x01}` (Performance profile). Zero calls to forbidden `0x2E {0,0}`.
+  - 30-Second Sustained Observation: 30/30 samples collected, `0x26 = 0` throughout, fans stabilized at 4,000/3,600 RPM, temperature dropped from 78.1°C to ~75.1°C.
+  - Evaluator Outcome: `RestorationVerified`.
+- **Authorized Mutations:**
+  - Max Fan Override (`0x27=1`): **AUTHORIZED** (`max_fan_write_verified: true`, `fan_write_verified: true`).
+  - Automatic EC Restoration: **AUTHORIZED** (`auto_fan_restore_verified: true`).
+- **Blocked / Withheld Mutations:**
+  - Manual Per-Fan PWM / Curves: **BLOCKED** (`manual_fan_write_verified: false`).
+  - Power Profile Writes: **BLOCKED** (`power_write_verified: false`, EC offset 0x95 managed).
+  - Keyboard RGB Mutations: **BLOCKED / N/A** (`rgb_write_verified: false`, 0 zones).
+- **Scope Restriction:** Authorization is strictly bounded to `board_id == "8A3D"` with `bios_version == "F.22"`. Any other BIOS revision or board remains strictly locked (`new_unvalidated`).
 
 ### Step-by-Step Operator Runbook (Run in PowerShell as Administrator):
 
