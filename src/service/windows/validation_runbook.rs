@@ -18,6 +18,7 @@ use std::io::{self, Write};
 use std::thread::sleep;
 use std::time::Duration;
 
+use crate::hardware::windows::sensors;
 use crate::service::types::HardwareControlError;
 use crate::service::windows::hp_wmi;
 use crate::service::windows::victus_s::{
@@ -139,6 +140,9 @@ pub fn run_8a3d_validation_runbook() -> Result<(), HardwareControlError> {
             "(Active)"
         }
     );
+    if let Some(temp) = sensors::read_acpi_thermal_zone_temp() {
+        println!("  - Baseline Temp     : {temp:.1} °C (ACPI Thermal Zone)");
+    }
 
     // Step 2: Fan Table Inspection (0x2F)
     println!("\n[Step 2/8] Inspecting Victus S Fan Table (0x2F)...");
@@ -282,6 +286,7 @@ pub fn run_8a3d_validation_runbook() -> Result<(), HardwareControlError> {
         sleep(Duration::from_secs(1));
         let max_stat = hp_wmi::get_max_fan_state(&conn).map_err(|e| e.to_string());
         let dual_telemetry = hp_wmi::get_victus_dual_fan_rpm(&conn);
+        let temp_c = sensors::read_acpi_thermal_zone_temp();
 
         let (cpu_res, gpu_res) = match dual_telemetry {
             Ok(d) => (Ok(d.cpu_rpm), Ok(d.gpu_rpm)),
@@ -296,6 +301,8 @@ pub fn run_8a3d_validation_runbook() -> Result<(), HardwareControlError> {
             max_fan_active: max_stat.clone(),
             cpu_rpm: cpu_res.clone(),
             gpu_rpm: gpu_res.clone(),
+            cpu_temp_c: temp_c,
+            gpu_temp_c: None,
         };
 
         let max_str = match max_stat {
@@ -315,13 +322,26 @@ pub fn run_8a3d_validation_runbook() -> Result<(), HardwareControlError> {
             Err(_) => "ERROR".to_string(),
         };
 
-        println!("  [{second:>2}s] 0x26: {max_str:<12} | CPU: {cpu_str} | GPU: {gpu_str}");
+        let temp_str = match temp_c {
+            Some(t) => format!("{t:>5.1}°C"),
+            None => "  N/A".to_string(),
+        };
+
+        println!(
+            "  [{second:>2}s] 0x26: {max_str:<12} | CPU: {cpu_str} | GPU: {gpu_str} | Temp: {temp_str}"
+        );
 
         samples.push(sample);
     }
 
     // Evaluate terminal validation state
-    state = victus_s::evaluate_observation(&samples, peak_cpu, peak_gpu, profile_restored);
+    state = victus_s::evaluate_observation(
+        &samples,
+        peak_cpu,
+        peak_gpu,
+        restore_target,
+        profile_restored,
+    );
 
     // Step 8: Final Validation Report
     println!("\n══════════════════════════════════════════════════════════════════════");
@@ -371,6 +391,15 @@ pub fn run_8a3d_validation_runbook() -> Result<(), HardwareControlError> {
             "Applied safe fallback (original profile not claimed restored)"
         }
     );
+    let avg_obs_temp = {
+        let temps: Vec<f32> = samples.iter().filter_map(|s| s.cpu_temp_c).collect();
+        if temps.is_empty() {
+            "N/A".to_string()
+        } else {
+            format!("{:.1}°C", temps.iter().sum::<f32>() / temps.len() as f32)
+        }
+    };
+    println!(" ACPI Thermal Zone Temp     : {avg_obs_temp} (Average during 30s observation)");
     println!(" 30s Observation Window     : 30/30 samples collected | Max Fan remained 0 (OFF)");
     println!(" State Machine Result       : {}", state.as_str());
     println!(" Repository Safety Gate     : fan_write_verified = false (STRICTLY UNCHANGED)");

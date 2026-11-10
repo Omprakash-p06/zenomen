@@ -308,12 +308,14 @@ pub fn parse_fan_levels(bytes: &[u8], fan_count: u8) -> Result<Vec<u32>, Hardwar
 }
 
 /// A single timestamped telemetry sample during the 30-second post-restoration observation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSample {
     pub elapsed_secs: u32,
     pub max_fan_active: Result<bool, String>,
     pub cpu_rpm: Result<u32, String>,
     pub gpu_rpm: Result<u32, String>,
+    pub cpu_temp_c: Option<f32>,
+    pub gpu_temp_c: Option<f32>,
 }
 
 /// Evaluate 30-second post-restoration telemetry samples to determine the terminal validation state.
@@ -321,6 +323,7 @@ pub fn evaluate_observation(
     samples: &[ObservationSample],
     peak_cpu: u32,
     _peak_gpu: u32,
+    profile_target: ProfileRestoreTarget,
     profile_restored: bool,
 ) -> ValidationState {
     if !profile_restored {
@@ -334,7 +337,6 @@ pub fn evaluate_observation(
 
     let mut wmi_error_count = 0;
     let mut any_max_fan_active = false;
-    let mut last_cpu_rpms = Vec::new();
 
     for sample in samples {
         match sample.max_fan_active {
@@ -343,13 +345,8 @@ pub fn evaluate_observation(
             Err(_) => wmi_error_count += 1,
         }
 
-        match sample.cpu_rpm {
-            Ok(rpm) => {
-                if sample.elapsed_secs >= 20 {
-                    last_cpu_rpms.push(rpm);
-                }
-            }
-            Err(_) => wmi_error_count += 1,
+        if sample.cpu_rpm.is_err() {
+            wmi_error_count += 1;
         }
 
         if sample.gpu_rpm.is_err() {
@@ -375,13 +372,73 @@ pub fn evaluate_observation(
         return ValidationState::RestorationUnverified;
     }
 
-    // Deceleration check: If fans were accelerated to high speed (e.g. peak_cpu >= 3500),
-    // fans should show deceleration towards normal curve in the final 10 seconds.
-    // If CPU fan remains pinned near peak (within 100 RPM) for all final samples, fail.
-    if peak_cpu >= 3500 && !last_cpu_rpms.is_empty() {
-        let avg_final_cpu: u32 = last_cpu_rpms.iter().sum::<u32>() / (last_cpu_rpms.len() as u32);
-        if avg_final_cpu >= peak_cpu.saturating_sub(100) {
-            // Fan remained locked at max speed
+    // Thermal evidence requirement: without temperature data, we cannot reliably
+    // verify whether sustained fan speed is appropriate for thermal load.
+    let valid_temps: Vec<f32> = samples
+        .iter()
+        .filter_map(|s| s.cpu_temp_c.or(s.gpu_temp_c))
+        .collect();
+
+    if valid_temps.is_empty() {
+        return ValidationState::RestorationUnverified;
+    }
+
+    // Examine final 10 seconds (or final 10 samples)
+    let final_slice: Vec<&ObservationSample> = if samples.iter().any(|s| s.elapsed_secs >= 20) {
+        samples.iter().filter(|s| s.elapsed_secs >= 20).collect()
+    } else {
+        samples[samples.len().saturating_sub(10)..].iter().collect()
+    };
+
+    let final_cpu_rpms: Vec<u32> = final_slice
+        .iter()
+        .filter_map(|s| s.cpu_rpm.as_ref().ok().copied())
+        .collect();
+    let final_gpu_rpms: Vec<u32> = final_slice
+        .iter()
+        .filter_map(|s| s.gpu_rpm.as_ref().ok().copied())
+        .collect();
+
+    let avg_final_cpu = if !final_cpu_rpms.is_empty() {
+        final_cpu_rpms.iter().sum::<u32>() / (final_cpu_rpms.len() as u32)
+    } else {
+        0
+    };
+    let avg_final_gpu = if !final_gpu_rpms.is_empty() {
+        final_gpu_rpms.iter().sum::<u32>() / (final_gpu_rpms.len() as u32)
+    } else {
+        0
+    };
+
+    let final_temps: Vec<f32> = final_slice
+        .iter()
+        .filter_map(|s| s.cpu_temp_c.or(s.gpu_temp_c))
+        .collect();
+    let avg_temp = if !final_temps.is_empty() {
+        final_temps.iter().sum::<f32>() / (final_temps.len() as f32)
+    } else {
+        valid_temps.iter().sum::<f32>() / (valid_temps.len() as f32)
+    };
+
+    // Danger check: 0 RPM freeze bug detection.
+    // If both fans are 0 RPM but temperature is elevated (>= 75.0°C), cooling failed.
+    if avg_final_cpu == 0 && avg_final_gpu == 0 && avg_temp >= 75.0 {
+        return ValidationState::RestorationFailed;
+    }
+
+    // Deceleration & Thermal load correlation:
+    // If fans were accelerated to high speed (peak_cpu >= 3500):
+    // 1. Fans may decelerate towards baseline (< peak_cpu - 100), OR
+    // 2. Fans may legitimately remain elevated if thermal load is high (>= 65.0°C)
+    //    or the active EC profile is Performance (e.g. 5400/5200 RPM curve per upstream Linux docs).
+    // If fans did NOT decelerate AND temperature is cool (< 65.0°C) AND profile is NOT Performance,
+    // then fans are abnormally stuck at peak speed.
+    if peak_cpu >= 3500 && !final_cpu_rpms.is_empty() {
+        let decelerated = avg_final_cpu < peak_cpu.saturating_sub(100);
+        let thermal_load_elevated = avg_temp >= 65.0;
+        let is_performance_profile = profile_target.profile() == ThermalProfile::Performance;
+
+        if !decelerated && !thermal_load_elevated && !is_performance_profile {
             return ValidationState::RestorationFailed;
         }
     }
@@ -717,24 +774,29 @@ mod tests {
                 max_fan_active: Ok(false),
                 cpu_rpm: Ok(if s < 10 { 4200 - s * 150 } else { 2200 }),
                 gpu_rpm: Ok(if s < 10 { 3900 - s * 200 } else { 0 }),
+                cpu_temp_c: Some(55.0),
+                gpu_temp_c: None,
             });
         }
 
-        // 1. Clean run: deceleration from 4700 peak -> Verified
+        let balanced = ProfileRestoreTarget::Known(ThermalProfile::Balanced);
+        let performance = ProfileRestoreTarget::Known(ThermalProfile::Performance);
+
+        // 1. Clean run: deceleration from 4700 peak with cool temp -> Verified
         assert_eq!(
-            evaluate_observation(&clean_samples, 4700, 4500, true),
+            evaluate_observation(&clean_samples, 4700, 4500, balanced, true),
             ValidationState::RestorationVerified
         );
 
         // 2. Profile restoration failed initially -> Failed
         assert_eq!(
-            evaluate_observation(&clean_samples, 4700, 4500, false),
+            evaluate_observation(&clean_samples, 4700, 4500, balanced, false),
             ValidationState::RestorationFailed
         );
 
         // 3. Incomplete observation (< 30 samples) -> Unverified
         assert_eq!(
-            evaluate_observation(&clean_samples[..15], 4700, 4500, true),
+            evaluate_observation(&clean_samples[..15], 4700, 4500, balanced, true),
             ValidationState::RestorationUnverified
         );
 
@@ -742,40 +804,86 @@ mod tests {
         let mut failed_max = clean_samples.clone();
         failed_max[10].max_fan_active = Ok(true);
         assert_eq!(
-            evaluate_observation(&failed_max, 4700, 4500, true),
+            evaluate_observation(&failed_max, 4700, 4500, balanced, true),
             ValidationState::RestorationFailed
         );
 
-        // 5. Fans pinned at peak with no deceleration -> Failed
-        let mut pinned_samples = Vec::new();
+        // 5. Sustained high RPM with warm temperature (78°C) in Performance mode -> Verified (matches upstream Linux 8A3D test)
+        let mut warm_high_samples = Vec::new();
         for s in 1..=30 {
-            pinned_samples.push(ObservationSample {
+            warm_high_samples.push(ObservationSample {
+                elapsed_secs: s,
+                max_fan_active: Ok(false),
+                cpu_rpm: Ok(5400),
+                gpu_rpm: Ok(5200),
+                cpu_temp_c: Some(78.0),
+                gpu_temp_c: None,
+            });
+        }
+        assert_eq!(
+            evaluate_observation(&warm_high_samples, 5400, 5200, performance, true),
+            ValidationState::RestorationVerified
+        );
+
+        // 6. Sustained high RPM with no temperature data -> Unverified (thermal evidence required)
+        let mut no_temp_samples = warm_high_samples.clone();
+        for s in &mut no_temp_samples {
+            s.cpu_temp_c = None;
+        }
+        assert_eq!(
+            evaluate_observation(&no_temp_samples, 5400, 5200, performance, true),
+            ValidationState::RestorationUnverified
+        );
+
+        // 7. Fans pinned at peak with cool temp (45°C) in Balanced profile -> Failed (stuck)
+        let mut cool_pinned_samples = Vec::new();
+        for s in 1..=30 {
+            cool_pinned_samples.push(ObservationSample {
                 elapsed_secs: s,
                 max_fan_active: Ok(false),
                 cpu_rpm: Ok(4700),
                 gpu_rpm: Ok(4500),
+                cpu_temp_c: Some(45.0),
+                gpu_temp_c: None,
             });
         }
         assert_eq!(
-            evaluate_observation(&pinned_samples, 4700, 4500, true),
+            evaluate_observation(&cool_pinned_samples, 4700, 4500, balanced, true),
             ValidationState::RestorationFailed
         );
 
-        // 6. Too many WMI errors -> Unverified
+        // 8. 0 RPM freeze bug: both fans stopped (0 RPM) while temperature is critical (80°C) -> Failed
+        let mut frozen_samples = Vec::new();
+        for s in 1..=30 {
+            frozen_samples.push(ObservationSample {
+                elapsed_secs: s,
+                max_fan_active: Ok(false),
+                cpu_rpm: Ok(0),
+                gpu_rpm: Ok(0),
+                cpu_temp_c: Some(80.0),
+                gpu_temp_c: None,
+            });
+        }
+        assert_eq!(
+            evaluate_observation(&frozen_samples, 4700, 4500, balanced, true),
+            ValidationState::RestorationFailed
+        );
+
+        // 9. Too many WMI errors -> Unverified
         let mut error_samples = clean_samples.clone();
         for item in error_samples.iter_mut().take(5) {
             item.cpu_rpm = Err("WMI error".to_string());
         }
         assert_eq!(
-            evaluate_observation(&error_samples, 4700, 4500, true),
+            evaluate_observation(&error_samples, 4700, 4500, balanced, true),
             ValidationState::RestorationUnverified
         );
 
-        // 7. Final sample errored -> Unverified
+        // 10. Final sample errored -> Unverified
         let mut final_error = clean_samples.clone();
         final_error[29].cpu_rpm = Err("WMI error".to_string());
         assert_eq!(
-            evaluate_observation(&final_error, 4700, 4500, true),
+            evaluate_observation(&final_error, 4700, 4500, balanced, true),
             ValidationState::RestorationUnverified
         );
     }

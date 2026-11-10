@@ -175,13 +175,20 @@ fn test_sensor_telemetry_readings() {
     assert!(sources.contains(&"PDH".to_string()));
 
     let (cpu_temp, gpu_temp) = read_temperature_sensors();
-    assert_eq!(cpu_temp, None);
+    if let Some(c) = cpu_temp {
+        assert!(c > 0.0 && c < 120.0);
+    }
     assert_eq!(gpu_temp, None);
 
     let temps = read_temperature_readings();
     assert_eq!(temps.len(), 2);
-    assert_eq!(temps[0].source, TemperatureSource::Unavailable);
-    assert_eq!(temps[0].celsius, None);
+    if cpu_temp.is_some() {
+        assert_eq!(temps[0].source, TemperatureSource::AcpiThermalZone);
+        assert_eq!(temps[0].celsius, cpu_temp);
+    } else {
+        assert_eq!(temps[0].source, TemperatureSource::Unavailable);
+        assert_eq!(temps[0].celsius, None);
+    }
     assert_eq!(temps[1].source, TemperatureSource::Unavailable);
     assert_eq!(temps[1].celsius, None);
 

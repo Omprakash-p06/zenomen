@@ -2299,10 +2299,13 @@ fn test_observation_max_fan_remains_disabled() {
             max_fan_active: Ok(false),
             cpu_rpm: Ok(if s < 12 { 4500 - s * 180 } else { 2200 }),
             gpu_rpm: Ok(if s < 10 { 4000 - s * 300 } else { 0 }),
+            cpu_temp_c: Some(52.0),
+            gpu_temp_c: None,
         });
     }
 
-    let result = victus_s::evaluate_observation(&samples, 4700, 4500, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4700, 4500, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationVerified);
 }
 
@@ -2315,10 +2318,13 @@ fn test_observation_max_fan_becomes_enabled_again() {
             max_fan_active: Ok(s == 18), // Re-enabled at 18s!
             cpu_rpm: Ok(3000),
             gpu_rpm: Ok(2000),
+            cpu_temp_c: Some(50.0),
+            gpu_temp_c: None,
         });
     }
 
-    let result = victus_s::evaluate_observation(&samples, 4700, 4500, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4700, 4500, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationFailed);
 }
 
@@ -2332,10 +2338,13 @@ fn test_observation_one_fan_temporarily_zero() {
             max_fan_active: Ok(false),
             cpu_rpm: Ok(2400),
             gpu_rpm: Ok(0), // Legitimate autonomous stop
+            cpu_temp_c: Some(48.0),
+            gpu_temp_c: None,
         });
     }
 
-    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationVerified);
 }
 
@@ -2348,11 +2357,94 @@ fn test_observation_both_fans_temporarily_zero() {
             max_fan_active: Ok(false),
             cpu_rpm: Ok(if s < 15 { 3000 - s * 150 } else { 0 }),
             gpu_rpm: Ok(0),
+            cpu_temp_c: Some(42.0), // Cool temperature allows passive fan stop
+            gpu_temp_c: None,
         });
     }
 
-    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationVerified);
+}
+
+#[test]
+fn test_observation_both_fans_zero_at_high_temp_freeze_bug() {
+    // Dangerous 0 RPM freeze bug: fans stopped at 80°C
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(0),
+            gpu_rpm: Ok(0),
+            cpu_temp_c: Some(80.0),
+            gpu_temp_c: None,
+        });
+    }
+
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, balanced, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationFailed);
+}
+
+#[test]
+fn test_observation_sustained_high_rpm_warm_performance() {
+    // Matches physical 8A3D laptop test & upstream Linux test: 5400/5200 RPM at 78°C in Performance mode
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(5400),
+            gpu_rpm: Ok(5200),
+            cpu_temp_c: Some(78.0),
+            gpu_temp_c: None,
+        });
+    }
+
+    let performance = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Performance);
+    let result = victus_s::evaluate_observation(&samples, 5400, 5200, performance, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationVerified);
+}
+
+#[test]
+fn test_observation_sustained_high_rpm_no_thermal_telemetry() {
+    // Missing temperature data must result in RestorationUnverified (no false pass or false fail)
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(5400),
+            gpu_rpm: Ok(5200),
+            cpu_temp_c: None,
+            gpu_temp_c: None,
+        });
+    }
+
+    let performance = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Performance);
+    let result = victus_s::evaluate_observation(&samples, 5400, 5200, performance, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationUnverified);
+}
+
+#[test]
+fn test_observation_sustained_high_rpm_cool_balanced_fails() {
+    // Fans pinned at 4700 RPM when cold (45°C) in Balanced profile indicates stuck fan control
+    let mut samples = Vec::new();
+    for s in 1..=30 {
+        samples.push(victus_s::ObservationSample {
+            elapsed_secs: s,
+            max_fan_active: Ok(false),
+            cpu_rpm: Ok(4700),
+            gpu_rpm: Ok(4500),
+            cpu_temp_c: Some(45.0),
+            gpu_temp_c: None,
+        });
+    }
+
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4700, 4500, balanced, true);
+    assert_eq!(result, victus_s::ValidationState::RestorationFailed);
 }
 
 #[test]
@@ -2376,10 +2468,13 @@ fn test_observation_wmi_failure_during_observation() {
             } else {
                 Ok(0)
             },
+            cpu_temp_c: Some(50.0),
+            gpu_temp_c: None,
         });
     }
 
-    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationUnverified);
 }
 
@@ -2405,11 +2500,13 @@ fn test_observation_recovery_after_failed_sample() {
             } else {
                 Ok(0)
             },
+            cpu_temp_c: Some(50.0),
+            gpu_temp_c: None,
         });
     }
 
-    // 1 transient failure that recovers must verify
-    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationVerified);
 }
 
@@ -2423,18 +2520,22 @@ fn test_observation_timeout() {
             max_fan_active: Ok(false),
             cpu_rpm: Ok(2500),
             gpu_rpm: Ok(0),
+            cpu_temp_c: Some(50.0),
+            gpu_temp_c: None,
         });
     }
 
-    let result = victus_s::evaluate_observation(&samples, 4500, 4200, true);
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
+    let result = victus_s::evaluate_observation(&samples, 4500, 4200, balanced, true);
     assert_eq!(result, victus_s::ValidationState::RestorationUnverified);
 }
 
 #[test]
 fn test_observation_incomplete_evidence_never_verified() {
+    let balanced = victus_s::ProfileRestoreTarget::Known(victus_s::ThermalProfile::Balanced);
     // Empty samples
     assert_eq!(
-        victus_s::evaluate_observation(&[], 4500, 4200, true),
+        victus_s::evaluate_observation(&[], 4500, 4200, balanced, true),
         victus_s::ValidationState::RestorationUnverified
     );
 
@@ -2446,10 +2547,12 @@ fn test_observation_incomplete_evidence_never_verified() {
             max_fan_active: Ok(false),
             cpu_rpm: Ok(2500),
             gpu_rpm: Ok(0),
+            cpu_temp_c: Some(50.0),
+            gpu_temp_c: None,
         });
     }
     assert_eq!(
-        victus_s::evaluate_observation(&samples, 4500, 4200, false),
+        victus_s::evaluate_observation(&samples, 4500, 4200, balanced, false),
         victus_s::ValidationState::RestorationFailed
     );
 }
