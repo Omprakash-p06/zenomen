@@ -1,0 +1,345 @@
+// ZenOmen Cooling screen.
+//
+// Fan telemetry (per-fan RPM) and verified fan mode control (Auto / Max).
+// Every hardware write is verified by read-back with retry/backoff in zenomen-hw.
+// Manual mode without custom curves is not offered in v1.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { ValueReadout } from "../components/value-readout.slint";
+import { StatusPill } from "../components/status-pill.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { UnavailablePanel } from "../components/unavailable-panel.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+import { SecondaryButton } from "../components/action-button.slint";
+import { Icon } from "../components/icons.slint";
+
+export component Cooling inherits Rectangle {
+    in property <bool> has-fan-rpm: true;
+    in property <bool> has-fan-control: true;
+    in property <bool> service-connected: false;
+    in property <bool> is-windows: false;
+    in property <[string]> fan-labels: ["Fan 1", "Fan 2"];
+    in property <[string]> fan-values: [
+        "Waiting for first reading",
+        "Waiting for first reading",
+    ];
+    /// `auto`, `max`, `manual`, or empty when the kernel does not report it.
+    in property <string> fan-mode: "";
+    in property <string> pending-fan-mode: "";
+    in property <string> control-error-message: "";
+
+    callback set-fan-mode(string);
+    callback dismiss-error();
+    callback open-diagnostics();
+
+    background: transparent;
+
+    private property <string> fan-mode-label:
+        root.fan-mode == "" ? "Unavailable"
+        : root.fan-mode == "auto" ? "Auto"
+        : root.fan-mode == "max" ? "Max"
+        : root.fan-mode == "manual" ? "Manual"
+        : root.fan-mode;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        // Error notification banner if verification or authorization failed
+        if root.control-error-message != "" : Rectangle {
+            background: ThemeColors.slate;
+            border-width: ThemeMetrics.stroke-emphasis;
+            border-color: ThemeColors.crimson;
+            border-radius: 6px;
+
+            HorizontalLayout {
+                padding: ThemeMetrics.md;
+                spacing: ThemeMetrics.md;
+                alignment: space-between;
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.xs;
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: "Hardware Control Verification Failed";
+                        color: ThemeColors.crimson;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        font-weight: ThemeTypography.weight-semibold;
+                    }
+                    Text {
+                        text: root.control-error-message;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        wrap: word-wrap;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    SecondaryButton {
+                        label: "Dismiss";
+                        clicked => { root.dismiss-error(); }
+                    }
+                }
+            }
+        }
+
+        // Fan Speeds Section
+        SectionCard {
+            title: "Fan speed tachometer (RPM)";
+
+            if root.has-fan-rpm : HorizontalLayout {
+                spacing: ThemeMetrics.md;
+
+                for entry[index] in root.fan-values : Rectangle {
+                    min-width: 220px;
+                    horizontal-stretch: 1;
+                    height: 84px;
+                    background: ThemeColors.charcoal;
+                    border-width: ThemeMetrics.stroke-hairline;
+                    border-color: ThemeColors.outline;
+                    border-radius: 8px;
+
+                    HorizontalLayout {
+                        padding-left: ThemeMetrics.md;
+                        padding-right: ThemeMetrics.md;
+                        padding-top: ThemeMetrics.sm;
+                        padding-bottom: ThemeMetrics.sm;
+                        spacing: ThemeMetrics.md;
+                        alignment: space-between;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: ThemeMetrics.xs;
+                            horizontal-stretch: 1;
+
+                            HorizontalLayout {
+                                spacing: ThemeMetrics.xs;
+                                alignment: start;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        name: "fan";
+                                        tint: ThemeColors.gold;
+                                        size: 16px;
+                                    }
+                                }
+
+                                Text {
+                                    text: index < root.fan-labels.length
+                                        ? root.fan-labels[index]
+                                        : ("Fan " + (index + 1));
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                    letter-spacing: 0.5px;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            ValueReadout {
+                                value: entry == "" ? "Waiting for first reading" : entry;
+                                unit: entry == "" ? "" : "RPM";
+                                value-size: ThemeTypography.heading;
+                                vertical-stretch: 0;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            StatusPill {
+                                status: entry == "" || entry == "0" ? "info" : "nominal";
+                                label: entry == "" ? "Reading..." : entry == "0" ? "Stopped" : "Active";
+                                vertical-stretch: 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.has-fan-rpm : UnavailablePanel {
+                heading: "Fan RPM reading isn't available on this machine";
+                reason: root.is-windows
+                    ? "HP BIOS does not expose hardware tachometer RPM telemetry on Windows. Fan control mode below is independent and active."
+                    : "No fan tachometer was found in hwmon, so no RPM reading can be shown.";
+                open-diagnostics => {
+                    root.open-diagnostics();
+                }
+            }
+        }
+
+        // Fan Control Mode Section
+        SectionCard {
+            title: "Fan control mode";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.md;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    VerticalLayout {
+                        alignment: center;
+                        StatusPill {
+                            status: root.fan-mode == "" ? "unavailable" : "info";
+                            label: root.fan-mode-label;
+                            glyph: root.fan-mode == "" ? "unavailable" : "";
+                        }
+                    }
+
+                    Text {
+                        text: root.pending-fan-mode != ""
+                            ? "Applying " + root.pending-fan-mode + " and verifying read-back..."
+                            : (root.is-windows
+                                ? "Verified by reading back state with retry/backoff."
+                                : "Verified by reading back state from sysfs with retry/backoff.");
+                        color: root.pending-fan-mode != "" ? ThemeColors.gold : ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                // Interactive control mode cards (Always visible when supported by hardware)
+                if root.has-fan-control : HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+
+                    // Auto Mode Card
+                    Rectangle {
+                        min-width: 220px;
+                        horizontal-stretch: 1;
+                        height: 68px;
+                        background: root.fan-mode == "auto" ? ThemeColors.slate : ThemeColors.charcoal;
+                        border-width: root.fan-mode == "auto" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.fan-mode == "auto" ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 8px;
+
+                        HorizontalLayout {
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: ThemeMetrics.md;
+                            alignment: space-between;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: "Auto";
+                                    color: root.fan-mode == "auto" ? ThemeColors.gold : ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.body;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                }
+                                Text {
+                                    text: "Dynamic BIOS curve · Balanced acoustics";
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                }
+                            }
+
+                            if root.fan-mode == "auto" : VerticalLayout {
+                                alignment: center;
+                                StatusPill {
+                                    status: "nominal";
+                                    label: "Active";
+                                    vertical-stretch: 0;
+                                }
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                if (root.fan-mode != "auto" && root.pending-fan-mode == "") {
+                                    root.set-fan-mode("auto");
+                                }
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+
+                    // Max Mode Card
+                    Rectangle {
+                        min-width: 220px;
+                        horizontal-stretch: 1;
+                        height: 68px;
+                        background: root.fan-mode == "max" ? ThemeColors.slate : ThemeColors.charcoal;
+                        border-width: root.fan-mode == "max" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                        border-color: root.fan-mode == "max" ? ThemeColors.gold : ThemeColors.outline;
+                        border-radius: 8px;
+
+                        HorizontalLayout {
+                            padding-left: ThemeMetrics.md;
+                            padding-right: ThemeMetrics.md;
+                            spacing: ThemeMetrics.md;
+                            alignment: space-between;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: "Max (100%)";
+                                    color: root.fan-mode == "max" ? ThemeColors.gold : ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.body;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                }
+                                Text {
+                                    text: "Full fan speed · Maximum thermal headroom";
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                }
+                            }
+
+                            if root.fan-mode == "max" : VerticalLayout {
+                                alignment: center;
+                                StatusPill {
+                                    status: "nominal";
+                                    label: "Active";
+                                    vertical-stretch: 0;
+                                }
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                if (root.fan-mode != "max" && root.pending-fan-mode == "") {
+                                    root.set-fan-mode("max");
+                                }
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+                }
+
+                if root.has-fan-control && !root.service-connected : CapabilityNotice {
+                    text: root.is-windows
+                        ? "Hardware service (ZenOmenHardwareService) is offline. Start the service (or run zenomen-hw --console) to apply hardware changes."
+                        : "Hardware service (com.zenomen.Hardware1) is disconnected. Controls will request daemon connection when toggled.";
+                }
+
+                if !root.has-fan-control : CapabilityNotice {
+                    text: root.is-windows
+                        ? "Fan control is not supported on this motherboard profile."
+                        : "Fan control is not available on this machine (no writable pwm1_enable interface detected in sysfs).";
+                }
+            }
+        }
+    }
+}

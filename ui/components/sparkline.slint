@@ -1,0 +1,34 @@
+// ZenOmen sparkline — 28px, one 2px Path, no axes, no labels, no fill.
+//
+// Wave 2 ships the component so `metric-card.slint` compiles; plan 01-03
+// generates the `commands` string from the bounded telemetry history. The
+// contract is one-directional: Rust produces SVG path data, this file only
+// renders it.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+
+export component Sparkline inherits Rectangle {
+    /// SVG path data (`M x y L x y …`), produced by the core. Empty means no
+    /// history yet — the card then renders no trace at all rather than a flat
+    /// line at zero.
+    in property <string> commands: "";
+
+    height: ThemeMetrics.sparkline-height;
+    background: transparent;
+    clip: true;
+
+    if root.commands != "" : Path {
+        width: 100%;
+        height: 100%;
+        // The core generates the path in its own 200x28 logical space; the
+        // viewbox scales it to the card width without the core knowing it.
+        viewbox-width: 200;
+        viewbox-height: 28;
+        fill: transparent;
+        stroke: ThemeColors.gold;
+        stroke-width: ThemeMetrics.stroke-emphasis;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: root.commands;
+    }
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ZenOmen
+Comment=Hardware control center for HP OMEN and Victus laptops
+Exec=zenomen %U
+Icon=zenomen
+Terminal=false
+Categories=Utility;System;
+Keywords=fan;gpu;temperature;rgb;power;
+StartupWMClass=zenomen

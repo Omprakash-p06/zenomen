@@ -1,0 +1,17 @@
+# ZenOmen Code Owners
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default fallback for everything in the repository
+* @OWNER_PLACEHOLDER
+
+# Hardware drivers and privileged daemon service
+/src/hardware/ @HARDWARE_MAINTAINER_PLACEHOLDER
+/src/service/  @HARDWARE_MAINTAINER_PLACEHOLDER
+/src/bin/      @HARDWARE_MAINTAINER_PLACEHOLDER
+
+# UI presentation and Slint bridge
+/ui/         @UI_MAINTAINER_PLACEHOLDER
+/src/app.rs  @UI_MAINTAINER_PLACEHOLDER
+
+# CI/CD Workflows
+/.github/workflows/ @CI_MAINTAINER_PLACEHOLDER

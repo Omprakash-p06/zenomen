@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        # Stop the hardware service before files are removed
+        if [ -d /run/systemd/system ]; then
+            systemctl stop zenomen-hw.service >/dev/null 2>&1 || true
+            systemctl disable zenomen-hw.service >/dev/null 2>&1 || true
+        fi
+        ;;
+    upgrade|failed-upgrade)
+        ;;
+    *)
+        ;;
+esac
+
+exit 0

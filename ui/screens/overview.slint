@@ -1,0 +1,214 @@
+// ZenOmen Overview — the dashboard anchor.
+//
+// Four metric cards (CPU, GPU, RAM, Fan) over a wide TelemetryChart. The grid
+// reflows 4 -> 3 -> 2 -> 1 columns on the content-width breakpoints declared in
+// `01-UI-SPEC.md`: 928 / 692 / 456 px. At the default 1180px window the content
+// area is 932px (1180 - 200 sidebar - 48 padding) so 4 columns apply; at the
+// 940px minimum it is 692px, so 3 columns apply.
+//
+// The cards are positioned explicitly instead of with `GridLayout` because a
+// GridLayout's `row`/`col` bindings must be compile-time constants, which a
+// responsive column count is not.
+//
+// Every value is a property fed by the core; nothing here samples hardware, and
+// a card whose capability is missing reads `Unavailable` in place rather than
+// disappearing from the grid.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { MetricCard } from "../components/metric-card.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { TelemetryChart } from "../components/telemetry-chart.slint";
+import { UnavailablePanel } from "../components/unavailable-panel.slint";
+
+export component Overview inherits Rectangle {
+    in property <bool> has-cpu-metrics: true;
+    in property <bool> has-gpu-metrics: true;
+    in property <bool> has-ram-metrics: true;
+    in property <bool> has-fan-rpm: true;
+
+    in property <string> cpu-utilization: "";
+    in property <string> gpu-utilization: "";
+    in property <string> gpu-temperature: "";
+    in property <string> ram-usage: "";
+    in property <string> fan-1-value: "";
+    in property <string> fan-2-value: "";
+
+    in property <string> cpu-sparkline: "";
+    in property <string> gpu-sparkline: "";
+    in property <string> ram-sparkline: "";
+    in property <string> cpu-path: "";
+    in property <string> gpu-path: "";
+    in property <string> ram-path: "";
+
+    in property <string> zenomen-memory: "";
+    in property <string> zenomen-memory-breakdown: "";
+
+    callback open-diagnostics();
+
+    background: transparent;
+
+    // MetricCard's own fixed height; the grid needs it to place rows.
+    private property <length> card-height: 176px;
+
+    private property <int> columns:
+        root.width >= 928px ? 4
+        : root.width >= 692px ? 3
+        : root.width >= 456px ? 2
+        : 1;
+
+    private property <int> rows:
+        root.columns == 4 ? 1
+        : root.columns == 3 ? 2
+        : root.columns == 2 ? 2
+        : 4;
+
+    private property <length> card-width:
+        (root.width - ThemeMetrics.md * (root.columns - 1)) / root.columns;
+
+    private property <bool> any-metrics:
+        root.has-cpu-metrics || root.has-gpu-metrics || root.has-ram-metrics || root.has-fan-rpm;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        // Zero-capability run (FOUND-04): the anchor area is replaced by one
+        // panel naming what could not be detected. The rest of the shell —
+        // sidebar, header, status strip — stays usable.
+        if !root.any-metrics : UnavailablePanel {
+            heading: "No hardware interfaces detected";
+            reason: "This machine exposes none of the CPU, GPU, RAM or fan sensor interfaces ZenOmen can read.";
+            open-diagnostics => {
+                root.open-diagnostics();
+            }
+        }
+
+        if root.any-metrics : Rectangle {
+            height: root.rows * root.card-height + (root.rows - 1) * ThemeMetrics.md;
+            background: transparent;
+
+            for slot[index] in [0, 1, 2, 3] : MetricCard {
+                x: (index < root.columns
+                        ? index
+                        : index < 2 * root.columns
+                            ? index - root.columns
+                            : index < 3 * root.columns
+                                ? index - 2 * root.columns
+                                : index - 3 * root.columns)
+                    * (root.card-width + ThemeMetrics.md);
+                y: (index < root.columns
+                        ? 0
+                        : index < 2 * root.columns
+                            ? 1
+                            : index < 3 * root.columns
+                                ? 2
+                                : 3)
+                    * (root.card-height + ThemeMetrics.md);
+                width: root.card-width;
+
+                label: index == 0 ? "CPU utilization"
+                    : index == 1 ? "GPU utilization"
+                    : index == 2 ? "RAM usage"
+                    : "Fan speed";
+
+                value: index == 0
+                        ? (root.has-cpu-metrics ? root.cpu-utilization : "Unavailable")
+                    : index == 1
+                        ? (root.has-gpu-metrics ? root.gpu-utilization : "Unavailable")
+                    : index == 2
+                        ? (root.has-ram-metrics ? root.ram-usage : "Unavailable")
+                        : (root.has-fan-rpm ? root.fan-1-value : "Unavailable");
+
+                unit: index == 0 ? "%"
+                    : index == 1 ? "%"
+                    : index == 2 ? "MB"
+                    : "RPM";
+
+                // The GPU card carries its second reading here (UI-SPEC lists
+                // utilization *and* temperature for the GPU card).
+                detail: index == 0 ? ""
+                    : index == 1
+                        ? (root.has-gpu-metrics && root.gpu-temperature != ""
+                            ? "GPU temperature " + root.gpu-temperature + " °C"
+                            : "")
+                    : index == 2 ? ""
+                    : (root.has-fan-rpm && root.fan-2-value != ""
+                        ? "Fan 2 " + root.fan-2-value + " RPM"
+                        : "");
+
+                available: index == 0 ? root.has-cpu-metrics
+                    : index == 1 ? root.has-gpu-metrics
+                    : index == 2 ? root.has-ram-metrics
+                    : root.has-fan-rpm;
+
+                show-sparkline: index < 3
+                    && (index == 0 ? root.has-cpu-metrics
+                        : index == 1 ? root.has-gpu-metrics
+                        : root.has-ram-metrics);
+
+                sparkline-commands: index == 0 ? root.cpu-sparkline
+                    : index == 1 ? root.gpu-sparkline
+                    : root.ram-sparkline;
+            }
+        }
+
+        SectionCard {
+            title: "Utilization history";
+
+            TelemetryChart {
+                cpu-path: root.cpu-path;
+                gpu-path: root.gpu-path;
+                ram-path: root.ram-path;
+            }
+        }
+
+        SectionCard {
+            title: "ZenOmen Memory Footprint";
+
+            HorizontalLayout {
+                spacing: ThemeMetrics.lg;
+                alignment: start;
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.xs;
+                    alignment: center;
+                    Text {
+                        text: "Combined Working Set:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                    }
+                    Text {
+                        text: root.zenomen-memory != "" ? root.zenomen-memory : "Unavailable";
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-mono;
+                        font-size: ThemeTypography.heading;
+                    }
+                }
+
+                Rectangle {
+                    width: 1px;
+                    background: ThemeColors.slate;
+                }
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.xs;
+                    alignment: center;
+                    Text {
+                        text: "Process Breakdown:";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                    }
+                    Text {
+                        text: root.zenomen-memory-breakdown != "" ? root.zenomen-memory-breakdown : "Sampling...";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                    }
+                }
+            }
+        }
+    }
+}

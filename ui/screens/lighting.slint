@@ -1,0 +1,499 @@
+// ZenOmen Lighting screen.
+//
+// 4-zone keyboard color visualization, preset picker, interface variant badge,
+// lighting power toggle, and non-destructive profile migration notice.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { StatusPill } from "../components/status-pill.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { UnavailablePanel } from "../components/unavailable-panel.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+export component Lighting inherits Rectangle {
+    in property <bool> has-rgb-lighting: true;
+    in property <bool> is-windows: false;
+    in property <string> rgb-variant: "Four-Zone";
+    in property <string> active-profile-name: "White";
+    in property <string> active-profile-desc: "Clean static white illumination on all 4 zones";
+    in property <bool> rgb-power-enabled: true;
+    in property <[color]> zone-colors: [#FFFFFF, #FFFFFF, #FFFFFF, #FFFFFF];
+    in property <[string]> zone-hexes: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"];
+    in property <string> control-error-message: "";
+    in property <string> unsupported-fields: "";
+
+    callback apply-preset(string);
+    callback set-rgb-power(bool);
+    callback dismiss-error();
+    callback open-diagnostics();
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        // Hardware control error notification banner (DIAG-03)
+        if root.control-error-message != "" : Rectangle {
+            background: ThemeColors.slate;
+            border-width: ThemeMetrics.stroke-emphasis;
+            border-color: ThemeColors.crimson;
+            border-radius: 6px;
+
+            HorizontalLayout {
+                padding: ThemeMetrics.md;
+                spacing: ThemeMetrics.md;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.sm;
+                    alignment: start;
+
+                    Text {
+                        text: "⚠";
+                        color: ThemeColors.crimson;
+                        font-size: ThemeTypography.heading;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.control-error-message;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    width: 72px;
+                    height: 28px;
+                    background: transparent;
+                    border-width: ThemeMetrics.stroke-hairline;
+                    border-color: ThemeColors.outline;
+                    border-radius: 4px;
+
+                    Text {
+                        text: "Dismiss";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => { root.dismiss-error(); }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+        }
+
+        if root.has-rgb-lighting : VerticalLayout {
+            spacing: ThemeMetrics.lg;
+            alignment: start;
+
+            SectionCard {
+                title: "Keyboard Lighting (4-Zone)";
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.lg;
+                    alignment: start;
+
+                    // Header row: Badges, active name, power toggle
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        HorizontalLayout {
+                            spacing: ThemeMetrics.md;
+                            alignment: start;
+
+                            StatusPill {
+                                status: "ok";
+                                label: "Supported";
+                                glyph: "keyboard";
+                                vertical-stretch: 0;
+                            }
+
+                            StatusPill {
+                                status: "info";
+                                label: root.rgb-variant;
+                                glyph: "chip";
+                                vertical-stretch: 0;
+                            }
+
+                            VerticalLayout {
+                                spacing: 2px;
+                                alignment: center;
+
+                                Text {
+                                    text: "Active Profile: " + root.active-profile-name;
+                                    color: ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.body;
+                                    font-weight: ThemeTypography.weight-semibold;
+                                }
+
+                                Text {
+                                    text: root.active-profile-desc;
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                }
+                            }
+                        }
+
+                        // Power Toggle Button
+                        Rectangle {
+                            width: 110px;
+                            height: 32px;
+                            background: root.rgb-power-enabled ? ThemeColors.slate : ThemeColors.charcoal;
+                            border-width: ThemeMetrics.stroke-emphasis;
+                            border-color: root.rgb-power-enabled ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: root.rgb-power-enabled ? "Turn Off" : "Turn On";
+                                color: root.rgb-power-enabled ? ThemeColors.gold : ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.set-rgb-power(!root.rgb-power-enabled);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+
+                    // Unsupported Animation Fields Notice (RGB-07)
+                    if root.unsupported-fields != "" : Rectangle {
+                        background: ThemeColors.slate;
+                        border-width: ThemeMetrics.stroke-hairline;
+                        border-color: ThemeColors.outline;
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding: ThemeMetrics.sm;
+                            spacing: ThemeMetrics.sm;
+                            alignment: start;
+
+                            Text {
+                                text: "ℹ";
+                                color: ThemeColors.text-secondary;
+                                font-size: ThemeTypography.body;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "Static colors applied. Dynamic animation fields (" + root.unsupported-fields + ") preserved for v2.";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // 4-Zone Visual Keyboard Layout
+                    HorizontalLayout {
+                        spacing: ThemeMetrics.md;
+
+                        // Zone 0: Left Flank
+                        Rectangle {
+                            height: 84px;
+                            horizontal-stretch: 1;
+                            background: ThemeColors.charcoal;
+                            border-width: ThemeMetrics.stroke-emphasis;
+                            border-color: root.zone-colors[0];
+                            border-radius: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: ThemeMetrics.xs;
+
+                                Rectangle {
+                                    width: 32px;
+                                    height: 12px;
+                                    border-radius: 2px;
+                                    background: root.zone-colors[0];
+                                    horizontal-stretch: 0;
+                                }
+
+                                Text {
+                                    text: "Zone 1 (Left)";
+                                    color: ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.zone-hexes[0];
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-mono;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Zone 1: Center-Left (WASD)
+                        Rectangle {
+                            height: 84px;
+                            horizontal-stretch: 1;
+                            background: ThemeColors.charcoal;
+                            border-width: ThemeMetrics.stroke-emphasis;
+                            border-color: root.zone-colors[1];
+                            border-radius: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: ThemeMetrics.xs;
+
+                                Rectangle {
+                                    width: 32px;
+                                    height: 12px;
+                                    border-radius: 2px;
+                                    background: root.zone-colors[1];
+                                    horizontal-stretch: 0;
+                                }
+
+                                Text {
+                                    text: "Zone 2 (WASD)";
+                                    color: ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.zone-hexes[1];
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-mono;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Zone 2: Center-Right
+                        Rectangle {
+                            height: 84px;
+                            horizontal-stretch: 1;
+                            background: ThemeColors.charcoal;
+                            border-width: ThemeMetrics.stroke-emphasis;
+                            border-color: root.zone-colors[2];
+                            border-radius: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: ThemeMetrics.xs;
+
+                                Rectangle {
+                                    width: 32px;
+                                    height: 12px;
+                                    border-radius: 2px;
+                                    background: root.zone-colors[2];
+                                    horizontal-stretch: 0;
+                                }
+
+                                Text {
+                                    text: "Zone 3 (Center)";
+                                    color: ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.zone-hexes[2];
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-mono;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Zone 3: Right Flank
+                        Rectangle {
+                            height: 84px;
+                            horizontal-stretch: 1;
+                            background: ThemeColors.charcoal;
+                            border-width: ThemeMetrics.stroke-emphasis;
+                            border-color: root.zone-colors[3];
+                            border-radius: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: ThemeMetrics.xs;
+
+                                Rectangle {
+                                    width: 32px;
+                                    height: 12px;
+                                    border-radius: 2px;
+                                    background: root.zone-colors[3];
+                                    horizontal-stretch: 0;
+                                }
+
+                                Text {
+                                    text: "Zone 4 (Right)";
+                                    color: ThemeColors.text-primary;
+                                    font-family: ThemeTypography.font-prose;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.zone-hexes[3];
+                                    color: ThemeColors.text-secondary;
+                                    font-family: ThemeTypography.font-mono;
+                                    font-size: ThemeTypography.label;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Presets Block (RGB-03)
+            SectionCard {
+                title: "Lighting Presets";
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    HorizontalLayout {
+                        spacing: ThemeMetrics.md;
+                        alignment: start;
+
+                        // White Preset
+                        Rectangle {
+                            width: 120px;
+                            height: 40px;
+                            background: root.active-profile-name == "White" ? ThemeColors.slate : transparent;
+                            border-width: root.active-profile-name == "White" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.active-profile-name == "White" ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "White";
+                                color: root.active-profile-name == "White" ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.apply-preset("white"); }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // Gaming Preset
+                        Rectangle {
+                            width: 120px;
+                            height: 40px;
+                            background: root.active-profile-name == "Gaming" ? ThemeColors.slate : transparent;
+                            border-width: root.active-profile-name == "Gaming" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.active-profile-name == "Gaming" ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "Gaming";
+                                color: root.active-profile-name == "Gaming" ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.apply-preset("gaming"); }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // Rainbow Preset
+                        Rectangle {
+                            width: 120px;
+                            height: 40px;
+                            background: root.active-profile-name == "Rainbow" ? ThemeColors.slate : transparent;
+                            border-width: root.active-profile-name == "Rainbow" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.active-profile-name == "Rainbow" ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "Rainbow";
+                                color: root.active-profile-name == "Rainbow" ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.apply-preset("rainbow"); }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // Off Preset
+                        Rectangle {
+                            width: 100px;
+                            height: 40px;
+                            background: root.active-profile-name == "Off" ? ThemeColors.slate : transparent;
+                            border-width: root.active-profile-name == "Off" ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.active-profile-name == "Off" ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "Off";
+                                color: root.active-profile-name == "Off" ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                font-weight: ThemeTypography.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.apply-preset("off"); }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+                }
+            }
+
+            CapabilityNotice {
+                text: root.is-windows
+                    ? "OpenOMEN profiles in %LOCALAPPDATA%\\zenomen\\rgb\\ are automatically imported without modifying original files (RGB-05)."
+                    : "OpenOMEN profiles in ~/.config/openomen/rgb/ are automatically imported without modifying original files (RGB-05).";
+            }
+        }
+
+        if !root.has-rgb-lighting : UnavailablePanel {
+            heading: "RGB control isn't available on this machine";
+            reason: root.is-windows
+                ? "No supported OMEN 4-zone, legacy, or HP WMI RGB interface detected."
+                : "No supported OMEN 4-zone, legacy, or kernel patch RGB interface detected.";
+            open-diagnostics => {
+                root.open-diagnostics();
+            }
+        }
+    }
+}

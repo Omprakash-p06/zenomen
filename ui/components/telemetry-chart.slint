@@ -1,0 +1,164 @@
+// ZenOmen telemetry chart — the wide secondary anchor on Overview.
+//
+// 160px tall, no vertical axis, three 1px Outline grid lines, three 2px series
+// strokes and a Label-size legend row. The plot itself carries no numbers: the
+// values live in the cards and the legend, exactly as `01-UI-SPEC.md` requires.
+//
+// The core owns every path string (see `src/core/telemetry.rs`); this file only
+// renders what it is given. The `viewbox` properties scale the core's logical
+// plot coordinates to whatever width the window supplies, so a resize never
+// needs a new path and the core never learns the window size.
+//
+// A series with no path is not drawn at all. The empty state below says
+// "Waiting for first reading" when *every* series is empty — zero would be
+// indistinguishable from a real reading.
+//
+// A fixed height is deliberate: a new snapshot must never reflow the page, or
+// the frame-time budget (PERF-03) could not be measured meaningfully.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+
+// One legend entry: an 8px swatch in the series colour plus its label.
+component ChartLegendItem inherits HorizontalLayout {
+    in property <color> swatch: ThemeColors.chart-cpu;
+    in property <string> label: "";
+
+    spacing: ThemeMetrics.xs;
+    alignment: start;
+
+    // A wrapper so the swatch centres against the text rather than sitting at
+    // the top of the row.
+    VerticalLayout {
+        width: 8px;
+        alignment: center;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
+            background: root.swatch;
+        }
+    }
+
+    Text {
+        text: root.label;
+        color: ThemeColors.text-secondary;
+        font-family: ThemeTypography.font-prose;
+        font-size: ThemeTypography.label;
+        vertical-alignment: center;
+    }
+}
+
+export component TelemetryChart inherits Rectangle {
+    in property <string> cpu-path: "";
+    in property <string> gpu-path: "";
+    in property <string> ram-path: "";
+
+    height: ThemeMetrics.chart-height;
+    background: ThemeColors.obsidian;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: ThemeColors.outline;
+    border-radius: 4px;
+
+    VerticalLayout {
+        padding: ThemeMetrics.sm;
+        spacing: ThemeMetrics.sm;
+
+        // Plot area: grid lines and the three traces share one coordinate box.
+        Rectangle {
+            vertical-stretch: 1;
+            background: transparent;
+            clip: true;
+
+            // 100 %, 50 % and 0 % — 1px Outline, never text colour.
+            Rectangle {
+                y: 0;
+                width: 100%;
+                height: 1px;
+                background: ThemeColors.outline;
+            }
+            Rectangle {
+                y: parent.height / 2;
+                width: 100%;
+                height: 1px;
+                background: ThemeColors.outline;
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                width: 100%;
+                height: 1px;
+                background: ThemeColors.outline;
+            }
+
+            if root.cpu-path != "" : Path {
+                width: 100%;
+                height: 100%;
+                viewbox-width: 800;
+                viewbox-height: 140;
+                fill: transparent;
+                stroke: ThemeColors.chart-cpu;
+                stroke-width: ThemeMetrics.stroke-emphasis;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+                commands: root.cpu-path;
+            }
+            if root.gpu-path != "" : Path {
+                width: 100%;
+                height: 100%;
+                viewbox-width: 800;
+                viewbox-height: 140;
+                fill: transparent;
+                stroke: ThemeColors.chart-gpu;
+                stroke-width: ThemeMetrics.stroke-emphasis;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+                commands: root.gpu-path;
+            }
+            if root.ram-path != "" : Path {
+                width: 100%;
+                height: 100%;
+                viewbox-width: 800;
+                viewbox-height: 140;
+                fill: transparent;
+                stroke: ThemeColors.chart-ram;
+                stroke-width: ThemeMetrics.stroke-emphasis;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+                commands: root.ram-path;
+            }
+
+            // Fewer than two samples for every series: say so instead of
+            // drawing a flat line at zero.
+            if root.cpu-path == "" && root.gpu-path == "" && root.ram-path == "" : Text {
+                width: 100%;
+                height: 100%;
+                text: "Waiting for first reading";
+                color: ThemeColors.text-secondary;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.body;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Legend stays visible whether or not the series have data, so a
+        // missing trace never makes its series disappear from the chart.
+        HorizontalLayout {
+            spacing: ThemeMetrics.md;
+            alignment: start;
+
+            ChartLegendItem {
+                swatch: ThemeColors.chart-cpu;
+                label: "CPU";
+            }
+            ChartLegendItem {
+                swatch: ThemeColors.chart-gpu;
+                label: "GPU";
+            }
+            ChartLegendItem {
+                swatch: ThemeColors.chart-ram;
+                label: "RAM";
+            }
+        }
+    }
+}

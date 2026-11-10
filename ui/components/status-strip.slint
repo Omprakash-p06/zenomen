@@ -1,0 +1,73 @@
+// ZenOmen status strip — one line of global capability / mock / service state,
+// directly under the header. A degraded strip is outlined in gold and carries a
+// warning glyph *and* the reason in text, so colour is never the only signal.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { Icon } from "icons.slint";
+import { SecondaryButton } from "action-button.slint";
+
+export component StatusStrip inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> degraded: false;
+    in property <bool> show-action: false;
+    in property <string> action-label: "View Diagnostics";
+
+    callback action();
+
+    height: ThemeMetrics.status-strip-height;
+    background: ThemeColors.charcoal;
+
+    // Nominal: a 1px outline hairline on the top edge only.
+    // Degraded: a full 1px gold outline, as the spec's alert table requires.
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        border-width: ThemeMetrics.stroke-hairline;
+        border-color: root.degraded ? ThemeColors.gold : transparent;
+        border-radius: 0;
+    }
+    if !root.degraded : Rectangle {
+        y: 0;
+        width: 100%;
+        height: ThemeMetrics.stroke-hairline;
+        background: ThemeColors.outline;
+    }
+
+    HorizontalLayout {
+        padding-left: ThemeMetrics.lg;
+        padding-right: ThemeMetrics.lg;
+        spacing: ThemeMetrics.sm;
+        alignment: start;
+
+        if root.degraded : VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "warning";
+                tint: ThemeColors.gold;
+                size: 14px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: root.degraded ? ThemeColors.gold : ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        if root.show-action : VerticalLayout {
+            alignment: center;
+            SecondaryButton {
+                label: root.action-label;
+                clicked => {
+                    root.action();
+                }
+            }
+        }
+    }
+}

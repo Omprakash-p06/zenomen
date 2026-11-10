@@ -1,0 +1,91 @@
+// ZenOmen unavailable panel — replaces a control or a card body when a
+// subsystem is not present.
+//
+// The copy contract (`01-UI-SPEC.md`, Unsupported subsystem) requires three
+// parts, and all three are caller-supplied because only the screen knows which
+// interface is missing:
+//   1. `{Subsystem} isn't available on this machine` (heading)
+//   2. one sentence naming the missing interface (reason)
+//   3. a way to see what *was* detected (the Diagnostics action)
+// There is no disabled-but-present control in Phase 1, so this panel is the
+// only "cannot act here" treatment.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { Icon } from "icons.slint";
+import { SecondaryButton } from "action-button.slint";
+
+export component UnavailablePanel inherits Rectangle {
+    in property <string> heading: "Unavailable";
+    in property <string> reason: "";
+    in property <string> action-label: "Open Diagnostics";
+
+    callback open-diagnostics();
+
+    background: ThemeColors.charcoal;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: ThemeColors.outline;
+    border-radius: 4px;
+    min-height: 176px;
+
+    VerticalLayout {
+        padding: ThemeMetrics.lg;
+        spacing: ThemeMetrics.sm;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: ThemeMetrics.sm;
+            alignment: start;
+
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: "unavailable";
+                    tint: ThemeColors.text-secondary;
+                }
+            }
+            Text {
+                text: root.heading;
+                color: ThemeColors.text-primary;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.heading;
+                font-weight: ThemeTypography.weight-semibold;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+
+        Text {
+            text: root.reason;
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.body;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Open Diagnostics to see which sensors were detected.";
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            background: transparent;
+            height: ThemeMetrics.sm;
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            SecondaryButton {
+                label: root.action-label;
+                clicked => {
+                    root.open-diagnostics();
+                }
+            }
+        }
+    }
+}

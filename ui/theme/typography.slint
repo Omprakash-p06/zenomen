@@ -1,0 +1,30 @@
+// ZenOmen type tokens — exactly four sizes, exactly two weights.
+//
+// Values come verbatim from `01-UI-SPEC.md` (Typography). Inter carries all
+// prose; JetBrains Mono carries every numeric readout (values, RPM, watts, °C,
+// percentages, version strings) and is only ever used at Display or Heading
+// size — never at Body or Label.
+//
+// The font files are vendored in `ui/theme/fonts/` and embedded by these
+// imports, so the family names resolve the same way on every machine instead of
+// falling back to whatever the host happens to have installed.
+import "./fonts/Inter-Regular.ttf";
+import "./fonts/Inter-SemiBold.ttf";
+import "./fonts/JetBrainsMono-Regular.ttf";
+
+export global ThemeTypography {
+    // The complete size scale. Nothing else is permitted.
+    out property <length> display: 32px;
+    out property <length> heading: 20px;
+    out property <length> body: 14px;
+    out property <length> label: 12px;
+
+    // The complete weight scale. 600 only for Display, Heading and the active
+    // sidebar row label; 400 everywhere else. No 300/500/700/800 in Phase 1.
+    out property <int> weight-regular: 400;
+    out property <int> weight-semibold: 600;
+
+    // Families.
+    out property <string> font-prose: "Inter";
+    out property <string> font-mono: "JetBrains Mono";
+}

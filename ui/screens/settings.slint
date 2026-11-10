@@ -1,0 +1,585 @@
+// ZenOmen Settings screen.
+//
+// Configurable telemetry history window (MON-11), polling rates (SYS-09),
+// desktop integration toggles (SYS-02, SYS-03, SYS-04), corruption notices (SYS-07),
+// and application info.
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { ValueReadout } from "../components/value-readout.slint";
+import { SectionCard } from "../components/section-card.slint";
+import { CapabilityNotice } from "../components/capability-notice.slint";
+
+component ToggleSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+
+    width: 44px;
+    height: 24px;
+    background: root.checked ? ThemeColors.gold : ThemeColors.slate;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: root.checked ? ThemeColors.gold : ThemeColors.outline;
+    border-radius: 12px;
+
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+
+    Rectangle {
+        x: root.checked ? 22px : 2px;
+        y: 2px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: root.checked ? ThemeColors.obsidian : ThemeColors.text-secondary;
+        animate x { duration: 150ms; easing: ease-out; }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
+
+export component Settings inherits Rectangle {
+    in property <string> app-version: "1.0.0";
+    /// `mock` in testing; `linux` when running with real Linux provider.
+    in property <string> provider-mode: "linux";
+    in property <string> theme-name: "Dark";
+    in-out property <int> history-window: 120;
+    in-out property <int> polling-interval-ms: 1000;
+    in-out property <bool> start-minimized: false;
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> autostart: false;
+    in property <string> config-corrupt-notice: "";
+
+    callback history-window-changed(int);
+    callback polling-interval-changed(int);
+    callback start-minimized-toggled(bool);
+    callback close-to-tray-toggled(bool);
+    callback autostart-toggled(bool);
+    callback open-releases-page();
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: ThemeMetrics.lg;
+        alignment: start;
+
+        // Corruption notice banner if loaded config had to be recovered (SYS-07)
+        if root.config-corrupt-notice != "" : Rectangle {
+            background: ThemeColors.slate;
+            border-width: ThemeMetrics.stroke-emphasis;
+            border-color: ThemeColors.gold;
+            border-radius: 6px;
+
+            HorizontalLayout {
+                padding: ThemeMetrics.md;
+                spacing: ThemeMetrics.md;
+                alignment: start;
+
+                Text {
+                    text: "⚠";
+                    color: ThemeColors.gold;
+                    font-size: ThemeTypography.heading;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    spacing: ThemeMetrics.xs;
+                    alignment: start;
+
+                    Text {
+                        text: "Configuration Recovered";
+                        color: ThemeColors.gold;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        font-weight: ThemeTypography.weight-semibold;
+                    }
+
+                    Text {
+                        text: root.config-corrupt-notice;
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+
+        // Desktop Integration Preferences
+        SectionCard {
+            title: "Desktop Integration";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.lg;
+                alignment: start;
+
+                // Launch at Login
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        spacing: ThemeMetrics.xs;
+                        alignment: start;
+
+                        Text {
+                            text: "Launch at Login (Autostart)";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            font-weight: ThemeTypography.weight-regular;
+                        }
+
+                        Text {
+                            text: "Start ZenOmen automatically when logging into desktop session";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                        }
+                    }
+
+                    ToggleSwitch {
+                        checked: root.autostart;
+                        toggled(val) => {
+                            root.autostart = val;
+                            root.autostart-toggled(val);
+                        }
+                    }
+                }
+
+                // Start Minimized
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        spacing: ThemeMetrics.xs;
+                        alignment: start;
+
+                        Text {
+                            text: "Start Minimized to System Tray";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            font-weight: ThemeTypography.weight-regular;
+                        }
+
+                        Text {
+                            text: "Hide window into system tray on startup without showing main interface";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                        }
+                    }
+
+                    ToggleSwitch {
+                        checked: root.start-minimized;
+                        toggled(val) => {
+                            root.start-minimized = val;
+                            root.start-minimized-toggled(val);
+                        }
+                    }
+                }
+
+                // Close to Tray
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        spacing: ThemeMetrics.xs;
+                        alignment: start;
+
+                        Text {
+                            text: "Close Window to System Tray";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            font-weight: ThemeTypography.weight-regular;
+                        }
+
+                        Text {
+                            text: "Closing window hides to system tray instead of exiting process";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                        }
+                    }
+
+                    ToggleSwitch {
+                        checked: root.close-to-tray;
+                        toggled(val) => {
+                            root.close-to-tray = val;
+                            root.close-to-tray-toggled(val);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Telemetry Sampling & History Settings
+        SectionCard {
+            title: "Telemetry & Sampling";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.lg;
+                alignment: start;
+
+                // Polling Interval
+                VerticalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    VerticalLayout {
+                        spacing: ThemeMetrics.xs;
+                        alignment: start;
+
+                        Text {
+                            text: "Sensor Polling Rate";
+                            color: ThemeColors.text-primary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.body;
+                            font-weight: ThemeTypography.weight-regular;
+                        }
+
+                        Text {
+                            text: "Hardware sampling interval (SYS-09 clamped between 500ms and 5000ms)";
+                            color: ThemeColors.text-secondary;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: ThemeMetrics.md;
+                        alignment: start;
+
+                        // 500ms
+                        Rectangle {
+                            width: 120px;
+                            height: 32px;
+                            background: root.polling-interval-ms == 500 ? ThemeColors.slate : transparent;
+                            border-width: root.polling-interval-ms == 500 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.polling-interval-ms == 500 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "500ms (2 Hz)";
+                                color: root.polling-interval-ms == 500 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.polling-interval-ms = 500;
+                                    root.polling-interval-changed(500);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // 1000ms (Default)
+                        Rectangle {
+                            width: 130px;
+                            height: 32px;
+                            background: root.polling-interval-ms == 1000 ? ThemeColors.slate : transparent;
+                            border-width: root.polling-interval-ms == 1000 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.polling-interval-ms == 1000 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "1000ms (Default)";
+                                color: root.polling-interval-ms == 1000 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.polling-interval-ms = 1000;
+                                    root.polling-interval-changed(1000);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // 2000ms
+                        Rectangle {
+                            width: 150px;
+                            height: 32px;
+                            background: root.polling-interval-ms == 2000 ? ThemeColors.slate : transparent;
+                            border-width: root.polling-interval-ms == 2000 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.polling-interval-ms == 2000 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "2000ms (Power Saver)";
+                                color: root.polling-interval-ms == 2000 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.polling-interval-ms = 2000;
+                                    root.polling-interval-changed(2000);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+                }
+
+                // History Window
+                VerticalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Chart History Window";
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        font-weight: ThemeTypography.weight-regular;
+                    }
+
+                    HorizontalLayout {
+                        spacing: ThemeMetrics.md;
+                        alignment: start;
+
+                        // Option 1: 30s
+                        Rectangle {
+                            width: 90px;
+                            height: 32px;
+                            background: root.history-window == 30 ? ThemeColors.slate : transparent;
+                            border-width: root.history-window == 30 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.history-window == 30 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "30s";
+                                color: root.history-window == 30 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.history-window = 30;
+                                    root.history-window-changed(30);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // Option 2: 60s
+                        Rectangle {
+                            width: 90px;
+                            height: 32px;
+                            background: root.history-window == 60 ? ThemeColors.slate : transparent;
+                            border-width: root.history-window == 60 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.history-window == 60 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "60s (1m)";
+                                color: root.history-window == 60 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.history-window = 60;
+                                    root.history-window-changed(60);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // Option 3: 120s (Default)
+                        Rectangle {
+                            width: 120px;
+                            height: 32px;
+                            background: root.history-window == 120 ? ThemeColors.slate : transparent;
+                            border-width: root.history-window == 120 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.history-window == 120 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "120s (Default)";
+                                color: root.history-window == 120 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.history-window = 120;
+                                    root.history-window-changed(120);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+
+                        // Option 4: 300s (5m)
+                        Rectangle {
+                            width: 100px;
+                            height: 32px;
+                            background: root.history-window == 300 ? ThemeColors.slate : transparent;
+                            border-width: root.history-window == 300 ? ThemeMetrics.stroke-emphasis : ThemeMetrics.stroke-hairline;
+                            border-color: root.history-window == 300 ? ThemeColors.gold : ThemeColors.outline;
+                            border-radius: 4px;
+
+                            Text {
+                                text: "300s (5m)";
+                                color: root.history-window == 300 ? ThemeColors.gold : ThemeColors.text-primary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.history-window = 300;
+                                    root.history-window-changed(300);
+                                }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // About Block
+        SectionCard {
+            title: "About";
+
+            VerticalLayout {
+                spacing: ThemeMetrics.md;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Version";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                        width: 128px;
+                        overflow: elide;
+                    }
+                    ValueReadout {
+                        value: root.app-version;
+                        value-size: ThemeTypography.heading;
+                        vertical-stretch: 0;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Provider";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                        width: 128px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.provider-mode;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Text {
+                        text: "Theme";
+                        color: ThemeColors.text-secondary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.label;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                        width: 128px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.theme-name;
+                        color: ThemeColors.text-primary;
+                        font-family: ThemeTypography.font-prose;
+                        font-size: ThemeTypography.body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-top: ThemeMetrics.sm;
+                    spacing: ThemeMetrics.md;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 160px;
+                        height: 32px;
+                        background: ThemeColors.slate;
+                        border-width: ThemeMetrics.stroke-hairline;
+                        border-color: ThemeColors.gold;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "Check for updates";
+                            color: ThemeColors.gold;
+                            font-family: ThemeTypography.font-prose;
+                            font-size: ThemeTypography.label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.open-releases-page();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        CapabilityNotice {
+            text: "All settings are automatically persisted to ~/.config/zenomen/config.toml (SYS-06).";
+        }
+    }
+}

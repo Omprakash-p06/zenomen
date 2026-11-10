@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-linux:
+    name: Build Linux Release (DEB & AppImage)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "zenomen") | .version')
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag v$tag does not match Cargo.toml version $ver" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain (stable, clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Install native Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libfontconfig1-dev \
+            libgl1-mesa-dev \
+            xvfb \
+            dpkg-dev \
+            file \
+            libfuse2 \
+            desktop-file-utils
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (zero warnings)
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Test (headless)
+        run: xvfb-run --auto-servernum cargo test --locked --all
+
+      - name: Build release binaries
+        run: cargo build --release --locked --bins
+
+      - name: Install cargo-packager
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager
+
+      - name: Build Debian Package (.deb)
+        run: cargo packager --release --formats deb
+
+      - name: Build AppImage (.AppImage)
+        run: bash packaging/linux/build-appimage.sh
+
+      - name: Organize Linux Distribution Artifacts
+        run: |
+          mkdir -p dist
+          find dist/ -name "*.deb" -exec cp -t dist/ {} + || true
+          find dist/ -name "*.AppImage" -exec cp -t dist/ {} + || true
+
+      - name: Generate Linux SHA-256 checksums
+        working-directory: dist
+        run: |
+          sha256sum *.deb *.AppImage > SHA256SUMS-linux.txt
+          cat SHA256SUMS-linux.txt
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-dist
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS-linux.txt
+
+  release-windows:
+    name: Build Windows Release (Inno Setup EXE, WiX MSI & Zip)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "zenomen") | .version')
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag v$tag does not match Cargo.toml version $ver" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain (stable, clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy Windows (zero warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test Windows
+        run: cargo test --all
+
+      - name: Build release binaries
+        run: cargo build --release --locked --bins
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build Windows Setup Installer (Inno Setup)
+        run: |
+          mkdir -p dist
+          powershell -ExecutionPolicy Bypass -File packaging/windows/build-installer.ps1
+          Copy-Item target/installer/ZenOmen-Setup-x64.exe dist/ZenOmen-Setup-x64.exe
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Package WiX MSI
+        run: wix build packaging/windows/ZenOmen.wxs -o dist/ZenOmen-x64.msi
+
+      - name: Package Portable Zip archive
+        run: |
+          Compress-Archive -Path target/release/zenomen.exe, target/release/zenomen-hw.exe, LICENSE, README.md -DestinationPath dist/ZenOmen-windows-x64.zip
+
+      - name: Generate Windows SHA-256 Checksums
+        working-directory: dist
+        run: |
+          Get-FileHash -Algorithm SHA256 ZenOmen-Setup-x64.exe, ZenOmen-x64.msi, ZenOmen-windows-x64.zip | Out-File -Encoding utf8 SHA256SUMS-windows.txt
+          Get-Content SHA256SUMS-windows.txt
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: |
+            dist/ZenOmen-Setup-x64.exe
+            dist/ZenOmen-x64.msi
+            dist/ZenOmen-windows-x64.zip
+            dist/SHA256SUMS-windows.txt
+
+  publish-release:
+    name: Publish Unified Dual-OS Release
+    needs: [release-linux, release-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-dist
+          path: artifacts
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: artifacts
+
+      - name: Consolidate Checksums
+        working-directory: artifacts
+        run: |
+          cat SHA256SUMS-linux.txt > SHA256SUMS
+          cat SHA256SUMS-windows.txt >> SHA256SUMS
+          rm -f SHA256SUMS-linux.txt SHA256SUMS-windows.txt
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

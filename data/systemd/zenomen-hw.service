@@ -1,0 +1,46 @@
+[Unit]
+Description=ZenOmen Privileged Hardware Control Service
+Documentation=https://github.com/Omprakash-p06/zenomen
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+Type=dbus
+BusName=com.zenomen.Hardware1
+ExecStart=/usr/bin/zenomen-hw
+Restart=on-failure
+RestartSec=3s
+
+# Security Sandboxing (SVC-05, WR-03, WR-04)
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/
+# Prefix with '-' so absent optional hardware paths do not fail unit start (WR-03)
+ReadWritePaths=-/sys/devices/platform/hp-wmi -/sys/firmware/acpi -/sys/class/hwmon -/sys/class/leds
+PrivateTmp=true
+# Root daemon logs live here instead of an inaccessible user home (SEC-03).
+LogsDirectory=zenomen
+LogsDirectoryMode=0750
+# ProtectKernelTunables is omitted because it renders /sys read-only,
+# conflicting with sysfs fan/power/RGB control carve-outs (WR-03).
+ProtectControlGroups=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectProc=invisible
+ProcSubset=pid
+PrivateDevices=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

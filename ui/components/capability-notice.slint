@@ -1,0 +1,41 @@
+// ZenOmen capability notice — an inline raised-surface banner that says which
+// part of this screen is deliberately not implemented yet, and which phase
+// replaces it. Every placeholder names its phase so a tester reading the screen
+// knows the gap is intentional (Copywriting Contract).
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { Icon } from "icons.slint";
+
+export component CapabilityNotice inherits Rectangle {
+    in property <string> text: "";
+
+    background: ThemeColors.slate;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: ThemeColors.outline;
+    border-radius: 4px;
+
+    HorizontalLayout {
+        padding: ThemeMetrics.md;
+        spacing: ThemeMetrics.sm;
+        alignment: start;
+
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "warning";
+                tint: ThemeColors.gold;
+                size: 14px;
+            }
+        }
+        Text {
+            text: root.text;
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+    }
+}

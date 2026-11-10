@@ -1,0 +1,10 @@
+# Rust build output
+/target
+dist/
+
+# Planning artifacts
+.planning/
+
+# Cargo.lock is deliberately NOT ignored: ZenOmen is an application, not a
+# library. The lockfile is committed so builds are reproducible and so
+# `cargo audit` audits the exact dependency graph that ships.

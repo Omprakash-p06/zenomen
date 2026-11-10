@@ -1,0 +1,97 @@
+// ZenOmen metric card — label, value + unit, optional status pill, optional
+// sparkline. The grid slot is kept even when a sensor is missing (Data & Text
+// States: grid geometry is identical to the fully-populated case).
+import { ThemeColors } from "../theme/colors.slint";
+import { ThemeTypography } from "../theme/typography.slint";
+import { ThemeMetrics } from "../theme/metrics.slint";
+import { ValueReadout } from "value-readout.slint";
+import { StatusPill } from "status-pill.slint";
+import { Sparkline } from "sparkline.slint";
+
+export component MetricCard inherits Rectangle {
+    in property <string> label: "";
+    in property <string> value: "Unavailable";
+    in property <string> unit: "";
+    in property <bool> available: true;
+    /// Empty string means "no pill" — a nominal card carries no state chrome.
+    in property <string> status: "";
+    in property <string> status-label: "";
+    /// Optional second reading under the primary one (the GPU card shows
+    /// utilization as the value and temperature here). Empty renders nothing.
+    in property <string> detail: "";
+    in property <string> sparkline-commands: "";
+    in property <bool> show-sparkline: false;
+
+    background: ThemeColors.charcoal;
+    border-width: ThemeMetrics.stroke-hairline;
+    border-color: ThemeColors.outline;
+    border-radius: 4px;
+    min-width: ThemeMetrics.min-card-width;
+    max-width: 320px;
+    height: 176px;
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        padding: ThemeMetrics.md;
+        spacing: ThemeMetrics.sm;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: ThemeMetrics.xs;
+            alignment: start;
+
+            Text {
+                text: root.label;
+                color: ThemeColors.text-secondary;
+                font-family: ThemeTypography.font-prose;
+                font-size: ThemeTypography.label;
+                letter-spacing: 0.5px; // UI-SPEC 0.04em at 12px; Slint has no `em` unit
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if root.status != "" : StatusPill {
+                status: root.status;
+                label: root.status-label;
+                glyph: root.status == "unavailable" ? "unavailable" : "";
+                vertical-stretch: 0;
+            }
+        }
+
+        // Before the first snapshot the value slot renders the empty-state copy
+        // at body size. At Display size that sentence would ellipsize, and the
+        // contract forbids a truncated value slot.
+        if root.value == "" : Text {
+            text: "Waiting for first reading";
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.body;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+
+        if root.value != "" : ValueReadout {
+            value: root.value;
+            unit: root.unit;
+            available: root.available;
+        }
+
+        if root.detail != "" : Text {
+            text: root.detail;
+            color: ThemeColors.text-secondary;
+            font-family: ThemeTypography.font-prose;
+            font-size: ThemeTypography.label;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+
+        if root.show-sparkline : Sparkline {
+            commands: root.sparkline-commands;
+            vertical-stretch: 1;
+        }
+        if !root.show-sparkline : Rectangle {
+            background: transparent;
+            vertical-stretch: 1;
+        }
+    }
+}
