@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="data/icons/zenomen.png" alt="ZenOmen Logo" width="128" height="128">
+  <img src="logo/zenomen-logo-v3-indigo-gold.svg" alt="ZenOmen Logo" width="128" height="128">
 </p>
 
 <h1 align="center">ZenOmen</h1>

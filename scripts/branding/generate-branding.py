@@ -25,10 +25,22 @@ HICOLOR_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
+cargo_bin = Path.home() / ".cargo" / "bin"
+if cargo_bin.exists() and str(cargo_bin) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = f"{cargo_bin}:{os.environ.get('PATH', '')}"
+
+
 def detect_vector_backend() -> str:
-    """Detect available vector-to-raster backend."""
+    """Detect available vector-to-raster backend (prioritizing engines that support gradients)."""
+    if shutil.which("resvg"):
+        return "resvg"
     if shutil.which("inkscape"):
         return "inkscape"
+    try:
+        import cairosvg  # noqa: F401
+        return "cairosvg"
+    except ImportError:
+        pass
     try:
         import pymupdf  # noqa: F401
         return "pymupdf"
@@ -39,13 +51,6 @@ def detect_vector_backend() -> str:
         return "pymupdf"
     except ImportError:
         pass
-    try:
-        import cairosvg  # noqa: F401
-        return "cairosvg"
-    except ImportError:
-        pass
-    if shutil.which("resvg"):
-        return "resvg"
     return "none"
 
 
@@ -197,6 +202,14 @@ def main() -> int:
     render_svg_to_png(source_svg, root_png, 256, backend)
     verify_png_dimensions(root_png, 256)
     print(f"  [OK] Rendered root 256x256 PNG -> {root_png.relative_to(ROOT)}")
+
+    # 3b. Render logo directory PNG
+    logo_dir = ROOT / "logo"
+    if logo_dir.exists():
+        logo_png = logo_dir / "zenomen-logo-v3-indigo-gold.png"
+        render_svg_to_png(source_svg, logo_png, 256, backend)
+        verify_png_dimensions(logo_png, 256)
+        print(f"  [OK] Rendered logo PNG -> {logo_png.relative_to(ROOT)}")
 
     # 4. Generate multi-resolution Windows ICO
     # Render each resolution independently from vector
