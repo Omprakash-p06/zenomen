@@ -395,7 +395,7 @@ impl HardwareServiceClient {
     #[cfg(target_os = "linux")]
     fn connect_service(&self) -> Result<Connection, String> {
         if !self.status().is_connected() {
-            return Err("Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with 'sudo systemctl start zenomen-hw' or install with 'sudo zenomen --install-system-integration'.".to_string());
+            return Err("Hardware control daemon (zenomen-hw) is not running on system D-Bus. Click 'Enable Service', start with 'sudo systemctl start zenomen-hw', or install with 'sudo zenomen --install-system-integration'.".to_string());
         }
         self.connect()
     }
@@ -406,8 +406,9 @@ impl HardwareServiceClient {
         let err_str = e.to_string();
         if err_str.contains("ServiceUnknown")
             || err_str.contains("not provided by any .service files")
+            || err_str.contains("Access denied")
         {
-            "Hardware control daemon (zenomen-hw) is not running on system D-Bus. Start it with 'sudo systemctl start zenomen-hw' or install with 'sudo zenomen --install-system-integration'.".to_string()
+            "Hardware control daemon (zenomen-hw) is not running on system D-Bus. Click 'Enable Service', start with 'sudo systemctl start zenomen-hw', or install with 'sudo zenomen --install-system-integration'.".to_string()
         } else {
             format!("{op} failed: {err_str}")
         }

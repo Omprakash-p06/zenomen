@@ -14,7 +14,7 @@ pub mod windows;
 pub use actions::DesktopAction;
 pub use releases::{RELEASES_URL, ReleasesError, open_releases_page};
 pub use system_integration::{
-    SystemIntegrationError, install as install_system_integration,
+    SystemIntegrationError, install as install_system_integration, request_service_elevation,
     uninstall as uninstall_system_integration,
 };
 

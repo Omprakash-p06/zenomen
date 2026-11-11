@@ -165,6 +165,8 @@ export component AppWindow inherits Window {
     callback set-rgb-power(bool);
     /// Emitted when user dismisses the control error notification banner.
     callback dismiss-control-error();
+    /// Emitted when user clicks Enable Service to elevate permissions and install/start hardware daemon.
+    callback request-service-elevation();
     /// Emitted when user clicks Check for updates in Settings (REL-06).
     callback open-releases-page();
 
@@ -336,6 +338,9 @@ export component AppWindow inherits Window {
                                 dismiss-error => {
                                     root.dismiss-control-error();
                                 }
+                                request-service-elevation => {
+                                    root.request-service-elevation();
+                                }
                                 open-diagnostics => {
                                     root.active-screen = 5;
                                     root.navigate(5);
@@ -365,6 +370,9 @@ export component AppWindow inherits Window {
                                 }
                                 dismiss-error => {
                                     root.dismiss-control-error();
+                                }
+                                request-service-elevation => {
+                                    root.request-service-elevation();
                                 }
                                 open-diagnostics => {
                                     root.active-screen = 5;
@@ -461,6 +469,9 @@ export component AppWindow inherits Window {
                                 mem-service-online: root.mem-service-online;
                                 export-diagnostics-clicked => {
                                     root.export-diagnostics();
+                                }
+                                request-service-elevation => {
+                                    root.request-service-elevation();
                                 }
                             }
                         }

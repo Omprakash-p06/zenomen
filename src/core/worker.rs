@@ -343,6 +343,40 @@ pub fn spawn_monitoring_worker(
                         AppCommand::DismissControlError => {
                             let _ = event_sender.send(AppEvent::ControlErrorDismissed);
                         }
+                        AppCommand::RequestServiceElevation => {
+                            tracing::info!("requesting privileged service elevation");
+                            let tx = event_sender.clone();
+                            let c = client.clone();
+                            thread::spawn(move || {
+                                let res = crate::desktop::request_service_elevation();
+                                match res {
+                                    Ok(()) => {
+                                        tracing::info!("service elevation succeeded, re-probing hardware service");
+                                        thread::sleep(Duration::from_millis(500));
+                                        let status = c.status();
+                                        let _ = tx.send(AppEvent::ServiceStatusChanged(status.clone()));
+                                        if status.is_connected() {
+                                            let _ = tx.send(AppEvent::ControlErrorDismissed);
+                                            let polkit = c
+                                                .check_polkit_status()
+                                                .unwrap_or_else(|e| format!("Check failed: {e}"));
+                                            let _ = tx.send(AppEvent::PolkitStatusChanged(polkit));
+                                            if let Ok((mode, _)) = c.get_fan_status() {
+                                                let _ = tx.send(AppEvent::FanModeChanged(Ok(mode)));
+                                            }
+                                            if let Ok(profile) = c.get_power_profile() {
+                                                let _ = tx.send(AppEvent::PowerProfileChanged(Ok(
+                                                    crate::service::types::PowerProfileResult::verified(profile.clone(), profile),
+                                                )));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "service elevation failed or cancelled");
+                                    }
+                                }
+                            });
+                        }
                         AppCommand::Shutdown => {
                             tracing::debug!("shutdown command received; restoring refresh rate and exiting worker");
                             let _ = crate::core::profile_orchestrator::restore_default_refresh_rate(&current_config);

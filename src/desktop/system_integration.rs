@@ -129,13 +129,83 @@ pub fn install() -> Result<(), SystemIntegrationError> {
 
     install_to_prefix(Path::new("/"))?;
 
-    // Reload systemd, enable and restart zenomen-hw
+    // Reload systemd and D-Bus, enable and restart zenomen-hw
     run_systemctl(&["daemon-reload"])?;
+    let _ = run_systemctl(&["reload", "dbus"]);
     run_systemctl(&["enable", "zenomen-hw"])?;
     run_systemctl(&["restart", "zenomen-hw"])?;
 
     tracing::info!("system integration successfully installed and daemon started");
     Ok(())
+}
+
+/// Request administrative elevation to install or enable the hardware daemon.
+/// On Linux, uses `pkexec` to run either `--install-system-integration` (for AppImage / unintegrated runs)
+/// or `systemctl restart zenomen-hw.service`.
+pub fn request_service_elevation() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let pkexec_bin = if Path::new("/usr/bin/pkexec").exists() {
+            "/usr/bin/pkexec"
+        } else {
+            "pkexec"
+        };
+
+        let mut cmd = Command::new(pkexec_bin);
+
+        if let Ok(appimage) = std::env::var("APPIMAGE") {
+            cmd.arg(&appimage);
+            cmd.arg("--appimage-extract-and-run");
+            cmd.arg("--install-system-integration");
+        } else if let Ok(current_exe) = std::env::current_exe() {
+            if Path::new(SYSTEMD_UNIT_TARGET).exists() && Path::new(DBUS_CONF_TARGET).exists() {
+                cmd.arg("systemctl");
+                cmd.args(["restart", "zenomen-hw.service"]);
+            } else {
+                cmd.arg(current_exe);
+                cmd.arg("--install-system-integration");
+            }
+        } else {
+            cmd.arg("systemctl");
+            cmd.args(["restart", "zenomen-hw.service"]);
+        }
+
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to launch pkexec: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let msg = stderr.trim();
+            if msg.is_empty() {
+                return Err("Authorization cancelled or dismissed.".to_string());
+            }
+            return Err(format!("Authorization failed: {msg}"));
+        }
+
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Start-Process -Verb RunAs net -ArgumentList 'start ZenOmenHardwareService'",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to trigger UAC elevation: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Service start failed: {}", stderr.trim()));
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err("Service elevation is not supported on this platform.".to_string())
+    }
 }
 
 /// Install files under a specific prefix root (useful for mock testing).

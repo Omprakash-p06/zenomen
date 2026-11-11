@@ -5,6 +5,7 @@ case "$1" in
     remove|purge)
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload >/dev/null 2>&1 || true
+            systemctl reload dbus >/dev/null 2>&1 || true
         fi
         if [ -x /usr/bin/update-desktop-database ]; then
             update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true

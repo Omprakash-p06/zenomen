@@ -11,7 +11,7 @@ import { ThemeMetrics } from "../theme/metrics.slint";
 import { StatusPill } from "../components/status-pill.slint";
 import { SectionCard } from "../components/section-card.slint";
 import { CapabilityNotice } from "../components/capability-notice.slint";
-import { PrimaryButton } from "../components/action-button.slint";
+import { PrimaryButton, SecondaryButton } from "../components/action-button.slint";
 
 export component Diagnostics inherits Rectangle {
     in property <string> os-name: "Linux";
@@ -42,6 +42,7 @@ export component Diagnostics inherits Rectangle {
     in property <bool> mem-service-online: false;
 
     callback export-diagnostics-clicked();
+    callback request-service-elevation();
 
     background: transparent;
 
@@ -159,6 +160,10 @@ export component Diagnostics inherits Rectangle {
                         label: root.service-status;
                         glyph: root.service-status == "Connected" ? "" : "unavailable";
                         vertical-stretch: 0;
+                    }
+                    if root.service-status != "Connected" : SecondaryButton {
+                        label: "Enable Service";
+                        clicked => { root.request-service-elevation(); }
                     }
                 }
 

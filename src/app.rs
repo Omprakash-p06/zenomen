@@ -159,6 +159,14 @@ impl ZenOmenApp {
         let ui = self.ui.clone();
         let commands = self.commands.clone();
         if let Some(ui) = ui.upgrade() {
+            ui.on_request_service_elevation(move || {
+                send_command(&commands, AppCommand::RequestServiceElevation);
+            });
+        }
+
+        let ui = self.ui.clone();
+        let commands = self.commands.clone();
+        if let Some(ui) = ui.upgrade() {
             ui.on_polling_interval_changed(move |ms| {
                 if ms >= 500 {
                     send_command(&commands, AppCommand::SetPollingInterval(ms as u64));

@@ -13,6 +13,12 @@ case "$1" in
             systemctl reload dbus >/dev/null 2>&1 || true
         fi
 
+        # Enable and start the hardware control service
+        if [ -x /usr/bin/systemctl ] && [ -d /run/systemd/system ]; then
+            systemctl enable zenomen-hw.service >/dev/null 2>&1 || true
+            systemctl restart zenomen-hw.service >/dev/null 2>&1 || true
+        fi
+
         # Update desktop application database
         if [ -x /usr/bin/update-desktop-database ]; then
             update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true

@@ -97,6 +97,8 @@ pub enum AppCommand {
     ApplyRgbProfile(crate::rgb::RgbProfile),
     /// Set RGB lighting power state on/off (RGB-04).
     SetRgbPower(bool),
+    /// Request elevation to install or start the hardware daemon service.
+    RequestServiceElevation,
     /// Notify worker of window visibility to pause/resume sampling (PERF-02).
     SetUiVisible(bool),
     /// Terminate the monitoring worker without depending on channel disconnect (CR-01).

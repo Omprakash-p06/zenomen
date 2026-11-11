@@ -31,6 +31,7 @@ export component Cooling inherits Rectangle {
 
     callback set-fan-mode(string);
     callback dismiss-error();
+    callback request-service-elevation();
     callback open-diagnostics();
 
     background: transparent;
@@ -81,9 +82,16 @@ export component Cooling inherits Rectangle {
 
                 VerticalLayout {
                     alignment: center;
-                    SecondaryButton {
-                        label: "Dismiss";
-                        clicked => { root.dismiss-error(); }
+                    HorizontalLayout {
+                        spacing: ThemeMetrics.sm;
+                        if !root.service-connected : SecondaryButton {
+                            label: "Enable Service";
+                            clicked => { root.request-service-elevation(); }
+                        }
+                        SecondaryButton {
+                            label: "Dismiss";
+                            clicked => { root.dismiss-error(); }
+                        }
                     }
                 }
             }
@@ -328,10 +336,39 @@ export component Cooling inherits Rectangle {
                     }
                 }
 
-                if root.has-fan-control && !root.service-connected : CapabilityNotice {
-                    text: root.is-windows
-                        ? "Hardware service (ZenOmenHardwareService) is offline. Start the service (or run zenomen-hw --console) to apply hardware changes."
-                        : "Hardware service (com.zenomen.Hardware1) is disconnected. Controls will request daemon connection when toggled.";
+                if root.has-fan-control && !root.service-connected : Rectangle {
+                    background: ThemeColors.slate;
+                    border-width: ThemeMetrics.stroke-hairline;
+                    border-color: ThemeColors.outline;
+                    border-radius: 6px;
+
+                    HorizontalLayout {
+                        padding: ThemeMetrics.md;
+                        spacing: ThemeMetrics.md;
+                        alignment: space-between;
+
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: root.is-windows
+                                    ? "Hardware service (ZenOmenHardwareService) is offline. Start the service to apply fan control."
+                                    : "Hardware service (com.zenomen.Hardware1) is disconnected. Enable it to apply hardware changes.";
+                                color: ThemeColors.text-secondary;
+                                font-family: ThemeTypography.font-prose;
+                                font-size: ThemeTypography.label;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            SecondaryButton {
+                                label: "Enable Service";
+                                clicked => { root.request-service-elevation(); }
+                            }
+                        }
+                    }
                 }
 
                 if !root.has-fan-control : CapabilityNotice {
