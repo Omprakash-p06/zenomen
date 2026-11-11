@@ -9,4 +9,13 @@ export PATH="${HERE}/usr/bin:${PATH}"
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
 export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
+if [ ! -f "${HERE}/usr/bin/zenomen" ]; then
+    echo "ZenOmen AppImage Error: zenomen binary missing at '${HERE}/usr/bin/zenomen'" >&2
+    exit 127
+fi
+
+if [ ! -x "${HERE}/usr/bin/zenomen" ]; then
+    chmod +x "${HERE}/usr/bin/zenomen" 2>/dev/null || true
+fi
+
 exec "${HERE}/usr/bin/zenomen" "$@"

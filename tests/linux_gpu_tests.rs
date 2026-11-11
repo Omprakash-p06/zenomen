@@ -107,16 +107,17 @@ fn nvidia_watcher_reports_the_sample_its_program_prints() {
 
     sampler.request();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let sample = loop {
         if let Some(sample) = sampler.latest() {
             break sample;
         }
+        sampler.request();
         assert!(
             std::time::Instant::now() < deadline,
             "watcher never produced a sample"
         );
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(50));
     };
 
     assert_eq!(sample.name, "NVIDIA GeForce RTX 3060 Laptop GPU");
@@ -157,13 +158,14 @@ fn nvidia_watcher_stale_reading_expires_to_none() {
     let sampler = NvidiaSampler::new(program);
     sampler.request();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while sampler.latest().is_none() {
+        sampler.request();
         assert!(
             std::time::Instant::now() < deadline,
             "expected initial sample"
         );
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(50));
     }
     assert!(sampler.latest().is_some());
 

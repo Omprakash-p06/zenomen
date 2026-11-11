@@ -160,10 +160,10 @@ jobs:
           Copy-Item target/installer/ZenOmen-Setup-x64.exe dist/ZenOmen-Setup-x64.exe
 
       - name: Install WiX Toolset
-        run: dotnet tool install --global wix --version 5.0.2
+        run: dotnet tool install --global wix --version 4.0.6
 
       - name: Package WiX MSI
-        run: wix build packaging/windows/ZenOmen.wxs -o dist/ZenOmen-x64.msi
+        run: wix build packaging/windows/wix/ZenOmen.wxs -o dist/ZenOmen-x64.msi
 
       - name: Package Portable Zip archive
         run: |
