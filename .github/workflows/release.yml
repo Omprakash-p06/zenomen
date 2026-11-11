@@ -19,7 +19,7 @@ env:
 jobs:
   release-linux:
     name: Build Linux Release (DEB & AppImage)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -73,6 +73,22 @@ jobs:
 
       - name: Build Debian Package (.deb)
         run: cargo packager --release --formats deb
+
+      - name: Inject Debian maintainer scripts
+        run: |
+          for deb in dist/*.deb; do
+            if [ -f "$deb" ]; then
+              echo "Injecting maintainer scripts into $deb..."
+              tmpdir=$(mktemp -d)
+              dpkg-deb -R "$deb" "$tmpdir"
+              cp packaging/linux/debian/postinst "$tmpdir/DEBIAN/postinst"
+              cp packaging/linux/debian/prerm "$tmpdir/DEBIAN/prerm"
+              cp packaging/linux/debian/postrm "$tmpdir/DEBIAN/postrm"
+              chmod 755 "$tmpdir/DEBIAN/postinst" "$tmpdir/DEBIAN/prerm" "$tmpdir/DEBIAN/postrm"
+              dpkg-deb -b "$tmpdir" "$deb"
+              rm -rf "$tmpdir"
+            fi
+          done
 
       - name: Build AppImage (.AppImage)
         run: bash packaging/linux/build-appimage.sh
@@ -172,7 +188,7 @@ jobs:
   publish-release:
     name: Publish Unified Dual-OS Release
     needs: [release-linux, release-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download Linux Artifacts

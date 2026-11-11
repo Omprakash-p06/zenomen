@@ -133,6 +133,13 @@ chmod +x ZenOmen-1.0.0-x86_64.AppImage
 ./ZenOmen-1.0.0-x86_64.AppImage
 ```
 
+> [!NOTE]
+> If your Linux distribution does not have FUSE 2 installed by default (e.g. Ubuntu 22.04+ / 24.04+), either run directly with:
+> ```bash
+> ./ZenOmen-1.0.0-x86_64.AppImage --appimage-extract-and-run
+> ```
+> or install the compatibility library: `sudo apt install libfuse2t64` (Ubuntu 24.04+) or `sudo apt install libfuse2` (Ubuntu 22.04 / Debian).
+
 To enable hardware fan and power control under AppImage, register the system integration files once as root:
 
 ```bash

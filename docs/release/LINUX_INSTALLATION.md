@@ -78,6 +78,13 @@ chmod +x ZenOmen-1.0.0-x86_64.AppImage
 ./ZenOmen-1.0.0-x86_64.AppImage
 ```
 
+> **Note on FUSE 2 in modern distributions (Ubuntu 22.04+, 24.04+):**
+> If your system does not have `libfuse2` installed, you can run the AppImage without FUSE using:
+> ```bash
+> ./ZenOmen-1.0.0-x86_64.AppImage --appimage-extract-and-run
+> ```
+> Or install the compatibility library: `sudo apt install libfuse2t64` (Ubuntu 24.04+) or `sudo apt install libfuse2` (Ubuntu 22.04 / Debian).
+
 Options:
 ```bash
 # Launch directly minimized to the system tray
